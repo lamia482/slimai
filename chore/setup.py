@@ -18,9 +18,9 @@ from setuptools import setup, find_packages
 NAME = "slimai"
 DESCRIPTION = "A toolbox for AI research and development"
 
-URL = "https://github.com/kfbio/slimai"
-AUTHOR = "FAIR"
-REQUIRES_PYTHON = ">=3.9.0"
+URL = "https://github.com/lamia482/slimai"
+AUTHOR = "WANG QIANG"
+REQUIRES_PYTHON = ">=3.8"
 HERE = Path(__file__).parent
 
 
@@ -31,7 +31,7 @@ except FileNotFoundError:
     long_description = DESCRIPTION
 
 
-def get_requirements(path: str = HERE / "requirements.txt") -> Tuple[List[str], List[str]]:
+def get_requirements(path: str = HERE / "chore/requirements.txt") -> Tuple[List[str], List[str]]:
     requirements = []
     extra_indices = []
     with open(path) as f:
@@ -45,7 +45,7 @@ def get_requirements(path: str = HERE / "requirements.txt") -> Tuple[List[str], 
 
 
 def get_package_version() -> str:
-    with open(HERE / "dinov2/__init__.py") as f:
+    with open(HERE / "slimai/__init__.py") as f:
         result = re.search(r"^__version__ = ['\"]([^'\"]*)['\"]", f.read(), re.M)
         if result:
             return result.group(1)
@@ -54,9 +54,6 @@ def get_package_version() -> str:
 
 requirements, extra_indices = get_requirements()
 version = get_package_version()
-dev_requirements, _ = get_requirements(HERE / "requirements-dev.txt")
-extras_requirements, _ = get_requirements(HERE / "requirements-extras.txt")
-
 
 setup(
     name=NAME,
@@ -72,22 +69,18 @@ setup(
         "": ["*.yaml"],
     },
     install_requires=requirements,
-    extras_require={
-        "dev": dev_requirements,
-        "extras": extras_requirements,
-    },
     dependency_links=extra_indices,
     install_package_data=True,
-    license="Apache",
-    license_files=("LICENSE",),
-    classifiers=[
-        # Trove classifiers: https://github.com/pypa/trove-classifiers/blob/main/src/trove_classifiers/__init__.py
-        "Development Status :: 3 - Alpha",
-        "Intended Audience :: Developers",
-        "Intended Audience :: Science/Research",
-        "License :: OSI Approved :: Apache Software License",
-        "Programming Language :: Python :: 3.9",
-        "Topic :: Scientific/Engineering :: Artificial Intelligence",
-        "Topic :: Software Development :: Libraries :: Python Modules",
-    ],
+    # license="Apache",
+    # license_files=("LICENSE",),
+    # classifiers=[
+    #     # Trove classifiers: https://github.com/pypa/trove-classifiers/blob/main/src/trove_classifiers/__init__.py
+    #     "Development Status :: 3 - Alpha",
+    #     "Intended Audience :: Developers",
+    #     "Intended Audience :: Science/Research",
+    #     "License :: OSI Approved :: Apache Software License",
+    #     "Programming Language :: Python :: 3.9",
+    #     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    #     "Topic :: Software Development :: Libraries :: Python Modules",
+    # ],
 )
