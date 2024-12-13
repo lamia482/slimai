@@ -12,6 +12,7 @@ NPROC_PER_NODE=2
 JOB_ID=12345
 MASTER_ADDR=localhost
 MASTER_PORT=12345
+MAX_RESTARTS=3
 
 ##### print job info
 echo """ JOB SUMMARY
@@ -21,6 +22,7 @@ NPROC_PER_NODE: ${NPROC_PER_NODE}
 JOB_ID: ${JOB_ID}
 MASTER_ADDR: ${MASTER_ADDR}
 MASTER_PORT: ${MASTER_PORT}
+MAX_RESTARTS: ${MAX_RESTARTS}
 """
 
 
@@ -33,9 +35,13 @@ echo "Entering Root Working Path: ${TOOLBOX_ROOT_DIR}"
 torchrun \
   --nnode=${NNODES} \
   --nproc-per-node=${NPROC_PER_NODE} \
-  --max-restarts=0 \
+  --max-restarts=${MAX_RESTARTS} \
   --rdzv-id=${JOB_ID} \
   --rdzv-backend=c10d \
   --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} \
   tools/run.py \
-  --config="${CONFIG_FILE}"
+  --launcher=pytorch \
+  --config="${CONFIG_FILE}" \
+  --action="train" \
+  --amp --auto-scale-lr \
+  ${@:2}
