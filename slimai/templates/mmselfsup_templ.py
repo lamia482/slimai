@@ -5,43 +5,31 @@ import numpy as np
 ########## 1. dataset transform ##########
 backend_args=None
 
-train_pipeline = [
-  dict(type="LoadImageFromFile", backend_args=backend_args),
-  dict(type="LoadAnnotations", with_bbox=True),
-  dict(type="RandomChoiceResize", scales=[
-    (1512, 1512), (1518, 1518), (1524, 1524), (1530, 1530), (1542, 1542), (1548, 1548), (1554, 1554), (1560, 1560)
-  ] + [(1536, 1536)]*8, keep_ratio=True),
-  dict(type="RandomCrop", crop_size=(640, 640), allow_negative_crop=True),
-  dict(type="Resize", scale=None, scale_factor=1.0, keep_ratio=True),
-  dict(type="RandomFlip", prob=0.5, direction="horizontal"),
-  dict(type="RandomFlip", prob=0.5, direction="vertical"),
-  dict(type="PackDetInputs", 
-       meta_keys=["img_id", "img_path", "ori_shape", "img_shape",
-                  "scale_factor", "flip", "flip_direction", "instances"])
+view_pipeline = [
+  dict(type="RandomResizedCrop", size=224, scale=(0.2, 1.)),
+  dict(type="RandomGrayscale", prob=0.2, keep_channels=True),
+  dict(
+      type="ColorJitter",
+      brightness=0.4,
+      contrast=0.4,
+      saturation=0.4,
+      hue=0.4),
+  dict(type="RandomFlip", prob=0.5),
 ]
 
-test_pipeline = [
+train_pipeline = [
   dict(type="LoadImageFromFile", backend_args=backend_args),
-  dict(type="LoadAnnotations", with_bbox=True),
-  dict(type="Resize", scale=None, scale_factor=1.0, keep_ratio=True),
-  dict(type="PackDetInputs",
-       meta_keys=("img_id", "img_path", "ori_shape", "img_shape", 
-                  "scale_factor", "instances"))
+  dict(type="MultiView", num_views=2, transforms=[view_pipeline]),
+  dict(type="PackSelfSupInputs", meta_keys=["img_path"])
 ]
 
 ##########
-classes = {
-  "LSIL": "LSIL", 
-  "AHSIL": ["ASC-H", "HSIL"],
-  "AGC": ["AGC", "AGC-N"]
-}
 dataset_type = "SupervisedDataset"
 dataset_dir = ""
-ann_keys = ["labels", "masks", "instances", "texts"]
+ann_keys = []
 
 batch_size = 16
 num_workers = 4
-num_classes = len(classes)
 
 train_dataloader = dict(
   _delete_=True, 
@@ -57,60 +45,33 @@ train_dataloader = dict(
     transform=train_pipeline,
   )
 )
-    
-val_dataloader = dict(
-  _delete_=True, 
-  batch_size=batch_size, 
-  num_workers=num_workers, 
-  pin_memory=False, 
-  persistent_workers=True if num_workers > 0 else False, 
-  drop_last=False, 
-  sampler=dict(type="DefaultSampler", shuffle=False),
-  dataset=dict(
-    type=dataset_type,
-    dataset=osp.join(dataset_dir, "valid.pkl"),
-    ann_keys=ann_keys,
-    transform=test_pipeline,
-  )
-)
-    
-test_dataloader = dict(
-  _delete_=True, 
-  batch_size=batch_size, 
-  num_workers=num_workers, 
-  pin_memory=False, 
-  persistent_workers=True if num_workers > 0 else False, 
-  drop_last=False, 
-  sampler=dict(type="DefaultSampler", shuffle=False),
-  dataset=dict(
-    type=dataset_type,
-    dataset=osp.join(dataset_dir, "test.pkl"),
-    ann_keys=ann_keys,
-    transform=test_pipeline,
-  )
-)
-
-val_evaluator = dict(
-  _delete_=True, 
-  type="CocoMetric", 
-  metric="bbox", 
-  format_only=False, 
-  classwise=True, 
-)
-    
-test_evaluator = val_evaluator
 
 ##########
 
 # 2. model settings
+# model settings
 model = dict(
-  type="ViT",
-  num_classes=None,
-  in_channels=3,
-  embed_dims=768,
-  num_layers=12,
-  num_heads=12,
-  mlp_ratio=4,
+  type="DINO",
+  queue_len=65536,
+  feat_dim=128,
+  momentum=0.999,
+  data_preprocessor=dict(
+    mean=(123.675, 116.28, 103.53),
+    std=(58.395, 57.12, 57.375),
+    bgr_to_rgb=True),
+  backbone=dict(
+    type="ViT",
+    arch="vit_base",
+    patch_size=16,
+    img_size=224, 
+    use_lora=True, 
+  ),
+  neck=dict(
+    type="DINONeck",
+  ),
+  head=dict(
+    type="DINOHead",
+  ),
 )
 
 ##########
@@ -187,7 +148,7 @@ auto_scale_lr = dict(enable=True, base_batch_size=64)
 
 ##########
 
-default_scope = "mmengine"
+default_scope = "mmdet"
 
 default_hooks = dict(
   _delete_=True, 

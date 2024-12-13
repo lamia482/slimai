@@ -1,6 +1,6 @@
 import os, os.path as osp
 import argparse
-from mmengine.config import Config, DictAction
+from mmengine.config import Config
 from slimai.runner import Runner
 from slimai.helper import help_utils
 
