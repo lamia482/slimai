@@ -3,6 +3,9 @@ import logging
 from pathlib import Path
 from mmengine.logging import print_log as _mm_print_log
 from mmengine.dist import is_main_process
+from .utils.network import PytorchNetworkUtils
+from .utils.vis import put_gt_on_image, put_pred_on_image, hstack_imgs, vstack_imgs
+
 
 def print_log(msg, logger="current", level="INFO", force=False):
   if not is_main_process() and not force:

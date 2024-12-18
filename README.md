@@ -1,5 +1,5 @@
 # slimai
-help build deep learning model and offer quick start to develop
+help build deep learning model and offer quick start to develop model including cls/det/segm/etc.
 
 1. use MMEngine to build pipeline
 2. customize the components refered to MMEngine Config
