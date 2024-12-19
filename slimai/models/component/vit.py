@@ -1,5 +1,5 @@
 import torch
-from .component import BaseComponent, MODELS
+from ..arch import BaseComponent, MODELS
 
 
 @MODELS.register_module()

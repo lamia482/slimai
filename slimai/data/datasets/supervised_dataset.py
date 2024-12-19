@@ -8,6 +8,7 @@ from torchvision import transforms
 from loguru import logger
 from PIL import Image
 
+
 __all__ = ["SupervisedDataset", "DatasetChecker"]
 
 
@@ -15,9 +16,9 @@ __all__ = ["SupervisedDataset", "DatasetChecker"]
 class SupervisedDataset(torch.utils.data.Dataset):
   version = "version"
   signature = "signature"
-  collect_keys = ["indices", "images"]
+  collect_keys = ["indice", "image"]
 
-  def __init__(self, dataset, class_name_transform=None, 
+  def __init__(self, dataset, std_func=None, 
                ann_keys=["labels", "masks", "instances", "texts"],
                transform=None, 
                to_rgb=True, 
@@ -27,6 +28,12 @@ class SupervisedDataset(torch.utils.data.Dataset):
     if isinstance(dataset, str):
       dataset = mmengine.load(dataset)
       self.dataset_file = dataset
+    if std_func is not None:
+      assert (
+        callable(std_func)
+      ), "Standard function must be callable"
+      dataset = std_func(dataset)
+
     assert (
       isinstance(dataset, dict) and {"class_names", "files", "annotations"}.issubset(set(dataset.keys()))
     ), "Dataset must be a dictionary at least with keys: `class_names`, `files`, `annotations`, but got: {}".format(dataset.keys())
@@ -49,8 +56,7 @@ class SupervisedDataset(torch.utils.data.Dataset):
     self.annotations = annotations.copy()
     self.ann_keys = ann_keys
 
-    if not isinstance(transform, transforms.Compose):
-      transform = transforms.Compose(transform or [])
+    #TODO: adapt transforms to Albumentations
     self.transform = transform
     
     self.to_rgb = to_rgb
@@ -70,8 +76,8 @@ class SupervisedDataset(torch.utils.data.Dataset):
 
     # check data keys
     assert (
-      set(list(data.keys())).issubset(set(self.collect_keys))
-    ), f"Collect keys must be a subset of {self.collect_keys}"
+      set(self.collect_keys).issubset(set(list(data.keys())))
+    ), f"Collect key({self.collect_keys}) must all contained in data, but got: {list(data.keys())}"
 
     return data
 
@@ -86,12 +92,11 @@ class SupervisedDataset(torch.utils.data.Dataset):
     if self.to_rgb:
       image = mmcv.bgr2rgb(image)
 
-    image = self.transform(Image.fromarray(image))
-    data = dict(indices=item, images=image)  
-
+    data = dict(indice=item, image=image)  
     for key in self.ann_keys:
       data[key] = self.annotations[key][item]
 
+    data = self.transform(data)
     return data
 
   def __str__(self):
@@ -101,6 +106,7 @@ class SupervisedDataset(torch.utils.data.Dataset):
     repr_str += f"\tDescription: {self.desc}\n"
     repr_str += f"\tVersion: {self.version}\n"
     repr_str += f"\tHas Ann keys: {self.ann_keys}\n"
+    repr_str += f"\tTransform: {self.transform}\n"
     return repr_str
   __repr__=__str__
   
