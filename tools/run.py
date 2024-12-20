@@ -9,10 +9,10 @@ def parse_args():
   parser = argparse.ArgumentParser(description="Use MMEngine to run the pipeline")
   parser.add_argument("--config", type=str, required=True, 
                       help="the yaml config file of the pipeline")
-  parser.add_argument("--action", choices=["train", "infer", "evaluate"], type=str, required=True, 
-                      help="the action to run, train, infer, evaluate")
   parser.add_argument("--work_dir", "--work-dir", type=str, default=None, 
                       help="the dir to save the logs and checkpoints")
+  parser.add_argument("--action", choices=["train", "infer", "evaluate"], type=str, required=True, 
+                      help="the action to run, train, infer, evaluate")
   parser.add_argument("--amp", action="store_true", help="whether to use amp")
   parser.add_argument("--auto_scale_lr", "--auto-scale-lr", action="store_true", 
                       help="enable automatically scaling LR.")
@@ -35,7 +35,7 @@ def parse_config(args):
   cfg = Config.fromfile(args.config)
   cfg.launcher = args.launcher
   
-  # work_dir is determined in this priority: CLI > segment in file > filename
+  # work_dir is determined in this priority: CLI > segment in file
   if args.work_dir is not None:
     # update configs according to CLI args if args.work_dir is not None
     cfg.work_dir = osp.join(args.work_dir, cfg.signature)

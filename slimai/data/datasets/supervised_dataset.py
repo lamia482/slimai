@@ -2,11 +2,9 @@ import hashlib
 import numpy as np
 import mmcv
 import mmengine
-from mmengine.registry import DATASETS
 import torch
-from torchvision import transforms
 from loguru import logger
-from PIL import Image
+from slimai.helper.help_build import DATASETS, build_transform
 
 
 __all__ = ["SupervisedDataset", "DatasetChecker"]
@@ -56,8 +54,7 @@ class SupervisedDataset(torch.utils.data.Dataset):
     self.annotations = annotations.copy()
     self.ann_keys = ann_keys
 
-    #TODO: adapt transforms to Albumentations
-    self.transform = transform
+    self.transform = build_transform(transform)
     
     self.to_rgb = to_rgb
 

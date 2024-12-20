@@ -1,5 +1,6 @@
 import torch
-from ..arch import BaseComponent, MODELS
+from slimai.helper.help_build import MODELS
+from .base_component import BaseComponent
 
 
 @MODELS.register_module()

@@ -1,7 +1,11 @@
 from . import (
-  help_utils
+  help_build, 
+  help_utils, 
+  structure, 
 )
 
 __all__ = [
-  "help_utils"
+  "help_build", 
+  "help_utils",
+  "structure",
 ]
