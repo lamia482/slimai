@@ -106,7 +106,7 @@ class SupervisedDataset(torch.utils.data.Dataset):
     return data
 
   def __str__(self):
-    repr_str = f"Total {len(self)} samples(selected from {self.files} samples with max_sample_num: '{self.max_sample_num}')\n"
+    repr_str = f"Total {len(self)} samples(selected from {len(self.files)} samples with max_sample_num: '{self.max_sample_num}')\n"
     repr_str += f"\tWith Signature: {self.signature}\n"
     repr_str += f"\tDataset file: {self.dataset_file}\n"
     repr_str += f"\tCLASS NAMES: {self.class_names}\n"
