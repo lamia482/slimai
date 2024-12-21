@@ -1,5 +1,6 @@
 from torch.distributed.elastic.multiprocessing.errors import record
 import mmengine
+from slimai.helper import help_build
 
 
 class Runner(object):
@@ -9,10 +10,10 @@ class Runner(object):
     return
   
   def build_pipeline(self, cfg):
-    train_loader = self.build_dataloader(cfg.train_loader)
-    valid_loader = self.build_dataloader(cfg.valid_loader)
-    test_loader = self.build_dataloader(cfg.test_loader)
-    model = self.build_model(cfg.model)
+    train_loader = help_build.build_dataloader(cfg.TRAIN_LOADER)
+    valid_loader = help_build.build_dataloader(cfg.VALID_LOADER)
+    test_loader = help_build.build_dataloader(cfg.TEST_LOADER)
+    model = help_build.build_model(cfg.MODEL)
     return
 
   @record
@@ -30,8 +31,3 @@ class Runner(object):
   def evaluate(self):
     return
   
-  def build_dataloader(self, cfg):
-    return
-  
-  def build_model(self, cfg):
-    return

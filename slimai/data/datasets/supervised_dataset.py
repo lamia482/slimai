@@ -16,16 +16,19 @@ class SupervisedDataset(torch.utils.data.Dataset):
   signature = "signature"
   collect_keys = ["indice", "image"]
 
-  def __init__(self, dataset, std_func=None, 
+  def __init__(self, dataset, 
+               *, 
+               std_func=None, 
                ann_keys=["labels", "masks", "instances", "texts"],
                transform=None, 
                to_rgb=True, 
                desc=None, 
+               max_sample_num=None,
                **kwargs):
     self.dataset_file = "Not file"
     if isinstance(dataset, str):
-      dataset = mmengine.load(dataset)
       self.dataset_file = dataset
+      dataset = mmengine.load(dataset)
     if std_func is not None:
       assert (
         callable(std_func)
@@ -39,18 +42,18 @@ class SupervisedDataset(torch.utils.data.Dataset):
     class_names = dataset.pop("class_names")
     files = dataset.pop("files")
     annotations = dataset.pop("annotations")
+    self.version = dataset.pop(self.version, None)
+    self.signature = dataset.pop(self.signature, None)
 
     self.class_names = class_names
     self.files = files
     if isinstance(annotations, str):  
       annotations = mmengine.load(annotations)
     
-    self.version = annotations.pop(self.version, None)
     DatasetChecker.check_annotations(annotations, ann_keys, len(files))
 
     self.collect_keys = sorted(self.collect_keys + ann_keys)
     
-    self.signature = annotations.pop(self.signature, None)
     self.annotations = annotations.copy()
     self.ann_keys = ann_keys
 
@@ -60,6 +63,13 @@ class SupervisedDataset(torch.utils.data.Dataset):
 
     self.desc = desc or "No specific description."
 
+    if max_sample_num is None:
+      self.max_sample_num = None
+      self.length = len(files)
+    else:
+      self.max_sample_num = max_sample_num
+      self.length = min(max_sample_num, len(self))
+
     logger.info(f"Dataset {self}")
     return
 
@@ -68,8 +78,6 @@ class SupervisedDataset(torch.utils.data.Dataset):
       data = self.select_sample(item)
     else:
       raise NotImplementedError("Versioned dataset is not implemented")
-
-    # TODO: transform ann data
 
     # check data keys
     assert (
@@ -93,11 +101,13 @@ class SupervisedDataset(torch.utils.data.Dataset):
     for key in self.ann_keys:
       data[key] = self.annotations[key][item]
 
+    # TODO: transform ann data
     data = self.transform(data)
     return data
 
   def __str__(self):
-    repr_str = f"Total {len(self)} samples, with signature: {self.signature}\n"
+    repr_str = f"Total {len(self)} samples(selected from {self.files} samples with max_sample_num: '{self.max_sample_num}')\n"
+    repr_str += f"\tWith Signature: {self.signature}\n"
     repr_str += f"\tDataset file: {self.dataset_file}\n"
     repr_str += f"\tCLASS NAMES: {self.class_names}\n"
     repr_str += f"\tDescription: {self.desc}\n"
@@ -108,18 +118,7 @@ class SupervisedDataset(torch.utils.data.Dataset):
   __repr__=__str__
   
   def __len__(self):
-    return len(self.files)
-
-  def batch_generator(self, batch_size=4, num_workers=1, 
-                      shuffle=False, topk=None, **kwargs):
-    persistent_workers = True if num_workers > 0 else False
-    gen =  torch.utils.data.DataLoader(self, batch_size=batch_size, 
-                                      shuffle=shuffle, num_workers=num_workers, 
-                                      persistent_workers=persistent_workers, **kwargs)
-    for i, data in enumerate(gen):
-      yield data
-      if topk is not None and i+1 >= topk:
-        break
+    return self.length
 
 
 class DatasetChecker(object):

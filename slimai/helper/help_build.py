@@ -13,6 +13,9 @@ from mmengine.dataset import Compose as ComposeTransform
 
 def build_from_cfg(cfg: Union[mmengine.Config, dict], 
                    registry: mmengine.Registry):
+  if cfg is None:
+    return None
+  
   # recursively handle list or tuple of element
   if isinstance(cfg, (list, tuple)):
     return list(map(lambda value: build_from_cfg(value, registry), cfg))
@@ -43,20 +46,10 @@ def build_transform(cfg) -> Callable:
 def build_dataset(cfg) -> torch.utils.data.Dataset:
   return build_from_cfg(cfg, DATASETS)
 
-def build_dataloader(dataset, 
-                     batch_size, 
-                     num_workers, 
-                     persistent_workers, 
-                     shuffle, 
-                     **kwargs) -> torch.utils.data.DataLoader:
-  dataset = build_dataset(dataset)
-  return torch.utils.data.DataLoader(dataset,
-    batch_size=batch_size,
-    num_workers=num_workers,
-    persistent_workers=persistent_workers,
-    shuffle=shuffle,
-    **kwargs,
-  )
+def build_dataloader(cfg) -> torch.utils.data.DataLoader:
+  dataset = build_dataset(cfg.pop("dataset"))
+  loader = torch.utils.data.DataLoader(dataset, **cfg)
+  return loader
 
 def build_model(cfg) -> torch.nn.Module:
   return build_from_cfg(cfg, MODELS)
