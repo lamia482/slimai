@@ -14,20 +14,20 @@ class ClassificationArch(BaseArch):
   def _init_layers(self):
     pass
   
-  def tensor(self, 
-             batch_inputs: torch.Tensor, 
-             *,
-             batch_datasamples: List[DataSample]=None):
+  def do_tensor(self, 
+                batch_inputs: torch.Tensor, 
+                *,
+                batch_datasamples: List[DataSample]=None):
     return
 
-  def loss(self, 
-           batch_inputs: torch.Tensor, 
-           *,
-           batch_datasamples: List[DataSample]=None):
-    return
-
-  def predict(self, 
+  def do_loss(self, 
               batch_inputs: torch.Tensor, 
               *,
               batch_datasamples: List[DataSample]=None):
+    return
+
+  def do_predict(self, 
+                 batch_inputs: torch.Tensor, 
+                 *,
+                 batch_datasamples: List[DataSample]=None):
     return

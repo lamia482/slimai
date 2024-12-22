@@ -5,10 +5,10 @@ This function prioritizes customized components, followed by torch components,
 and finally mmengine components.
 """
 import torch
-import mmengine
-from typing import Callable, Union
-from mmengine.registry import TRANSFORMS, DATASETS, MODELS, METRICS, OPTIMIZERS
+from typing import Callable
 from mmengine.dataset import Compose as ComposeTransform
+from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, METRICS, OPTIMIZERS
+IMPORT = Registry("import")
 
 
 def compose_components(components, 
@@ -20,7 +20,7 @@ def compose_components(components,
   # convert source to callable
   source = list(map(lambda s: s if callable(s) else (
     lambda name: (getattr(s, name, None) or s.get(name))), 
-    source))
+    [IMPORT] + source))
     
   def _recursive_compose(component):
     if isinstance(component, (tuple, list)):
@@ -82,10 +82,12 @@ def build_model(cfg) -> torch.nn.Module:
   return compose_components(cfg, source=MODELS)
 
 def build_loss(cfg) -> torch.nn.Module:
-  return
+  return compose_components(cfg, source=MODELS)
 
 def build_solver(cfg, module: torch.nn.Module):
-  return compose_components(cfg, source=[OPTIMIZERS, torch.optim])
+  cfg = cfg.copy()
+  cfg.params = module.parameters()
+  return compose_components(cfg, source=OPTIMIZERS)
 
 def build_metric(cfg):
   return compose_components(cfg, source=METRICS)

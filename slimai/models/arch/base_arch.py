@@ -26,7 +26,7 @@ class BaseArch(torch.nn.Module):
     self.solver = help_build.build_solver(solver, self)
 
     self._init_layers()
-    help_utils.print_log(f"Model({__class__.__name__}) built successfully with {self.num_parameters()} parameters")
+    help_utils.print_log(f"Model({__class__.__name__}) built successfully with {help_utils.PytorchNetworkUtils.get_params_size(self)} parameters")
     return
 
   @abstractmethod
@@ -41,21 +41,21 @@ class BaseArch(torch.nn.Module):
     expected_modes = ["tensor", "loss", "predict"]
     if mode not in expected_modes:
       raise RuntimeError(f"Invalid mode \"{mode}\". Only supports {expected_modes}")
-    func = getattr(self, mode)
+    func = getattr(self, f"do_{mode}")
     return func(batch_inputs, batch_datasamples)
 
   @abstractmethod
-  def tensor(self, 
+  def do_tensor(self, 
              batch_inputs: torch.Tensor, 
              *,
              batch_datasamples: List[DataSample]=None):
     raise NotImplementedError
 
   @abstractmethod
-  def loss(self, 
-           batch_inputs: torch.Tensor, 
-           *,
-           batch_datasamples: List[DataSample]=None):
+  def do_loss(self, 
+              batch_inputs: torch.Tensor, 
+              *,
+              batch_datasamples: List[DataSample]=None):
     raise NotImplementedError
 
   @abstractmethod
