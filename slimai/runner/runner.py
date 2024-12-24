@@ -1,3 +1,5 @@
+import math
+import sys
 from torch.distributed.elastic.multiprocessing.errors import record
 import mmengine
 from slimai.helper import help_build, help_utils
@@ -44,6 +46,11 @@ class Runner(object):
         loss = dist_env.sync(loss)
         kappa = dist_env.sync(kappa)
         help_utils.print_log(f"Synced AVG Loss: {loss}, AVG Kappa: {kappa}", main_process_only=False, level="NOTSET")
+        
+        if not math.isfinite(loss.item()):
+          help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")
+          sys.exit(1)
+          
         loss.backward()
         self.solver.step()
 
