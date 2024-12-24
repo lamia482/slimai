@@ -1,5 +1,5 @@
-from typing import List
 import torch
+from torchmetrics.classification import MulticlassCohenKappa
 from slimai.helper.help_build import MODELS
 from slimai.helper.structure import DataSample
 from .base_arch import BaseArch
@@ -7,27 +7,16 @@ from .base_arch import BaseArch
 
 @MODELS.register_module()
 class ClassificationArch(BaseArch):
-  def __init__(self, **kwargs):
-    super().__init__(**kwargs)
-    return
-  
-  def _init_layers(self):
-    pass
-  
-  def do_tensor(self, 
-                batch_inputs: torch.Tensor, 
-                *,
-                batch_datasamples: List[DataSample]=None):
-    return
-
   def do_loss(self, 
-              batch_inputs: torch.Tensor, 
-              *,
-              batch_datasamples: List[DataSample]=None):
-    return
-
-  def do_predict(self, 
-                 batch_inputs: torch.Tensor, 
-                 *,
-                 batch_datasamples: List[DataSample]=None):
+              batch_data: torch.Tensor, 
+              batch_info: DataSample):
+    output = self.do_tensor(batch_data, batch_info)
+    loss = self.loss(output, batch_info.label)
+    kappa = MulticlassCohenKappa(num_classes=15).to(self.device)(
+      batch_info.label, output.argmax(dim=1)
+    )
+    return loss, kappa
+  def postprocess(self, 
+                  batch_data: torch.Tensor, 
+                  batch_info: DataSample):
     return

@@ -3,7 +3,7 @@ import numpy as np
 import mmcv
 import mmengine
 import torch
-from loguru import logger
+from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import DATASETS, build_transform
 
 
@@ -19,7 +19,7 @@ class SupervisedDataset(torch.utils.data.Dataset):
   def __init__(self, dataset, 
                *, 
                std_func=None, 
-               ann_keys=["labels", "masks", "instances", "texts"],
+               ann_keys=["label", "mask", "instance", "text"],
                transform=None, 
                to_rgb=True, 
                desc=None, 
@@ -70,14 +70,11 @@ class SupervisedDataset(torch.utils.data.Dataset):
       self.max_sample_num = max_sample_num
       self.length = min(max_sample_num, len(self))
 
-    logger.info(f"Dataset {self}")
+    print_log(f"Dataset {self}", level="INFO")
     return
 
   def __getitem__(self, item):
-    if self.version is None:
-      data = self.select_sample(item)
-    else:
-      raise NotImplementedError("Versioned dataset is not implemented")
+    data = self.select_sample(item)
 
     # check data keys
     assert (
@@ -90,7 +87,7 @@ class SupervisedDataset(torch.utils.data.Dataset):
     file = self.files[item]
     image = mmcv.imread(file)
     if image is None:
-      logger.warning(f"Image '{file}' is None, select another sample randomly")
+      print_log(f"Image '{file}' is None, select another sample randomly", level="WARNING")
       item = np.random.randint(0, len(self))
       return self.select_sample(item)
 
@@ -141,7 +138,7 @@ class DatasetChecker(object):
     return True
 
   @classmethod
-  def check_labels(cls, labels, length):
+  def check_label(cls, labels, length):
     assert (
       labels is not None
     ), "Labels must be provided"
@@ -156,7 +153,7 @@ class DatasetChecker(object):
     return True
 
   @classmethod
-  def check_masks(cls, masks, length):
+  def check_mask(cls, masks, length):
     assert (
       masks is not None
     ), "Masks must be provided"
@@ -171,7 +168,7 @@ class DatasetChecker(object):
     return True
 
   @classmethod
-  def check_instances(cls, instances, length):
+  def check_instance(cls, instances, length):
     assert (
       instances is not None
     ), "Instances must be provided"
@@ -186,7 +183,7 @@ class DatasetChecker(object):
     return True
 
   @classmethod
-  def check_texts(cls, texts, length):
+  def check_text(cls, texts, length):
     assert (
       texts is not None
     ), "Texts must be provided"

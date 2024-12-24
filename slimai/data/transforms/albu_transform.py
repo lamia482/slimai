@@ -6,8 +6,15 @@ from .base_transform import BaseTransform
 
 @TRANSFORMS.register_module()
 class AlbuTransform(BaseTransform):
-  def __call__(self, data):
-    data = self.transforms(**data)
+  albu_keys = ["image", "mask", "bboxes", "keypoints"]
+
+  def __call__(self, data):  
+    inp_data = {
+      k: data[k] for k in self.albu_keys
+      if k in data
+    }
+    out_data = self.transforms(**inp_data)
+    data.update(out_data)
     return data
   
   def compose(self, transforms):

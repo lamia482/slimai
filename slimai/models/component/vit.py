@@ -1,4 +1,5 @@
 import torch
+import torchvision.models as models
 from slimai.helper.help_build import MODELS
 from .base_component import BaseComponent
 
@@ -6,14 +7,15 @@ from .base_component import BaseComponent
 @MODELS.register_module()
 class ViT(BaseComponent):
   def __init__(self, 
-               arch="vit_base", 
+               arch="base", 
                patch_size=16, 
                img_size=224, 
                use_lora=False, 
                pretrained_weight=None, 
                **kwargs):
-    super().__init__(pretrained_weight)
+    super().__init__()
+    self.vit = getattr(models, f"vit_{arch[0]}_{patch_size}")(weights=pretrained_weight)
     return
   
   def forward(self, x):
-    pass
+    return self.vit(x)

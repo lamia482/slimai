@@ -6,9 +6,11 @@ and finally mmengine components.
 """
 import torch
 from typing import Callable
+from torch.utils.data.distributed import DistributedSampler
 from mmengine.dataset import Compose as ComposeTransform
 from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, METRICS, OPTIMIZERS
 IMPORT = Registry("import")
+from slimai.helper.help_utils import print_log, dist_env
 
 
 def compose_components(components, 
@@ -75,11 +77,28 @@ def build_dataset(cfg) -> torch.utils.data.Dataset:
 
 def build_dataloader(cfg) -> torch.utils.data.DataLoader:
   dataset = build_dataset(cfg.pop("dataset"))
+  if dist_env.global_world_size > 1:
+    assert (
+      "sampler" not in cfg
+    ), "Sampler is not allowed in dataloader when DDP is enabled"
+    print_log("use torch.utils.data.DistributedSampler for DDP")
+    cfg["sampler"] = DistributedSampler(dataset, 
+                                        shuffle=cfg.pop("shuffle", True),
+                                        seed=10086, 
+                                        num_replicas=dist_env.global_world_size, 
+                                        rank=dist_env.global_rank)
+    
+  if cfg.get("pin_memory", True):
+    cfg["pin_memory_device"] = f"cuda:{dist_env.local_rank}"
+
   loader = torch.utils.data.DataLoader(dataset, **cfg)
   return loader
 
 def build_model(cfg) -> torch.nn.Module:
-  return compose_components(cfg, source=MODELS)
+  module = compose_components(cfg, source=MODELS)
+  if module is None:
+    module = torch.nn.Identity()
+  return module
 
 def build_loss(cfg) -> torch.nn.Module:
   return compose_components(cfg, source=MODELS)

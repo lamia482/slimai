@@ -2,11 +2,11 @@
 
 ##### define user args
 CONFIG_FILE="$1"
-CUDA_VISIBLE_DEVICES="5,6"
+# CUDA_VISIBLE_DEVICES="6,7"
 
 ##### define nodes number for jobs
 NNODES=1
-NPROC_PER_NODE=2
+NPROC_PER_NODE=8
 
 ##### random DDP info
 JOB_ID=12345
@@ -40,8 +40,7 @@ torchrun \
   --rdzv-backend=c10d \
   --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} \
   tools/run.py \
-  --launcher=pytorch \
   --config="${CONFIG_FILE}" \
+  --work-dir="/hzztai/toolbox/_debug_/work_dir" \
   --action="train" \
-  --amp --auto-scale-lr \
   ${@:2}
