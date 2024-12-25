@@ -1,7 +1,6 @@
 import os
 import argparse
 from mmengine.config import Config
-import slimai
 from slimai.runner import Runner
 from slimai.helper import help_utils
 

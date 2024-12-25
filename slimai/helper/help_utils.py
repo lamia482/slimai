@@ -1,7 +1,11 @@
+import sys
 import logging
 from pathlib import Path
 import mmengine
 from loguru import logger
+logger.remove()
+logger.add(sys.stderr, format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <level>{message}</level>")
+
 from .utils.dist_env import dist_env
 from .utils.network import PytorchNetworkUtils
 from .utils.vis import put_gt_on_image, put_pred_on_image, hstack_imgs, vstack_imgs
@@ -17,9 +21,8 @@ def print_log(msg, level="INFO", main_process_only=True):
   if not dist_env.is_main_process() and main_process_only:
     return
   assert (
-    level in ["NOTSET", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    level in ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
   ), "Invalid log level: {}".format(level)
-  level = getattr(logging, level)
   logger.log(level, msg)
   return
 

@@ -77,7 +77,7 @@ def build_dataset(cfg) -> torch.utils.data.Dataset:
 
 def build_dataloader(cfg) -> torch.utils.data.DataLoader:
   dataset = build_dataset(cfg.pop("dataset"))
-  if dist_env.global_world_size > 1:
+  if dist_env.is_dist_initialized():
     assert (
       "sampler" not in cfg
     ), "Sampler is not allowed in dataloader when DDP is enabled"

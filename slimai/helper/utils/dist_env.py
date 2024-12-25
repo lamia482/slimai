@@ -1,5 +1,4 @@
 import os
-from mmengine.dist import is_main_process
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -23,7 +22,10 @@ class DistEnv(object):
     ]}
 
   def is_main_process(self):
-    return is_main_process()
+    return self.local_rank == 0
+
+  def is_dist_initialized(self):
+    return dist.is_initialized()
   
   def init_dist(self, module=None, backend="nccl"):
     if not dist.is_initialized():

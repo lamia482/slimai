@@ -2,7 +2,7 @@
 
 ##### define user args
 CONFIG_FILE="$1"
-CUDA_VISIBLE_DEVICES="6,7"
+CUDA_VISIBLE_DEVICES="7"
 
 ##### define nodes number for jobs
 NNODES=1

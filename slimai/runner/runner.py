@@ -55,6 +55,7 @@ class Runner(object):
     model = help_build.build_model(cfg.MODEL)
     model = dist_env.init_dist(module=model)
     solver = help_build.build_solver(cfg.RUNNER.solver, model)
+    dist_env.sync()
     help_utils.print_log("Created Dist runner, desc: {}".format(dist_env.desc), main_process_only=False)
     return train_loader, valid_loader, test_loader, model, solver
   
