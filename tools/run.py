@@ -37,7 +37,7 @@ def parse_config(args):
     raise ValueError("work_dir is not specified by CLI or config file")
   
   if args.amp is True:
-    cfg.RUNNER.amp = True
+    cfg.RUNNER.gradient.amp = True
 
   # resume is determined in this priority: resume from > auto_resume
   if args.resume is not None:

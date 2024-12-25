@@ -19,7 +19,9 @@ class Runner(object):
     self.work_dir = cfg.work_dir
 
     self.max_epoch = cfg.RUNNER.max_epoch
-    self.gradient_accumulation_steps = cfg.RUNNER.get("gradient_accumulation_steps", 1)
+    self.gradient_amp = cfg.RUNNER.gradient.get("amp", False)
+    self.gradient_accumulation_every_n_steps = cfg.RUNNER.gradient.get("accumulation_every_n_steps", 1)
+    self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
 
     self.log_level = cfg.RUNNER.logger.get("log_level", "INFO")
     self.log_file = Path(self.work_dir) / cfg.RUNNER.logger.get("log_dir", "logs") / "log.txt"
@@ -78,7 +80,7 @@ class Runner(object):
         batch_data = batch_info.pop("image")
 
         with torch.autocast(device_type=self.model.device.type, 
-                            enabled=self.cfg.RUNNER.amp, dtype=torch.bfloat16):
+                            enabled=self.gradient_amp, dtype=torch.bfloat16):
           data = self.model(batch_data, batch_info, mode="loss")
           loss, kappa = data["loss"], data["kappa"]
 
@@ -89,15 +91,16 @@ class Runner(object):
           help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")
           sys.exit(1)
           
-        loss.backward()
+        self.gradient_scaler.scale(loss).backward()
 
         if (step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(
             msg=f"Step: {step+1}/{len(self.train_dataloader)}, Loss: {loss:.6f}, Kappa: {kappa:.6f}"
             ), level="INFO")
 
-        if (step + 1) % self.gradient_accumulation_steps == 0:
-          self.solver.step()
+        if (step + 1) % self.gradient_accumulation_every_n_steps == 0:
+          self.gradient_scaler.step(self.solver)
+          self.gradient_scaler.update()
           self.solver.zero_grad()
 
       self.save_ckpt(epoch, loss)
