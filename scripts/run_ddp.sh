@@ -2,11 +2,11 @@
 
 ##### define user args
 CONFIG_FILE="$1"
-# CUDA_VISIBLE_DEVICES="6,7"
+CUDA_VISIBLE_DEVICES="6,7"
 
 ##### define nodes number for jobs
 NNODES=1
-NPROC_PER_NODE=8
+NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 
 ##### random DDP info
 JOB_ID=12345
