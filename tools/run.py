@@ -15,15 +15,10 @@ def parse_args():
   parser.add_argument("--action", choices=["train", "infer", "evaluate"], type=str, required=True, 
                       help="the action to run, train, infer, evaluate")
   parser.add_argument("--amp", action="store_true", help="whether to use amp")
-  parser.add_argument("--auto_scale_lr", "--auto-scale-lr", action="store_true", 
-                      help="enable automatically scaling LR.")
   parser.add_argument("--resume", nargs="?", type=str, const="auto",
                       help="If specify checkpoint path, resume from it, while if not "
                       "specify, try to auto resume from the latest checkpoint "
                       "in the work directory.")
-  parser.add_argument("--launcher", choices=["none", "pytorch", "slurm"], 
-                      type=str, default="none", 
-                      help="the launcher to use, none, pytorch, slurm")
   # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
   # will pass the `--local-rank` parameter instead of `--local_rank`.
   parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
@@ -34,7 +29,6 @@ def parse_args():
 
 def parse_config(args):
   cfg = Config.fromfile(args.config)
-  cfg.launcher = args.launcher
   
   # work_dir is determined in this priority: CLI > segment in file
   if args.work_dir is not None:
@@ -45,18 +39,6 @@ def parse_config(args):
   
   if args.amp is True:
     cfg.RUNNER.amp = True
-
-  # enable automatically scaling LR
-  if args.auto_scale_lr:
-    if "auto_scale_lr" in cfg and \
-            "enable" in cfg.auto_scale_lr and \
-            "base_batch_size" in cfg.auto_scale_lr:
-      cfg.auto_scale_lr.enable = True
-    else:
-      raise RuntimeError("Can not find \"auto_scale_lr\" or "
-                          "\"auto_scale_lr.enable\" or "
-                          "\"auto_scale_lr.base_batch_size\" in your"
-                          " configuration file.")
 
   # resume is determined in this priority: resume from > auto_resume
   if args.resume is not None:
