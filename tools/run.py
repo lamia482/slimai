@@ -1,6 +1,7 @@
-import os, os.path as osp
+import os
 import argparse
 from mmengine.config import Config
+import slimai
 from slimai.runner import Runner
 from slimai.helper import help_utils
 
@@ -38,7 +39,7 @@ def parse_config(args):
   # work_dir is determined in this priority: CLI > segment in file
   if args.work_dir is not None:
     # update configs according to CLI args if args.work_dir is not None
-    cfg.work_dir = osp.join(args.work_dir, cfg.signature)
+    cfg.work_dir = args.work_dir
   elif cfg.get("work_dir", None) is None:
     raise ValueError("work_dir is not specified by CLI or config file")
   
@@ -68,8 +69,8 @@ def parse_config(args):
 
   # resume is determined in this priority: resume from > auto_resume
   if args.resume is not None:
-    cfg.resume = True
-    cfg.load_from = None if args.resume == "auto" else args.resume
+    cfg.RUNNER.resume.enable = True
+    cfg.RUNNER.resume.resume_from = "latest" if args.resume == "auto" else args.resume
 
   return cfg
 
@@ -77,10 +78,13 @@ def main():
 
   args = parse_args()
   cfg = parse_config(args)
-  runner = Runner(cfg)
 
+  help_utils.dist_env.init_dist()
+
+  runner = Runner(cfg)
   runner.run(action=args.action)
 
+  help_utils.dist_env.close_dist()
   return
 
 if __name__ == "__main__":

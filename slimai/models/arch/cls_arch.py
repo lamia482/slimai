@@ -15,7 +15,8 @@ class ClassificationArch(BaseArch):
     kappa = MulticlassCohenKappa(num_classes=15).to(self.device)(
       batch_info.label, output.argmax(dim=1)
     )
-    return loss, kappa
+    return dict(loss=loss, kappa=kappa)
+  
   def postprocess(self, 
                   batch_data: torch.Tensor, 
                   batch_info: DataSample):

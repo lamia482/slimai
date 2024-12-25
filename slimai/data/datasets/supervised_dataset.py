@@ -68,7 +68,7 @@ class SupervisedDataset(torch.utils.data.Dataset):
       self.length = len(files)
     else:
       self.max_sample_num = max_sample_num
-      self.length = min(max_sample_num, len(self))
+      self.length = min(max_sample_num, len(files))
 
     print_log(f"Dataset {self}", level="INFO")
     return

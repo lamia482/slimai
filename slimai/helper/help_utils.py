@@ -1,21 +1,26 @@
-import os
 import logging
 from pathlib import Path
 import mmengine
-from mmengine.logging import print_log as _mm_print_log
+from loguru import logger
 from .utils.dist_env import dist_env
 from .utils.network import PytorchNetworkUtils
 from .utils.vis import put_gt_on_image, put_pred_on_image, hstack_imgs, vstack_imgs
 
 
-def print_log(msg, logger="current", level="INFO", main_process_only=True):
+def update_logger(log_file: Path, log_level: str = "INFO"):
+  if not dist_env.is_main_process():
+    return
+  logger.add(log_file, level=log_level)
+  return
+
+def print_log(msg, level="INFO", main_process_only=True):
   if not dist_env.is_main_process() and main_process_only:
     return
   assert (
     level in ["NOTSET", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
   ), "Invalid log level: {}".format(level)
   level = getattr(logging, level)
-  _mm_print_log(msg, logger=logger, level=level)
+  logger.log(level, msg)
   return
 
 def get_folder(file_path):

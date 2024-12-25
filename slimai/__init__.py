@@ -29,5 +29,3 @@ def check_env():
   print_log("Pytorch Passed, version: {}".format(torch.__version__))
   print_log("Check environment success.")
   return
-
-check_env()

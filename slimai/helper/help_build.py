@@ -84,7 +84,7 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
     print_log("use torch.utils.data.DistributedSampler for DDP")
     cfg["sampler"] = DistributedSampler(dataset, 
                                         shuffle=cfg.pop("shuffle", True),
-                                        seed=10086, 
+                                        seed=dist_env.global_rank, 
                                         num_replicas=dist_env.global_world_size, 
                                         rank=dist_env.global_rank)
     

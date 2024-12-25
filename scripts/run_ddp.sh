@@ -25,11 +25,9 @@ MASTER_PORT: ${MASTER_PORT}
 MAX_RESTARTS: ${MAX_RESTARTS}
 """
 
-
 ##### cd working path
 TOOLBOX_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
-cd "${TOOLBOX_ROOT_DIR}"
-echo "Entering Root Working Path: ${TOOLBOX_ROOT_DIR}"
+export PYTHONPATH="${TOOLBOX_ROOT_DIR}":"${PYTHONPATH}"
 
 ##### DDP RUN
 torchrun \
@@ -39,8 +37,7 @@ torchrun \
   --rdzv-id=${JOB_ID} \
   --rdzv-backend=c10d \
   --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} \
-  tools/run.py \
+  ${TOOLBOX_ROOT_DIR}/tools/run.py \
   --config="${CONFIG_FILE}" \
-  --work-dir="/hzztai/toolbox/_debug_/work_dir" \
   --action="train" \
   ${@:2}

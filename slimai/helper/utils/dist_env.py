@@ -25,24 +25,32 @@ class DistEnv(object):
   def is_main_process(self):
     return is_main_process()
   
-  def init_dist(self, module, backend="nccl"):
+  def init_dist(self, module=None, backend="nccl"):
     if not dist.is_initialized():
       dist.init_process_group(backend=backend)
-    
-    torch.cuda.set_device(self.local_rank)
-    torch.backends.cudnn.benchmark = True
-    module.to(self.local_rank)
-    return DDP(module, device_ids=[self.local_rank])
+      torch.cuda.set_device(self.local_rank)
+      torch.backends.cudnn.benchmark = True
+
+    if module is not None:
+      module.to(self.local_rank)
+      module = DDP(module, device_ids=[self.local_rank])
+    return module
   
-  def sync(self, tensor, op=dist.ReduceOp.AVG):
-    dist.all_reduce(tensor, op=op)
+  def sync(self, tensor=None, op=dist.ReduceOp.AVG):
+    dist.barrier()
+    if tensor is not None:
+      dist.all_reduce(tensor, op=op)
     return tensor
 
-  def gather(self, data):
-    return dist.all_gather(data)
+  def gather(self, data=None):
+    dist.barrier()
+    if data is not None:
+      data = dist.all_gather(data)
+    return data
 
   def close_dist(self):
     if dist.is_initialized():
+      dist.barrier()
       dist.destroy_process_group()
     return
   
