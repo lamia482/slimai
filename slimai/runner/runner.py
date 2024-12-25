@@ -3,6 +3,7 @@ import os
 import sys
 import torch
 from pathlib import Path
+import torch.amp
 from torch.distributed.elastic.multiprocessing.errors import record
 import mmengine
 import slimai
@@ -66,7 +67,7 @@ class Runner(object):
   def train(self):
     for epoch in range(self.epoch, self.max_epoch):
       self.train_dataloader.sampler.set_epoch(epoch)
-      desc = f"[TRAIN {epoch}/{self.max_epoch} EPOCH]" + " {msg}"
+      desc = f"[TRAIN {epoch+1}/{self.max_epoch} EPOCH]" + " {msg}"
 
       self.model.train()
       self.solver.zero_grad()
@@ -74,11 +75,14 @@ class Runner(object):
       for step, batch_info in enumerate(self.train_dataloader):
         batch_info = DataSample(**batch_info).to(self.model.device)
         batch_data = batch_info.pop("image")
-        data = self.model(batch_data, batch_info, mode="loss")
-        loss, kappa = data["loss"], data["kappa"]
 
-        loss = dist_env.sync(loss)
-        kappa = dist_env.sync(kappa)
+        with torch.autocast(device_type=self.model.device.type, 
+                            enabled=self.cfg.RUNNER.amp, dtype=torch.bfloat16):
+          data = self.model(batch_data, batch_info, mode="loss")
+          loss, kappa = data["loss"], data["kappa"]
+
+          loss = dist_env.sync(loss)
+          kappa = dist_env.sync(kappa)
         
         if not math.isfinite(loss.item()):
           help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")

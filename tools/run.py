@@ -44,16 +44,7 @@ def parse_config(args):
     raise ValueError("work_dir is not specified by CLI or config file")
   
   if args.amp is True:
-    optim_wrapper = cfg.optim_wrapper.type
-    if optim_wrapper == "AmpOptimWrapper":
-      help_utils.print_log("AMP training is already enabled in your config.",
-                logger="current", level="WARNING")
-    else:
-      assert (
-        optim_wrapper == "OptimWrapper"
-      ), f"`--amp` is only supported when the optimizer wrapper type is `OptimWrapper` but got {optim_wrapper}."
-    cfg.optim_wrapper.type = "AmpOptimWrapper"
-    cfg.optim_wrapper.loss_scale = "dynamic"
+    cfg.RUNNER.amp = True
 
   # enable automatically scaling LR
   if args.auto_scale_lr:
