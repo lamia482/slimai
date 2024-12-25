@@ -105,8 +105,18 @@ def build_loss(cfg) -> torch.nn.Module:
 
 def build_solver(cfg, module: torch.nn.Module):
   cfg = cfg.copy()
+
+  if cfg.get("scheduler", None) is None:
+    cfg["scheduler"] = dict(type="torch.optim.lr_scheduler.LambdaLR", lr_lambda=lambda epoch: 1)
+  scheduler = cfg.pop("scheduler")
+  
   cfg.params = module.parameters()
-  return compose_components(cfg, source=OPTIMIZERS)
+  solver = compose_components(cfg, source=OPTIMIZERS)
+
+  scheduler.optimizer = solver
+  scheduler = compose_components(scheduler, source=OPTIMIZERS, recursive_key="schedulers")
+  solver.scheduler = scheduler
+  return solver
 
 def build_metric(cfg):
   return compose_components(cfg, source=METRICS)

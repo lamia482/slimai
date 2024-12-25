@@ -93,15 +93,18 @@ class Runner(object):
           
         self.gradient_scaler.scale(loss).backward()
 
-        if (step + 1) % self.log_every_n_steps == 0:
-          help_utils.print_log(desc.format(
-            msg=f"Step: {step+1}/{len(self.train_dataloader)}, Loss: {loss:.6f}, Kappa: {kappa:.6f}"
-            ), level="INFO")
-
         if (step + 1) % self.gradient_accumulation_every_n_steps == 0:
           self.gradient_scaler.step(self.solver)
           self.gradient_scaler.update()
           self.solver.zero_grad()
+          self.solver.scheduler.step()
+
+        if (step + 1) % self.log_every_n_steps == 0:
+          help_utils.print_log(desc.format(
+            msg=f"Step: {step+1}/{len(self.train_dataloader)}"
+                f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}, "
+                f", Loss: {loss:.6f}, Kappa: {kappa:.6f}"
+            ), level="INFO")
 
       self.save_ckpt(epoch, loss)
 
