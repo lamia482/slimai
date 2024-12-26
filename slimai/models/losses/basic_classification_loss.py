@@ -16,9 +16,7 @@ class BasicClassificationLoss(torch.nn.Module):
     return
   
   def forward(self, 
-              embedding_dict: Dict[str, torch.Tensor], 
-              batch_info: DataSample) -> Dict[str, torch.Tensor]:
-    logits = embedding_dict["head"]
-    labels = batch_info.label
-    cls_loss = self.cls_loss(logits, labels)
+              logits: torch.Tensor, 
+              targets: torch.Tensor) -> Dict[str, torch.Tensor]:
+    cls_loss = self.cls_loss(logits, targets)
     return dict(cls_loss=cls_loss)

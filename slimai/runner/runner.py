@@ -14,7 +14,7 @@ class Runner(object):
   def __init__(self, cfg: mmengine.Config):
     self.cfg = cfg.copy()
 
-    self.work_dir = cfg.work_dir
+    self.work_dir = Path(cfg.work_dir).resolve()
 
     self.max_epoch = cfg.RUNNER.max_epoch
     self.gradient_amp = cfg.RUNNER.gradient.get("amp", False)
@@ -22,10 +22,10 @@ class Runner(object):
     self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
 
     self.log_level = cfg.RUNNER.logger.get("log_level", "INFO")
-    self.log_file = Path(self.work_dir) / cfg.RUNNER.logger.get("log_dir", "logs") / "log.txt"
+    self.log_file = self.work_dir / cfg.RUNNER.logger.get("log_dir", "logs") / "log.txt"
     self.log_every_n_steps = cfg.RUNNER.logger.get("log_every_n_steps", 10)
 
-    self.ckpt_save_dir = Path(self.work_dir) / cfg.RUNNER.ckpt.get("save_dir", "ckpts")
+    self.ckpt_save_dir = self.work_dir / cfg.RUNNER.ckpt.get("save_dir", "ckpts")
     self.ckpt_save_every_n_epochs = cfg.RUNNER.ckpt.get("save_every_n_epochs", 1)
     self.ckpt_keep_max = cfg.RUNNER.ckpt.get("keep_max", -1)
     self.ckpt_keep_best = cfg.RUNNER.ckpt.get("keep_best", True)
@@ -40,7 +40,7 @@ class Runner(object):
     slimai.check_env()
 
     self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
-      self.model, self.solver = self.build_components(self.cfg)
+      self.model, self.solver, self.metric = self.build_components(self.cfg)
     
     self.epoch = 0
     self.load_ckpt(resume=self.cfg.RUNNER.resume.enable, 
@@ -54,13 +54,13 @@ class Runner(object):
     valid_loader = help_build.build_dataloader(cfg.VALID_LOADER)
     test_loader = help_build.build_dataloader(cfg.TEST_LOADER)
 
-    cfg.MODEL.metric = cfg.METRIC
     model = help_build.build_model(cfg.MODEL)
     model = dist_env.init_dist(module=model)
     solver = help_build.build_solver(cfg.RUNNER.solver, model)
+    metric = help_build.build_metric(cfg.METRIC)
     dist_env.sync()
     help_utils.print_log("Created Dist runner, desc: {}".format(dist_env.desc), main_process_only=False)
-    return train_loader, valid_loader, test_loader, model, solver
+    return train_loader, valid_loader, test_loader, model, solver, metric
   
   @record
   def run(self, *, action):
@@ -86,17 +86,11 @@ class Runner(object):
           loss_dict = self.model(batch_data, batch_info, mode="loss")
           loss_dict = dist_env.sync(loss_dict)
 
-        total_loss, loss_msg, n_loss = 0, "", 0
-        for key, loss in loss_dict.items():
-          loss_msg += f", {key}: {loss:.4f}"
-          if "loss" in key:
-            n_loss += 1
-            total_loss += loss
+        total_loss = sum(loss_dict.values())
+        if len(loss_dict) > 1:
+          msg += f", total_loss: {total_loss:.6f}"
+        msg += ", " + ", ".join([f"{key}: {loss:.6f}" for key, loss in loss_dict.items()])
 
-        if n_loss > 1:
-          msg += f", total_loss: {total_loss:.4f}"
-        msg += loss_msg
-          
         self.gradient_scaler.scale(total_loss).backward()
 
         if (step + 1) % self.gradient_accumulation_every_n_steps == 0:
@@ -105,12 +99,14 @@ class Runner(object):
           self.solver.zero_grad()
           self.solver.scheduler.step()
 
+        msg += f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}"
+
         if (step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
-      ckpt_path = self.save_ckpt(epoch, loss)
-      result_file = Path(self.work_dir) / "results" / f"epoch_{epoch}.pkl"
-      metrics = self.evaluate(self.valid_dataloader, result_file)
+      self.save_ckpt(epoch, total_loss)
+      result_file = self.work_dir / "results" / f"epoch_{epoch}.pkl"
+      self.evaluate(self.valid_dataloader, result_file)
 
     return
   
@@ -121,17 +117,19 @@ class Runner(object):
 
     self.model.eval()
 
-    pbar = help_utils.ProgressBar(len(dataloader), desc="Infer")
+    pbar = help_utils.ProgressBar(len(dataloader), desc="Infer", sep="\r\t")
 
     results = []
     for step, batch_info in enumerate(dataloader):
       batch_info = DataSample(**batch_info).to(self.model.device)
       batch_data = batch_info.pop("image")
-      batch_info = self.model(batch_data, batch_info, mode="predict")
+      batch_info = self.model(batch_data, batch_info, mode="predict").cpu()
       results.extend(batch_info.split_as_list())
       pbar.update()
+    pbar.close()
 
     results = dist_env.collect(results)
+    results = dict(batch_info=results)
 
     if dist_env.is_main_process():
       mmengine.dump(results, result_file)
@@ -146,7 +144,16 @@ class Runner(object):
     else:
       results = mmengine.load(result_file)
 
-    metrics = results
+    batch_info = results["batch_info"]
+    logits = torch.stack([result.output for result in batch_info])
+    targets = torch.stack([result.label for result in batch_info])
+    metrics = self.metric(logits, targets)
+
+    if dist_env.is_main_process():
+      help_utils.print_log(f"Metrics: {', '.join([f'{key}: {value:.6f}' for key, value in metrics.items()])}")
+      results["metrics"] = metrics
+      mmengine.dump(results, result_file)
+
     dist_env.sync()
     return metrics
 

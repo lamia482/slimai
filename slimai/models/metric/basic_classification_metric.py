@@ -1,7 +1,6 @@
 from typing import Dict
 import torch
 from slimai.helper.help_build import MODELS, build_metric
-from slimai.helper.structure import DataSample
 
 
 @MODELS.register_module()
@@ -22,12 +21,10 @@ class BasicClassificationMetric(torch.nn.Module):
 
   @torch.no_grad()
   def forward(self, 
-              embedding_dict: Dict[str, torch.Tensor], 
-              batch_info: DataSample) -> Dict[str, torch.Tensor]:
-    logits = embedding_dict["head"]
+              logits: torch.Tensor, 
+              targets: torch.Tensor) -> Dict[str, torch.Tensor]:
     scores = torch.softmax(logits, dim=1)
-    labels = batch_info.label
     return dict(
-      acc=self.acc(scores, labels),
-      kappa=self.kappa(scores, labels),
+      acc=self.acc(scores, targets),
+      kappa=self.kappa(scores, targets),
     )

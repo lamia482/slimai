@@ -51,15 +51,21 @@ class ProgressBar(mmengine.ProgressBar):
     else:
       fps = float('inf')
 
-    msg = f"{self.desc}{msg}"
-    print_log(msg, level="INFO")
+    no_msg = (msg == "")
+
+    if no_msg:
+      msg = self.desc
+    else:
+      msg = f"{self.desc}{msg}"
+      print_log(msg, level="INFO")
+      
 
     if self.task_num > 0:
       percentage = self.completed / float(self.task_num)
       eta = int(elapsed * (1 - percentage) / percentage + 0.5)
       msg += f'{sep}[{{}}] {self.completed}/{self.task_num}, ' \
             f'{fps:.1f} task/s, elapsed: {int(elapsed + 0.5)}s, ' \
-            f'ETA: {eta:5}s\n'
+            f'ETA: {eta:5}s' + ("" if no_msg else "\n")
 
       bar_width = min(self.bar_width,
                       int(self.terminal_width - len(msg)) + 2,
@@ -74,3 +80,8 @@ class ProgressBar(mmengine.ProgressBar):
         f'completed: {self.completed}, elapsed: {int(elapsed + 0.5)}s,'
         f' {fps:.1f} tasks/s\n')
     self.file.flush()
+
+  def close(self):
+    self.file.write("\n")
+    self.file.flush()
+    return

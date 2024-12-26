@@ -15,8 +15,7 @@ class BaseArch(torch.nn.Module):
                decoder=dict(
                  head=None, 
                ), 
-               loss=None, 
-               metric=None):
+               loss=None):
     super().__init__()
     
     # init model layers
@@ -29,8 +28,6 @@ class BaseArch(torch.nn.Module):
       for component, cfg in decoder.items()
     })
     self.loss = help_build.build_loss(loss)
-
-    self.metric = help_build.build_metric(metric)
 
     help_utils.print_log(f"Model({__class__.__name__}) built successfully with {help_utils.PytorchNetworkUtils.get_params_size(self)} parameters")
     return
@@ -63,9 +60,7 @@ class BaseArch(torch.nn.Module):
       if not math.isfinite(loss.item()):
           help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")
           sys.exit(1)
-
       output = loss_dict
-      output.update(self._forward_metric(embedding_dict, batch_info))
 
     elif mode == "predict":
       output = self.predict(batch_data, batch_info)
@@ -91,15 +86,10 @@ class BaseArch(torch.nn.Module):
   def _forward_loss(self, 
               embedding_dict: Dict[str, torch.Tensor], 
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
-    loss = self.loss(embedding_dict, batch_info)
+    logits = embedding_dict["head"]
+    targets = batch_info.label
+    loss = self.loss(logits, targets)
     return loss
-
-  @torch.no_grad()
-  def _forward_metric(self, 
-              embedding_dict: Dict[str, torch.Tensor], 
-              batch_info: DataSample) -> Dict[str, torch.Tensor]:
-    metric = self.metric(embedding_dict, batch_info)
-    return metric
 
   @abstractmethod
   def postprocess(self, 
