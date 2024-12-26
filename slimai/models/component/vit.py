@@ -1,11 +1,10 @@
 import torch
 import torchvision.models as models
 from slimai.helper.help_build import MODELS
-from .base_component import BaseComponent
 
 
 @MODELS.register_module()
-class ViT(BaseComponent):
+class ViT(torch.nn.Module):
   def __init__(self, 
                arch="base", 
                patch_size=16, 

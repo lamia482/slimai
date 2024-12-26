@@ -1,10 +1,10 @@
 import sys
-import logging
 from pathlib import Path
 import mmengine
 from loguru import logger
 logger.remove()
-logger.add(sys.stderr, format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <level>{message}</level>")
+logger_format = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <level>{message}</level>"
+logger.add(sys.stderr, format=logger_format)
 
 from .utils.dist_env import dist_env
 from .utils.network import PytorchNetworkUtils
@@ -14,7 +14,7 @@ from .utils.vis import put_gt_on_image, put_pred_on_image, hstack_imgs, vstack_i
 def update_logger(log_file: Path, log_level: str = "INFO"):
   if not dist_env.is_main_process():
     return
-  logger.add(log_file, level=log_level)
+  logger.add(log_file, level=log_level, format=logger_format)
   return
 
 def print_log(msg, level="INFO", main_process_only=True):

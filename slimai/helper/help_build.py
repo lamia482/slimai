@@ -8,7 +8,7 @@ import torch
 from typing import Callable
 from torch.utils.data.distributed import DistributedSampler
 from mmengine.dataset import Compose as ComposeTransform
-from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, METRICS, OPTIMIZERS
+from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, OPTIMIZERS
 IMPORT = Registry("import")
 from slimai.helper.help_utils import print_log, dist_env
 
@@ -32,11 +32,15 @@ def compose_components(components,
       return None
     
     assert (
-      isinstance(component, dict) and "type" in component
-    ), "Component must be a dict with 'type' key, but got: {}".format(component)
+      isinstance(component, dict)
+    ), "Component must be a dict but got: {}".format(component)
 
     component = component.copy()
-    component_type = component.pop("type")
+    component_type = component.pop("type", None)
+    
+    # if component_type is None, it means it is a dict[str, component]
+    if component_type is None:
+      return {k: _recursive_compose(v) for k, v in component.items()}
     
     for get_component_cls in source:
       try:
@@ -119,4 +123,4 @@ def build_solver(cfg, module: torch.nn.Module):
   return solver
 
 def build_metric(cfg):
-  return compose_components(cfg, source=METRICS)
+  return compose_components(cfg, source=MODELS)

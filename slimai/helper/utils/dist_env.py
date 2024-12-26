@@ -39,15 +39,19 @@ class DistEnv(object):
     return module
   
   def sync(self, tensor=None, op=dist.ReduceOp.AVG):
-    dist.barrier()
+    if isinstance(tensor, dict):
+      return {k: self.sync(v) for k, v in tensor.items()}
+    
     if tensor is not None:
       dist.all_reduce(tensor, op=op)
+      
+    dist.barrier()
     return tensor
 
   def gather(self, data=None):
-    dist.barrier()
     if data is not None:
       data = dist.all_gather(data)
+    dist.barrier()
     return data
 
   def close_dist(self):

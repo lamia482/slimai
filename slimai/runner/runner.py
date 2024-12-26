@@ -1,5 +1,3 @@
-import math
-import os
 import sys
 import torch
 from pathlib import Path
@@ -51,9 +49,12 @@ class Runner(object):
     return
   
   def build_components(self, cfg):
+    cfg = cfg.copy()
     train_loader = help_build.build_dataloader(cfg.TRAIN_LOADER)
     valid_loader = help_build.build_dataloader(cfg.VALID_LOADER)
     test_loader = help_build.build_dataloader(cfg.TEST_LOADER)
+
+    cfg.MODEL.metric = cfg.METRIC
     model = help_build.build_model(cfg.MODEL)
     model = dist_env.init_dist(module=model)
     solver = help_build.build_solver(cfg.RUNNER.solver, model)
@@ -76,22 +77,26 @@ class Runner(object):
       self.solver.zero_grad()
 
       for step, batch_info in enumerate(self.train_dataloader):
+        msg = f"Step: {step+1}/{len(self.train_dataloader)}"
         batch_info = DataSample(**batch_info).to(self.model.device)
         batch_data = batch_info.pop("image")
 
         with torch.autocast(device_type=self.model.device.type, 
                             enabled=self.gradient_amp, dtype=torch.bfloat16):
-          data = self.model(batch_data, batch_info, mode="loss")
-          loss, kappa = data["loss"], data["kappa"]
+          loss_dict = self.model(batch_data, batch_info, mode="loss")
 
-          loss = dist_env.sync(loss)
-          kappa = dist_env.sync(kappa)
-        
-        if not math.isfinite(loss.item()):
-          help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")
-          sys.exit(1)
+        total_loss, loss_msg, n_loss = 0, "", 0
+        for key, loss in loss_dict.items():
+          loss_msg += f", {key}: {loss:.4f}"
+          if "loss" in key:
+            n_loss += 1
+            total_loss += loss
+
+        if n_loss > 1:
+          msg += f", total_loss: {total_loss:.4f}"
+        msg += loss_msg
           
-        self.gradient_scaler.scale(loss).backward()
+        self.gradient_scaler.scale(total_loss).backward()
 
         if (step + 1) % self.gradient_accumulation_every_n_steps == 0:
           self.gradient_scaler.step(self.solver)
@@ -100,11 +105,7 @@ class Runner(object):
           self.solver.scheduler.step()
 
         if (step + 1) % self.log_every_n_steps == 0:
-          help_utils.print_log(desc.format(
-            msg=f"Step: {step+1}/{len(self.train_dataloader)}"
-                f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}, "
-                f", Loss: {loss:.6f}, Kappa: {kappa:.6f}"
-            ), level="INFO")
+          help_utils.print_log(desc.format(msg=msg), level="INFO")
 
       self.save_ckpt(epoch, loss)
 

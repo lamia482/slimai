@@ -1,7 +1,10 @@
 from abc import abstractmethod
+import math
+import sys
 import torch
 from typing import List, Optional, Union, Dict
 from slimai.helper import help_build, help_utils
+from slimai.helper.help_utils import dist_env
 from slimai.helper.structure import DataSample
 
 
@@ -13,7 +16,8 @@ class BaseArch(torch.nn.Module):
                decoder=dict(
                  head=None, 
                ), 
-               loss=None):
+               loss=None, 
+               metric=None):
     super().__init__()
     
     # init model layers
@@ -26,6 +30,8 @@ class BaseArch(torch.nn.Module):
       for component, cfg in decoder.items()
     })
     self.loss = help_build.build_loss(loss)
+
+    self.metric = help_build.build_metric(metric)
 
     help_utils.print_log(f"Model({__class__.__name__}) built successfully with {help_utils.PytorchNetworkUtils.get_params_size(self)} parameters")
     return
@@ -41,38 +47,72 @@ class BaseArch(torch.nn.Module):
     expected_modes = ["tensor", "loss", "predict"]
     if mode not in expected_modes:
       raise RuntimeError(f"Invalid mode \"{mode}\". Only supports {expected_modes}")
-    func = getattr(self, f"do_{mode}")
 
     if batch_info is None:
       batch_info = DataSample()
     if not isinstance(batch_info, DataSample):
       batch_info = DataSample(**batch_info)
 
-    return func(batch_data, batch_info)
+    if mode == "tensor":
+      output = self._forward_tensor(batch_data)
+      output = dist_env.gather(output)
 
-  def do_tensor(self, 
+    elif mode == "loss":
+      embedding_dict = self._forward_tensor(batch_data, return_flow=True)
+      loss_dict = self._forward_loss(embedding_dict, batch_info)
+
+      loss = sum(loss_dict.values())
+      if not math.isfinite(loss.item()):
+          help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")
+          sys.exit(1)
+
+      output = loss_dict
+      output.update(self._forward_metric(embedding_dict, batch_info))
+      output = dist_env.sync(output)
+
+    elif mode == "predict":
+      output = self.predict(batch_data, batch_info)
+      output = dist_env.gather(output)
+
+    return output
+
+  def _forward_tensor(self, 
                 batch_data: torch.Tensor, 
-                batch_info: DataSample):
-    data = batch_data
-    data = self.encoder.backbone(data)
-    data = self.encoder.neck(data)
-    data = self.decoder.head(data)
-    return data
+                return_flow: bool = False) -> torch.Tensor:
+    backbone = self.encoder.backbone(batch_data)
+    neck = self.encoder.neck(backbone)
+    head = self.decoder.head(neck)
+    if return_flow:
+      output = dict(
+        backbone=backbone, 
+        neck=neck, 
+        head=head, 
+      )
+    else:
+      output = head
+    return output
 
-  @abstractmethod
-  def do_loss(self, 
-              batch_data: torch.Tensor, 
-              batch_info: DataSample):
-    raise NotImplementedError
+  def _forward_loss(self, 
+              embedding_dict: Dict[str, torch.Tensor], 
+              batch_info: DataSample) -> Dict[str, torch.Tensor]:
+    loss = self.loss(embedding_dict, batch_info)
+    return loss
+
+  @torch.no_grad()
+  def _forward_metric(self, 
+              embedding_dict: Dict[str, torch.Tensor], 
+              batch_info: DataSample) -> Dict[str, torch.Tensor]:
+    metric = self.metric(embedding_dict, batch_info)
+    return metric
 
   @abstractmethod
   def postprocess(self, 
                   batch_data: torch.Tensor, 
-                  batch_info: DataSample):
+                  batch_info: DataSample) -> DataSample:
     raise NotImplementedError
 
-  def predict(self, 
+  def pretict(self, 
               batch_data: torch.Tensor, 
-              batch_info: List[DataSample]):
-    data = self.do_tensor(batch_data, batch_info)
-    return self.postprocess(data, batch_info)
+              batch_info: DataSample) -> DataSample:
+    output = self._forward_tensor(batch_data)
+    return self.postprocess(output, batch_info)
