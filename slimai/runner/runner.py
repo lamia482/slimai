@@ -117,7 +117,7 @@ class Runner(object):
 
     self.model.eval()
 
-    pbar = help_utils.ProgressBar(len(dataloader), desc="Infer", sep="\r\t")
+    pbar = help_utils.ProgressBar(len(dataloader), desc="Infer")
 
     results = []
     for step, batch_info in enumerate(dataloader):
@@ -125,7 +125,7 @@ class Runner(object):
       batch_data = batch_info.pop("image")
       batch_info = self.model(batch_data, batch_info, mode="predict").cpu()
       results.extend(batch_info.split_as_list())
-      pbar.update()
+      pbar.update(sep="\r\t")
     pbar.close()
 
     results = dist_env.collect(results)
