@@ -84,6 +84,7 @@ class Runner(object):
         with torch.autocast(device_type=self.model.device.type, 
                             enabled=self.gradient_amp, dtype=torch.bfloat16):
           loss_dict = self.model(batch_data, batch_info, mode="loss")
+          loss_dict = dist_env.sync(loss_dict)
 
         total_loss, loss_msg, n_loss = 0, "", 0
         for key, loss in loss_dict.items():
@@ -107,19 +108,52 @@ class Runner(object):
         if (step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
-      self.save_ckpt(epoch, loss)
+      ckpt_path = self.save_ckpt(epoch, loss)
+      result_file = Path(self.work_dir) / "results" / f"epoch_{epoch}.pkl"
+      metrics = self.evaluate(self.valid_dataloader, result_file)
 
     return
   
-  def infer(self):
-    return
+  @torch.no_grad()
+  def infer(self, dataloader, result_file, ckpt_path=None):
+    if ckpt_path is not None:
+      self.load_ckpt(resume=False, resume_from=False, load_from=ckpt_path, strict=True)
+
+    self.model.eval()
+
+    pbar = help_utils.ProgressBar(len(dataloader), desc="Infer")
+
+    results = []
+    for step, batch_info in enumerate(dataloader):
+      batch_info = DataSample(**batch_info).to(self.model.device)
+      batch_data = batch_info.pop("image")
+      batch_info = self.model(batch_data, batch_info, mode="predict")
+      results.extend(batch_info.split_as_list())
+      pbar.update()
+
+    results = dist_env.collect(results)
+
+    if dist_env.is_main_process():
+      mmengine.dump(results, result_file)
+
+    dist_env.sync()
+    return results
   
-  def evaluate(self):
-    return
+  @torch.no_grad()
+  def evaluate(self, dataloader, result_file):
+    if not Path(result_file).exists():
+      results = self.infer(dataloader, result_file)
+    else:
+      results = mmengine.load(result_file)
+
+    metrics = results
+    dist_env.sync()
+    return metrics
 
   def save_ckpt(self, epoch, loss):
     """Save latest N checkpoint and link best and latest checkpoint
     """
+    ckpt_path = self.ckpt_save_dir / f"epoch_{epoch}.pth"
     if (
       epoch % self.ckpt_save_every_n_epochs == 0
       and dist_env.is_main_process()
@@ -136,7 +170,6 @@ class Runner(object):
                         epoch=epoch, loss=loss, min_loss=self.ckpt_min_loss), ckpt)
         return
       
-      ckpt_path = self.ckpt_save_dir / f"epoch_{epoch}.pth"
       help_utils.print_log(f"Save checkpoint to {ckpt_path}")
       _save(ckpt_path)
 
@@ -163,9 +196,10 @@ class Runner(object):
 
       mmengine.dump(records, self.ckpt_record_file)
 
-    return dist_env.sync()
+    dist_env.sync()
+    return ckpt_path
 
-  def load_ckpt(self, *, resume, resume_from, load_from=None):
+  def load_ckpt(self, *, resume, resume_from, load_from=None, strict=True):
     """resume or just load from checkpoint, resume_from > load_from
     """
     if resume_from in ["best", "latest"]:
@@ -190,7 +224,7 @@ class Runner(object):
 
       help_utils.print_log(f"{'Resume' if resume else 'Load'} checkpoint from {load_from}")
       ckpt = torch.load(load_from, map_location="cpu")
-      self.model.load_state_dict(ckpt["model"], strict=resume)
+      keys = self.model.load_state_dict(ckpt["model"], strict=(resume or strict))
       if resume:
         #TODO: check cfg
         self.epoch = ckpt["epoch"] + 1 # resume from epoch + 1

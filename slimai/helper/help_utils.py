@@ -40,7 +40,7 @@ class ProgressBar(mmengine.ProgressBar):
     self.timer = mmengine.Timer()
     return
 
-  def update(self, msg: str, num_tasks: int = 1, sep="\t"):
+  def update(self, msg: str = "", num_tasks: int = 1, sep="\t"):
     if not dist_env.is_main_process():
       return
     assert num_tasks > 0

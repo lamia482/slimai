@@ -93,6 +93,7 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
                                         rank=dist_env.global_rank)
     
   if cfg.get("pin_memory", True):
+    cfg["pin_memory"] = True
     cfg["pin_memory_device"] = f"cuda:{dist_env.local_rank}"
 
   loader = torch.utils.data.DataLoader(dataset, **cfg)

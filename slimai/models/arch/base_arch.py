@@ -4,7 +4,6 @@ import sys
 import torch
 from typing import List, Optional, Union, Dict
 from slimai.helper import help_build, help_utils
-from slimai.helper.help_utils import dist_env
 from slimai.helper.structure import DataSample
 
 
@@ -43,7 +42,7 @@ class BaseArch(torch.nn.Module):
   def forward(self, 
               batch_data: torch.Tensor, 
               batch_info: Optional[Union[Dict, DataSample]] = None,
-              mode="tensor"):
+              mode="tensor") -> Union[Dict, torch.Tensor, DataSample]:
     expected_modes = ["tensor", "loss", "predict"]
     if mode not in expected_modes:
       raise RuntimeError(f"Invalid mode \"{mode}\". Only supports {expected_modes}")
@@ -55,7 +54,6 @@ class BaseArch(torch.nn.Module):
 
     if mode == "tensor":
       output = self._forward_tensor(batch_data)
-      output = dist_env.gather(output)
 
     elif mode == "loss":
       embedding_dict = self._forward_tensor(batch_data, return_flow=True)
@@ -68,11 +66,9 @@ class BaseArch(torch.nn.Module):
 
       output = loss_dict
       output.update(self._forward_metric(embedding_dict, batch_info))
-      output = dist_env.sync(output)
 
     elif mode == "predict":
       output = self.predict(batch_data, batch_info)
-      output = dist_env.gather(output)
 
     return output
 
@@ -111,7 +107,7 @@ class BaseArch(torch.nn.Module):
                   batch_info: DataSample) -> DataSample:
     raise NotImplementedError
 
-  def pretict(self, 
+  def predict(self, 
               batch_data: torch.Tensor, 
               batch_info: DataSample) -> DataSample:
     output = self._forward_tensor(batch_data)

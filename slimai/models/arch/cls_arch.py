@@ -8,5 +8,6 @@ from .base_arch import BaseArch
 class ClassificationArch(BaseArch):
   def postprocess(self, 
                   batch_data: torch.Tensor, 
-                  batch_info: DataSample):
-    return batch_data
+                  batch_info: DataSample) -> DataSample:
+    batch_info.output = batch_data
+    return batch_info

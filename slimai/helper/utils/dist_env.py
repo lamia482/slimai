@@ -1,4 +1,5 @@
 import os
+import itertools
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -38,25 +39,36 @@ class DistEnv(object):
       module = DDP(module, device_ids=[self.local_rank])
     return module
   
-  def sync(self, tensor=None, op=dist.ReduceOp.AVG):
-    if isinstance(tensor, dict):
-      return {k: self.sync(v) for k, v in tensor.items()}
+  def sync(self, data=None, tensor_op=dist.ReduceOp.AVG):
     
-    if tensor is not None:
-      dist.all_reduce(tensor, op=op)
-      
-    dist.barrier()
-    return tensor
+    def _sync_all_types(_data):
+      if isinstance(_data, torch.Tensor):
+        dist.all_reduce(_data, op=tensor_op)
+        return _data
+      elif isinstance(_data, dict):
+        return {k: _sync_all_types(v) for k, v in _data.items()}
+      else:
+        raise ValueError(f"Unsupported data type: {type(_data)}")
 
-  def gather(self, data=None):
     if data is not None:
-      data = dist.all_gather(data)
+      data = _sync_all_types(data)
+
     dist.barrier()
     return data
 
+  def collect(self, data):
+    assert (
+      isinstance(data, list)
+    ), "collect data must be a list, but got {}".format(type(data))
+
+    output = [None for _ in range(self.global_world_size)]
+    dist.all_gather_object(output, data)
+    dist.barrier()
+    output = list(itertools.chain(*output))
+    return output
+
   def close_dist(self):
     if dist.is_initialized():
-      dist.barrier()
       dist.destroy_process_group()
     return
   
