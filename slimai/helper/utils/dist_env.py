@@ -23,14 +23,15 @@ class DistEnv(object):
     ]}
 
   def is_main_process(self):
+    # Check if the current process is the main process
     return self.local_rank == 0
 
   def is_dist_initialized(self):
+    # Check if the distributed environment is initialized
     return dist.is_initialized()
   
   def init_dist(self, module=None, backend="nccl"):
-    """initialize distributed environment
-    """
+    """Initialize distributed environment."""
     if not dist.is_initialized():
       dist.init_process_group(backend=backend)
       torch.cuda.set_device(self.local_rank)
@@ -42,8 +43,7 @@ class DistEnv(object):
     return module
   
   def sync(self, data=None, tensor_op=dist.ReduceOp.AVG):
-    """reduce data(Tensor or Dict of Tensor)
-    """
+    """Reduce data (Tensor or Dict of Tensor) across all processes."""
     
     def _sync_all_types(_data):
       if isinstance(_data, torch.Tensor):
@@ -61,8 +61,7 @@ class DistEnv(object):
     return data
 
   def collect(self, data):
-    """collect List of object from all processes and merge to a single list with no-order
-    """
+    """Collect list of objects from all processes and merge into a single list."""
     assert (
       isinstance(data, list)
     ), "collect data must be a list, but got {}".format(type(data))
@@ -74,16 +73,14 @@ class DistEnv(object):
     return output
 
   def close_dist(self):
-    """close distributed environment
-    """
+    """Close the distributed environment."""
     if dist.is_initialized():
       dist.destroy_process_group()
     return
   
   @property
   def desc(self):
-    """describe the distributed environment
-    """
+    """Describe the distributed environment."""
     return "LOCAL RANK: {} of {}-th NODE, GLOBAL RANK: {} in all {} NODES".format(
       self.local_rank, self.local_world_size, self.global_rank, self.global_world_size
     )

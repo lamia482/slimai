@@ -13,19 +13,24 @@ from slimai.helper.utils.dist_env import dist_env
 
 class Runner(object):
   def __init__(self, cfg: mmengine.Config):
+    # Initialize runner with configuration
     self.cfg = cfg.copy()
 
+    # Set up working directory
     self.work_dir = Path(cfg.work_dir).resolve()
 
+    # Runner configuration
     self.max_epoch = cfg.RUNNER.max_epoch
     self.gradient_amp = cfg.RUNNER.gradient.get("amp", False)
     self.gradient_accumulation_every_n_steps = cfg.RUNNER.gradient.get("accumulation_every_n_steps", 1)
     self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
 
+    # Logger configuration
     self.log_level = cfg.RUNNER.logger.get("log_level", "INFO")
     self.log_file = self.work_dir / cfg.RUNNER.logger.get("log_dir", "logs") / f"{int(time.time())}.txt"
     self.log_every_n_steps = cfg.RUNNER.logger.get("log_every_n_steps", 10)
 
+    # Checkpoint configuration
     self.ckpt_save_dir = self.work_dir / cfg.RUNNER.ckpt.get("save_dir", "ckpts")
     self.ckpt_save_every_n_epochs = cfg.RUNNER.ckpt.get("save_every_n_epochs", 1)
     self.ckpt_keep_max = cfg.RUNNER.ckpt.get("keep_max", -1)
@@ -36,13 +41,16 @@ class Runner(object):
     self.ckpt_best_path = self.ckpt_save_dir / "best.pth"
     self.ckpt_latest_path = self.ckpt_save_dir / "latest.pth"
 
+    # Initialize logger and environment
     help_utils.update_logger(self.log_file, self.log_level)    
     slimai.check_env()
     self.dump_cfg()
 
+    # Build components like dataloaders, model, solver, and metric
     self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
       self.model, self.solver, self.metric = self.build_components(self.cfg)
     
+    # Initialize epoch and load checkpoint if needed
     self.epoch = 0 # will be updated in `load_ckpt`
     self.load_ckpt(resume=self.cfg.RUNNER.resume.enable, 
                    resume_from=self.cfg.RUNNER.resume.resume_from, 
@@ -50,8 +58,7 @@ class Runner(object):
     return
   
   def build_components(self, cfg):
-    """build dataloader, model, solver, metric
-    """
+    """Build dataloader, model, solver, metric"""
     cfg = cfg.copy()
     train_loader = help_build.build_dataloader(cfg.TRAIN_LOADER)
     valid_loader = help_build.build_dataloader(cfg.VALID_LOADER)
@@ -67,19 +74,17 @@ class Runner(object):
   
   @record
   def run(self, *, action):
-    """run the runner, action can be "train", "infer", "evaluate"
-    """
+    """Run the runner, action can be "train", "infer", "evaluate"."""
     assert action in ["train", "infer", "evaluate"]
     action = getattr(self, action)
     return action()
   
   def train(self):
-    """train the model
-    """
+    """Train the model."""
     for epoch in range(self.epoch, self.max_epoch):
       self.train_dataloader.sampler.set_epoch(epoch)
 
-      epoch += 1 # epoch plus 1, for the best of save_ckpt, resume from epoch+1
+      epoch += 1 # Increment epoch for checkpoint saving
       desc = f"[TRAIN {epoch}/{self.max_epoch} EPOCH]" + " {msg}"
 
       self.model.train()
@@ -94,7 +99,7 @@ class Runner(object):
                             enabled=self.gradient_amp, dtype=torch.bfloat16):
           loss_dict = self.model(batch_data, batch_info, mode="loss")
           
-          # reduce loss and sync to all processes
+          # Reduce loss and sync to all processes
           loss_dict = dist_env.sync(loss_dict)
 
         total_loss = sum(loss_dict.values())
@@ -102,25 +107,25 @@ class Runner(object):
           msg += f", total_loss: {total_loss:.6f}"
         msg += ", " + ", ".join([f"{key}: {loss:.6f}" for key, loss in loss_dict.items()])
 
-        # scale loss with amp mode and backward
+        # Scale loss with AMP mode and backward
         self.gradient_scaler.scale(total_loss).backward()
 
         if (step + 1) % self.gradient_accumulation_every_n_steps == 0:
-          # step optimizer and update learning rate after gradient accumulation
+          # Step optimizer and update learning rate after gradient accumulation
           self.gradient_scaler.step(self.solver)
           self.gradient_scaler.update()
           self.solver.zero_grad()
-          self.solver.scheduler.step() # scheduler is created when building solver
+          self.solver.scheduler.step() # Scheduler is created when building solver
 
         msg += f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}"
 
         if (step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
-      # save ckpt with strategy
+      # Save checkpoint with strategy
       self.save_ckpt(epoch, total_loss)
 
-      # evaluate on valid dataset
+      # Evaluate on validation dataset
       result_file = self.work_dir / "results" / f"epoch_{epoch}.pkl"
       self.evaluate(self.valid_dataloader, result_file)
 
@@ -128,8 +133,7 @@ class Runner(object):
   
   @torch.no_grad()
   def infer(self, dataloader, result_file, ckpt_path=None):
-    """infer on dataloader, if ckpt_path is not None, load ckpt from ckpt_path
-    """
+    """Infer on dataloader, if ckpt_path is not None, load ckpt from ckpt_path."""
     if ckpt_path is not None:
       self.load_ckpt(resume=False, resume_from=False, load_from=ckpt_path, strict=True)
 
@@ -157,8 +161,7 @@ class Runner(object):
   
   @torch.no_grad()
   def evaluate(self, dataloader, result_file):
-    """evaluate on result_file, if not exists, infer first with dataloader
-    """
+    """Evaluate on result_file, if not exists, infer first with dataloader."""
     if not Path(result_file).exists():
       results = self.infer(dataloader, result_file)
     else:
@@ -178,8 +181,7 @@ class Runner(object):
     return metrics
 
   def save_ckpt(self, epoch, loss):
-    """Save latest N checkpoint and link best and latest checkpoint
-    """
+    """Save latest N checkpoint and link best and latest checkpoint."""
     ckpt_path = self.ckpt_save_dir / f"epoch_{epoch}.pth"
     if (
       epoch % self.ckpt_save_every_n_epochs == 0
@@ -227,14 +229,13 @@ class Runner(object):
     return ckpt_path
 
   def load_ckpt(self, *, resume, resume_from, load_from=None, strict=True):
-    """resume or just load from checkpoint, resume_from > load_from
-    """
+    """Resume or just load from checkpoint, resume_from > load_from."""
     if resume_from in ["best", "latest"]:
       resume_from = getattr(self, f"ckpt_{resume_from}_path")
     elif isinstance(resume_from, int):
       resume_from = Path(self.ckpt_save_dir) / f"epoch_{resume_from}.pth"
     
-    # only resume when ckpt exists
+    # Only resume when checkpoint exists
     if resume_from is None or not(Path(resume_from).resolve().exists()):
       resume = False
     else:
@@ -260,8 +261,7 @@ class Runner(object):
     return dist_env.sync()
   
   def dump_cfg(self):
-    """dump config and work dir
-    """
+    """Dump config and work dir."""
     help_utils.print_log(f"Work dir: {self.work_dir}")
     help_utils.print_log(f"Config: {self.cfg}")
     return

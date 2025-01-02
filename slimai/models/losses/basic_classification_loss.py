@@ -12,11 +12,13 @@ class BasicClassificationLoss(torch.nn.Module):
                   label_smoothing=0.1,
                )):
     super().__init__()
+    # Initialize classification loss
     self.cls_loss = build_loss(cls_loss)
     return
   
   def forward(self, 
               logits: torch.Tensor, 
               targets: torch.Tensor) -> Dict[str, torch.Tensor]:
+    # Compute classification loss
     cls_loss = self.cls_loss(logits, targets)
     return dict(cls_loss=cls_loss)

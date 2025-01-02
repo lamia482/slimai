@@ -18,7 +18,7 @@ class BaseArch(torch.nn.Module):
                loss=None):
     super().__init__()
     
-    # init model layers
+    # Initialize model layers
     self.encoder = torch.nn.ModuleDict({
       component: help_build.build_model(cfg)
       for component, cfg in encoder.items()
@@ -29,17 +29,20 @@ class BaseArch(torch.nn.Module):
     })
     self.loss = help_build.build_loss(loss)
 
+    # Log model parameter size
     help_utils.print_log(f"Model({__class__.__name__}) built successfully with {help_utils.PytorchNetworkUtils.get_params_size(self)} parameters")
     return
   
   @property
   def device(self):
+    # Get the device of the model
     return next(self.parameters()).device
   
   def forward(self, 
               batch_data: torch.Tensor, 
               batch_info: Optional[Union[Dict, DataSample]] = None,
               mode="tensor") -> Union[Dict, torch.Tensor, DataSample]:
+    # Forward pass with different modes: tensor, loss, predict
     expected_modes = ["tensor", "loss", "predict"]
     if mode not in expected_modes:
       raise RuntimeError(f"Invalid mode \"{mode}\". Only supports {expected_modes}")
@@ -71,6 +74,7 @@ class BaseArch(torch.nn.Module):
   def _forward_tensor(self, 
                 batch_data: torch.Tensor, 
                 return_flow: bool = False) -> torch.Tensor:
+    # Default forward pass through encoder and decoder
     help_utils.print_log(
       "Using default `_forward_tensor` in BaseArch",
       level="WARNING", warn_once=True
@@ -93,6 +97,7 @@ class BaseArch(torch.nn.Module):
   def _forward_loss(self, 
               embedding_dict: Dict[str, torch.Tensor], 
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
+    # Default loss computation
     help_utils.print_log(
       "Using default `_forward_loss` in BaseArch",
       level="WARNING", warn_once=True
@@ -107,10 +112,12 @@ class BaseArch(torch.nn.Module):
   def postprocess(self, 
                   batch_data: torch.Tensor, 
                   batch_info: DataSample) -> DataSample:
+    # Postprocess method to be implemented in subclasses
     raise NotImplementedError("`postprocess` is not implemented and is necessary for `predict`")
 
   def predict(self, 
               batch_data: torch.Tensor, 
               batch_info: DataSample) -> DataSample:
+    # Predict method using postprocess
     output = self._forward_tensor(batch_data)
     return self.postprocess(output, batch_info)

@@ -47,15 +47,18 @@ def parse_config(args):
   return cfg
 
 def main():
-
+  # Parse command line arguments and configuration
   args = parse_args()
   cfg = parse_config(args)
 
+  # Initialize distributed environment
   help_utils.dist_env.init_dist()
 
+  # Create and run the runner
   runner = Runner(cfg)
   runner.run(action=args.action)
 
+  # Close distributed environment
   help_utils.dist_env.close_dist()
   return
 
