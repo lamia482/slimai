@@ -67,9 +67,15 @@ class BaseArch(torch.nn.Module):
 
     return output
 
+  @abstractmethod
   def _forward_tensor(self, 
                 batch_data: torch.Tensor, 
                 return_flow: bool = False) -> torch.Tensor:
+    help_utils.print_log(
+      "Using default `_forward_tensor` in BaseArch",
+      level="WARNING", warn_once=True
+    )
+
     backbone = self.encoder.backbone(batch_data)
     neck = self.encoder.neck(backbone)
     head = self.decoder.head(neck)
@@ -83,9 +89,15 @@ class BaseArch(torch.nn.Module):
       output = head
     return output
 
+  @abstractmethod
   def _forward_loss(self, 
               embedding_dict: Dict[str, torch.Tensor], 
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
+    help_utils.print_log(
+      "Using default `_forward_loss` in BaseArch",
+      level="WARNING", warn_once=True
+    )
+    
     logits = embedding_dict["head"]
     targets = batch_info.label
     loss = self.loss(logits, targets)
@@ -95,7 +107,7 @@ class BaseArch(torch.nn.Module):
   def postprocess(self, 
                   batch_data: torch.Tensor, 
                   batch_info: DataSample) -> DataSample:
-    raise NotImplementedError
+    raise NotImplementedError("`postprocess` is not implemented and is necessary for `predict`")
 
   def predict(self, 
               batch_data: torch.Tensor, 

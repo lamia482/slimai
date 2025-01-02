@@ -1,8 +1,10 @@
 #!/bin/bash
 
+NCCL_DEBUG=INFO
+
 ##### define user args
 CONFIG_FILE="$1"
-CUDA_VISIBLE_DEVICES="0,1"
+# CUDA_VISIBLE_DEVICES="3,4"
 
 ##### define nodes number for jobs
 NNODES=1
@@ -11,18 +13,12 @@ NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 
 ##### random DDP info
 JOB_ID=12345
-MASTER_ADDR=localhost
-MASTER_PORT=12345
-MAX_RESTARTS=3
-
-##### check args
-if [ -z "${CONFIG_FILE}" ]; then
-  echo "Error: CONFIG_FILE is not provided"
-  exit 1
-fi
+MASTER_ADDR=10.168.100.88
+MASTER_PORT=29603
+MAX_RESTARTS=1
 
 ##### print job info
-echo """ JOB SUMMARY
+echo """<<< JOB SUMMARY >>>
 CONFIG_FILE: ${CONFIG_FILE}
 NNODES: ${NNODES}
 NODE_RANK: ${NODE_RANK}
@@ -32,6 +28,10 @@ MASTER_ADDR: ${MASTER_ADDR}
 MASTER_PORT: ${MASTER_PORT}
 MAX_RESTARTS: ${MAX_RESTARTS}
 """
+
+if [ ${NODE_RANK} -eq 0 ]; then
+  MASTER_ADDR=127.0.0.1
+fi
 
 ##### cd working path
 TOOLBOX_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"

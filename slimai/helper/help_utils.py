@@ -17,12 +17,20 @@ def update_logger(log_file: Path, log_level: str = "INFO"):
   logger.add(log_file, level=log_level, format=logger_format)
   return
 
-def print_log(msg, level="INFO", main_process_only=True):
+_warned_messages = set()
+
+def print_log(msg, level="INFO", main_process_only=True, warn_once=False):
   if not dist_env.is_main_process() and main_process_only:
     return
   assert (
     level in ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
   ), "Invalid log level: {}".format(level)
+  
+  if warn_once and level == "WARNING":
+    if msg in _warned_messages:
+      return
+    _warned_messages.add(msg)
+    
   logger.log(level, msg)
   return
 
