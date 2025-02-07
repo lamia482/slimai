@@ -27,6 +27,7 @@ JOB_ID: ${JOB_ID}
 MASTER_ADDR: ${MASTER_ADDR}
 MASTER_PORT: ${MASTER_PORT}
 MAX_RESTARTS: ${MAX_RESTARTS}
+===================
 """
 
 if [ ${NODE_RANK} -eq 0 ]; then

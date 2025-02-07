@@ -1,0 +1,47 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "RUN",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai",
+      "env": {
+        "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH", 
+        "CUDA_VISIBLE_DEVICES": "5"
+      },
+      "program": "/hzztai/toolbox/tools/run.py",
+      "console": "integratedTerminal", 
+      "args": [
+        "--config=/hzztai/toolbox/_debug_/debug.py",
+        "--action=train"
+      ], 
+      "justMyCode": false
+    },
+    {
+      "name": "TORCHRUN",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "torch.distributed.launch",
+      "cwd": "/hzztai",
+      "env": {
+        "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH"
+      },
+      "args": [
+        "--nnodes=1",
+        "--node_rank=0",
+        "--nproc_per_node=1",
+        "--master_addr=localhost",
+        "--master_port=12345",
+        "/hzztai/toolbox/tools/run.py",
+        "--config=/hzztai/toolbox/_debug_/debug.py",
+        "--action=train"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

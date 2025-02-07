@@ -2,7 +2,7 @@
 
 ##### define user args
 CONFIG_FILE="$1"
-CUDA_VISIBLE_DEVICES="0,1"
+CUDA_VISIBLE_DEVICES="4,5"
 
 ##### define nodes number for jobs
 NNODES=1
@@ -22,7 +22,7 @@ if [ -z "${CONFIG_FILE}" ]; then
 fi
 
 ##### print job info
-echo """ JOB SUMMARY
+echo """<<< JOB SUMMARY >>>
 CONFIG_FILE: ${CONFIG_FILE}
 NNODES: ${NNODES}
 NODE_RANK: ${NODE_RANK}
@@ -31,6 +31,7 @@ JOB_ID: ${JOB_ID}
 MASTER_ADDR: ${MASTER_ADDR}
 MASTER_PORT: ${MASTER_PORT}
 MAX_RESTARTS: ${MAX_RESTARTS}
+===================
 """
 
 ##### cd working path

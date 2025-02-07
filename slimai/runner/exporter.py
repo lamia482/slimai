@@ -1,7 +1,7 @@
-import torch
+from .runner import Runner
 
 
-class Exporter(object):
-  def __init__(self):
+class Exporter(Runner):
+  def export(self, save_dir, format="onnx"):
     return
 

@@ -7,7 +7,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 class DistEnv(object):
   env = {
-    k: os.environ.get(k, None) for k in [
+    k: os.environ[k] for k in [
       "LOCAL_RANK",
       "RANK", 
       "GROUP_RANK",
@@ -20,7 +20,7 @@ class DistEnv(object):
       "TORCHELASTIC_RESTART_COUNT",
       "TORCHELASTIC_MAX_RESTARTS",
       "TORCHELASTIC_RUN_ID",
-    ]}
+    ] if k in os.environ}
 
   def is_main_process(self):
     # Check if the current process is the main process
@@ -32,18 +32,24 @@ class DistEnv(object):
   
   def init_dist(self, module=None, backend="nccl"):
     """Initialize distributed environment."""
-    if not dist.is_initialized():
+
+    # initialize distributed environment when not initialized and WORLD_SIZE is set
+    if (not dist.is_initialized()) and (self.env.get("WORLD_SIZE", None) is not None):
       dist.init_process_group(backend=backend)
-      torch.cuda.set_device(self.local_rank)
-      torch.backends.cudnn.benchmark = True
 
     if module is not None:
+      torch.cuda.set_device(self.local_rank)
+      torch.backends.cudnn.benchmark = True
       module.to(self.local_rank)
-      module = DDP(module, device_ids=[self.local_rank])
+
+      if self.is_dist_initialized():
+        module = DDP(module, device_ids=[self.local_rank])
     return module
   
   def sync(self, data=None, tensor_op=dist.ReduceOp.AVG):
     """Reduce data (Tensor or Dict of Tensor) across all processes."""
+    if not self.is_dist_initialized():
+      return data
     
     def _sync_all_types(_data):
       if isinstance(_data, torch.Tensor):
@@ -62,6 +68,9 @@ class DistEnv(object):
 
   def collect(self, data):
     """Collect list of objects from all processes and merge into a single list."""
+    if not self.is_dist_initialized():
+      return data
+    
     assert (
       isinstance(data, list)
     ), "collect data must be a list, but got {}".format(type(data))
@@ -81,45 +90,46 @@ class DistEnv(object):
   @property
   def desc(self):
     """Describe the distributed environment."""
-    return "LOCAL RANK: {} of {}-th NODE, GLOBAL RANK: {} in all {} NODES".format(
+    return "DDP {}, LOCAL RANK: {} of {}-th NODE, GLOBAL RANK: {} in all {} NODES".format(
+      "enabled" if self.is_dist_initialized() else "disabled",
       self.local_rank, self.local_world_size, self.global_rank, self.global_world_size
     )
   
   @property
   def local_rank(self):
-    return int(self.env["LOCAL_RANK"])
+    return int(self.env.get("LOCAL_RANK", 0))
   
   @property
   def global_rank(self):
-    return int(self.env["RANK"])
+    return int(self.env.get("RANK", 0))
   
   @property
   def local_world_size(self):
-    return int(self.env["LOCAL_WORLD_SIZE"])
+    return int(self.env.get("LOCAL_WORLD_SIZE", 1))
   
   @property
   def global_world_size(self):
-    return int(self.env["WORLD_SIZE"])
+    return int(self.env.get("WORLD_SIZE", 1))
   
   @property
   def master_addr(self):
-    return self.env["MASTER_ADDR"]
+    return self.env.get("MASTER_ADDR", "localhost")
 
   @property
   def master_port(self):
-    return int(self.env["MASTER_PORT"])
+    return int(self.env.get("MASTER_PORT", "12345"))
 
   @property
   def torchelastic_restart_count(self):
-    return int(self.env["TORCHELASTIC_RESTART_COUNT"])
+    return int(self.env.get("TORCHELASTIC_RESTART_COUNT", "0"))
 
   @property
   def torchelastic_max_restarts(self):
-    return int(self.env["TORCHELASTIC_MAX_RESTARTS"])
+    return int(self.env.get("TORCHELASTIC_MAX_RESTARTS", "0"))
 
   @property
   def torchelastic_run_id(self):
-    return self.env["TORCHELASTIC_RUN_ID"]
+    return self.env.get("TORCHELASTIC_RUN_ID", "0")
   
 
 dist_env = DistEnv()

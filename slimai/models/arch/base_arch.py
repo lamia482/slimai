@@ -2,7 +2,7 @@ from abc import abstractmethod
 import math
 import sys
 import torch
-from typing import List, Optional, Union, Dict
+from typing import Optional, Union, Dict
 from slimai.helper import help_build, help_utils
 from slimai.helper.structure import DataSample
 
@@ -15,10 +15,22 @@ class BaseArch(torch.nn.Module):
                decoder=dict(
                  head=None, 
                ), 
-               loss=None):
+               loss=None, **kwargs): # **kwargs is better for inherit
     super().__init__()
+    self.epoch = 0
     
     # Initialize model layers
+    self.init_layers(encoder, decoder)
+
+    # Initialize loss
+    self.init_loss(loss)
+
+    # Log model parameter size
+    help_utils.print_log(f"Model({self.__class__.__name__}) built successfully "
+                         f"with {help_utils.PytorchNetworkUtils.get_params_size(self)} parameters")
+    return
+
+  def init_layers(self, encoder, decoder):
     self.encoder = torch.nn.ModuleDict({
       component: help_build.build_model(cfg)
       for component, cfg in encoder.items()
@@ -27,10 +39,10 @@ class BaseArch(torch.nn.Module):
       component: help_build.build_model(cfg)
       for component, cfg in decoder.items()
     })
-    self.loss = help_build.build_loss(loss)
+    return
 
-    # Log model parameter size
-    help_utils.print_log(f"Model({__class__.__name__}) built successfully with {help_utils.PytorchNetworkUtils.get_params_size(self)} parameters")
+  def init_loss(self, loss):
+    self.loss = help_build.build_loss(loss)
     return
   
   @property
@@ -38,8 +50,30 @@ class BaseArch(torch.nn.Module):
     # Get the device of the model
     return next(self.parameters()).device
   
+  @abstractmethod
+  def step_precede_hooks(self, *, runner):
+    # Default step_precede_hooks
+    help_utils.print_log(
+      f"Using default `step_precede_hooks` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    self.current_train_epoch = runner.epoch - 1 # epoch in runner start from 1
+    self.max_train_epoch = runner.max_epoch
+    self.current_train_step = runner.step # step in runner start from 0
+    self.max_train_step = len(runner.train_dataloader)
+    return
+  
+  @abstractmethod
+  def step_succeed_hooks(self, *, runner):
+    # Default step_succeed_hooks
+    help_utils.print_log(
+      f"Using default `step_succeed_hooks` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    return
+  
   def forward(self, 
-              batch_data: torch.Tensor, 
+              batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
               batch_info: Optional[Union[Dict, DataSample]] = None,
               mode="tensor") -> Union[Dict, torch.Tensor, DataSample]:
     # Forward pass with different modes: tensor, loss, predict
@@ -72,11 +106,11 @@ class BaseArch(torch.nn.Module):
 
   @abstractmethod
   def _forward_tensor(self, 
-                batch_data: torch.Tensor, 
-                return_flow: bool = False) -> torch.Tensor:
+                batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
+                return_flow: bool = False) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
     # Default forward pass through encoder and decoder
     help_utils.print_log(
-      "Using default `_forward_tensor` in BaseArch",
+      f"Using default `_forward_tensor` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
 
@@ -99,7 +133,7 @@ class BaseArch(torch.nn.Module):
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
     # Default loss computation
     help_utils.print_log(
-      "Using default `_forward_loss` in BaseArch",
+      f"Using default `_forward_loss` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
     
@@ -110,14 +144,16 @@ class BaseArch(torch.nn.Module):
 
   @abstractmethod
   def postprocess(self, 
-                  batch_data: torch.Tensor, 
+                  batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                   batch_info: DataSample) -> DataSample:
     # Postprocess method to be implemented in subclasses
     raise NotImplementedError("`postprocess` is not implemented and is necessary for `predict`")
 
+  @torch.no_grad()
   def predict(self, 
-              batch_data: torch.Tensor, 
+              batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
               batch_info: DataSample) -> DataSample:
     # Predict method using postprocess
     output = self._forward_tensor(batch_data)
     return self.postprocess(output, batch_info)
+  

@@ -1,5 +1,6 @@
 import os
 import argparse
+from pathlib import Path
 from mmengine.config import Config
 from slimai.runner import Runner
 from slimai.helper import help_utils
@@ -34,7 +35,10 @@ def parse_config(args):
     # update configs according to CLI args if args.work_dir is not None
     cfg.work_dir = args.work_dir
   elif cfg.get("work_dir", None) is None:
-    raise ValueError("work_dir is not specified by CLI or config file")
+    signature = cfg.get("signature", None)
+    if signature is None:
+      raise ValueError("work_dir is not specified by CLI or config file")
+    cfg.work_dir = Path("experiments") / Path(args.config).stem / signature
   
   if args.amp is True:
     cfg.RUNNER.gradient.amp = True

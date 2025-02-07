@@ -222,5 +222,3 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
     )))).encode(encoding="UTF-8")
   ).hexdigest()[:8]
 ))
-
-work_dir = Path("experiments") / Path(__file__).stem / signature

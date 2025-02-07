@@ -1,6 +1,9 @@
-from .vit import ViT
+from .vit import DINOViT, FlexViT
+from .mlp import MLP
 
 
 __all__ = [
-  "ViT",
+  "DINOViT",
+  "FlexViT",
+  "MLP",
 ]

@@ -40,7 +40,7 @@ class Runner(object):
     self.ckpt_min_loss = float("inf") # will be updated in `load_ckpt`
     self.ckpt_best_path = self.ckpt_save_dir / "best.pth"
     self.ckpt_latest_path = self.ckpt_save_dir / "latest.pth"
-
+    self.eval_every_n_epochs = cfg.RUNNER.ckpt.get("eval_every_n_epochs", 1)
     # Initialize logger and environment
     help_utils.update_logger(self.log_file, self.log_level)    
     slimai.check_env()
@@ -50,9 +50,15 @@ class Runner(object):
     self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
       self.model, self.solver, self.metric = self.build_components(self.cfg)
     
+    if getattr(self.model, "module", None) is not None:
+      self.model_without_ddp = self.model.module
+    else:
+      self.model_without_ddp = self.model
+    
     # Initialize epoch and load checkpoint if needed
     self.epoch = 0 # will be updated in `load_ckpt`
-    self.load_ckpt(resume=self.cfg.RUNNER.resume.enable, 
+    self.load_ckpt(self.model_without_ddp, 
+                   resume=self.cfg.RUNNER.resume.enable, 
                    resume_from=self.cfg.RUNNER.resume.resume_from, 
                    load_from=self.cfg.RUNNER.resume.load_from)
     return
@@ -61,15 +67,15 @@ class Runner(object):
     """Build dataloader, model, solver, metric"""
     cfg = cfg.copy()
     train_loader = help_build.build_dataloader(cfg.TRAIN_LOADER)
-    valid_loader = help_build.build_dataloader(cfg.VALID_LOADER)
-    test_loader = help_build.build_dataloader(cfg.TEST_LOADER)
+    valid_loader = help_build.build_dataloader(cfg.get("VALID_LOADER", dict()))
+    test_loader = help_build.build_dataloader(cfg.get("TEST_LOADER", dict()))
 
     model = help_build.build_model(cfg.MODEL)
     model = dist_env.init_dist(module=model)
     solver = help_build.build_solver(cfg.RUNNER.solver, model)
     metric = help_build.build_metric(cfg.METRIC)
     dist_env.sync()
-    help_utils.print_log("Created Dist runner, desc: {}".format(dist_env.desc), main_process_only=False)
+    help_utils.print_log("Created runner, desc: {}".format(dist_env.desc), main_process_only=False)
     return train_loader, valid_loader, test_loader, model, solver, metric
   
   @record
@@ -81,21 +87,26 @@ class Runner(object):
   
   def train(self):
     """Train the model."""
-    for epoch in range(self.epoch, self.max_epoch):
-      self.train_dataloader.sampler.set_epoch(epoch)
+    for self.epoch in range(self.epoch, self.max_epoch):
+      self.train_dataloader.sampler.set_epoch(self.epoch)
 
-      epoch += 1 # Increment epoch for checkpoint saving
-      desc = f"[TRAIN {epoch}/{self.max_epoch} EPOCH]" + " {msg}"
+      self.epoch += 1 # Increment epoch for checkpoint saving
+      desc = f"[TRAIN {self.epoch}/{self.max_epoch} EPOCH]" + " {msg}"
 
+      # set train and clear grad before next epoch in case of former evaluation
       self.model.train()
       self.solver.zero_grad()
 
-      for step, batch_info in enumerate(self.train_dataloader):
-        msg = f"Step: {step+1}/{len(self.train_dataloader)}"
-        batch_info = DataSample(**batch_info).to(self.model.device)
+      for self.step, batch_info in enumerate(self.train_dataloader):
+        msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
+        batch_info = DataSample(**batch_info).to(self.model_without_ddp.device)
         batch_data = batch_info.pop("image")
 
-        with torch.autocast(device_type=self.model.device.type, 
+        # before forward step
+        self.model_without_ddp.step_precede_hooks(runner=self)
+
+        # forward step
+        with torch.autocast(device_type=self.model_without_ddp.device.type, 
                             enabled=self.gradient_amp, dtype=torch.bfloat16):
           loss_dict = self.model(batch_data, batch_info, mode="loss")
           
@@ -110,7 +121,7 @@ class Runner(object):
         # Scale loss with AMP mode and backward
         self.gradient_scaler.scale(total_loss).backward()
 
-        if (step + 1) % self.gradient_accumulation_every_n_steps == 0:
+        if (self.step + 1) % self.gradient_accumulation_every_n_steps == 0:
           # Step optimizer and update learning rate after gradient accumulation
           self.gradient_scaler.step(self.solver)
           self.gradient_scaler.update()
@@ -119,15 +130,19 @@ class Runner(object):
 
         msg += f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}"
 
-        if (step + 1) % self.log_every_n_steps == 0:
+        if (self.step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
+        # after forward step
+        self.model_without_ddp.step_succeed_hooks(runner=self)
+
       # Save checkpoint with strategy
-      self.save_ckpt(epoch, total_loss)
+      self.save_ckpt(self.model_without_ddp, self.epoch, total_loss)
 
       # Evaluate on validation dataset
-      result_file = self.work_dir / "results" / f"epoch_{epoch}.pkl"
-      self.evaluate(self.valid_dataloader, result_file)
+      if (self.epoch % self.eval_every_n_epochs == 0) and (self.valid_dataloader is not None):
+        result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
+        self.evaluate(self.valid_dataloader, result_file)
 
     return
   
@@ -180,7 +195,7 @@ class Runner(object):
     dist_env.sync()
     return metrics
 
-  def save_ckpt(self, epoch, loss):
+  def save_ckpt(self, model, epoch, loss):
     """Save latest N checkpoint and link best and latest checkpoint."""
     ckpt_path = self.ckpt_save_dir / f"epoch_{epoch}.pth"
     if (
@@ -194,7 +209,7 @@ class Runner(object):
 
       def _save(ckpt):
         Path(ckpt).resolve().parent.mkdir(parents=True, exist_ok=True)
-        torch.save(dict(model=self.model.state_dict(), 
+        torch.save(dict(model=model.state_dict(), 
                         # cfg=self.cfg, 
                         epoch=epoch, loss=loss, min_loss=self.ckpt_min_loss), ckpt)
         return
@@ -228,7 +243,7 @@ class Runner(object):
     dist_env.sync()
     return ckpt_path
 
-  def load_ckpt(self, *, resume, resume_from, load_from=None, strict=True):
+  def load_ckpt(self, model, *, resume, resume_from, load_from=None, strict=True):
     """Resume or just load from checkpoint, resume_from > load_from."""
     if resume_from in ["best", "latest"]:
       resume_from = getattr(self, f"ckpt_{resume_from}_path")
@@ -252,7 +267,7 @@ class Runner(object):
 
       help_utils.print_log(f"{'Resume' if resume else 'Load'} checkpoint from {load_from}")
       ckpt = torch.load(load_from, map_location="cpu")
-      keys = self.model.load_state_dict(ckpt["model"], strict=(resume or strict))
+      keys = model.load_state_dict(ckpt["model"], strict=(resume or strict))
       if resume:
         #TODO: check cfg
         self.epoch = ckpt["epoch"]

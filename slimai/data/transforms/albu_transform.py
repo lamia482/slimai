@@ -20,4 +20,5 @@ class AlbuTransform(BaseTransform):
   def compose(self, transforms):
     return A.Compose(self._compose(
                           transforms=transforms, 
-                          source=[A, AP]))
+                          source=[A, AP], 
+                          recursive_key="transforms"))

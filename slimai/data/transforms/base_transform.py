@@ -18,10 +18,10 @@ class BaseTransform(ABC, object):
     raise NotImplementedError
   
   @classmethod
-  def _compose(cls, *, transforms, source=None):
+  def _compose(cls, *, transforms, source=None, recursive_key=None):
     return help_build.compose_components(transforms, 
                                          source=source, 
-                                         recursive_key="transforms")
+                                         recursive_key=recursive_key)
   
   def __repr__(self):
     return str(self.transforms)

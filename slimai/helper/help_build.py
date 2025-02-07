@@ -4,12 +4,14 @@ Build components from configuration.
 This function prioritizes customized components, followed by torch components,
 and finally mmengine components.
 """
+import mmcv
 import torch
 from typing import Callable
 from torch.utils.data.distributed import DistributedSampler
 from mmengine.dataset import Compose as ComposeTransform
 from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, OPTIMIZERS
 IMPORT = Registry("import")
+LOADERS = Registry("loaders")
 from slimai.helper.help_utils import print_log, dist_env
 
 
@@ -72,6 +74,11 @@ def compose_components(components,
     components = _recursive_compose(components)
   return components
 
+def build_loader(cfg) -> Callable:
+  if cfg is None:
+    return mmcv.imread
+  return compose_components(cfg, source=LOADERS)
+
 def build_transform(cfg) -> Callable:
   transforms = compose_components(cfg, source=TRANSFORMS)
   return ComposeTransform(transforms)
@@ -80,7 +87,9 @@ def build_dataset(cfg) -> torch.utils.data.Dataset:
   return compose_components(cfg, source=DATASETS)
 
 def build_dataloader(cfg) -> torch.utils.data.DataLoader:
-  dataset = build_dataset(cfg.pop("dataset"))
+  dataset = build_dataset(cfg.pop("dataset", None))
+  if dataset is None:
+    return None
   if dist_env.is_dist_initialized():
     assert (
       "sampler" not in cfg
@@ -97,6 +106,10 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
     cfg["pin_memory_device"] = f"cuda:{dist_env.local_rank}"
 
   loader = torch.utils.data.DataLoader(dataset, **cfg)
+  
+  if getattr(loader.sampler, "set_epoch", None) is None:
+    loader.sampler.set_epoch = lambda epoch: None
+
   return loader
 
 def build_model(cfg) -> torch.nn.Module:
