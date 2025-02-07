@@ -33,13 +33,9 @@ class PytorchNetworkUtils(object):
       condition = lambda x: x.grad is None
 
     params = []
-    if not isinstance(module, Dict):
-      module = dict(module=module)
-
-    for m in module.values():
-      for _, param in m.named_parameters():
-        if condition(param):
-          params.append(param)
+    for _, param in module.named_parameters():
+      if condition(param):
+        params.append(param)
     return params
     
   @classmethod

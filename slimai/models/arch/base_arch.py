@@ -74,6 +74,24 @@ class BaseArch(object):
     return next(module.parameters()).device
   
   @abstractmethod
+  def epoch_precede_hooks(self, *, runner):
+    help_utils.print_log(
+      f"Using default `epoch_precede_hooks` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    self.model.train()
+    self.solver.zero_grad()
+    return
+  
+  @abstractmethod
+  def epoch_succeed_hooks(self, *, runner):
+    help_utils.print_log(
+      f"Using default `epoch_succeed_hooks` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    return
+  
+  @abstractmethod
   def step_precede_hooks(self, *, runner):
     # Default step_precede_hooks
     help_utils.print_log(

@@ -92,11 +92,9 @@ class Runner(object):
       self.epoch += 1 # Increment epoch for checkpoint saving
       desc = f"[TRAIN {self.epoch}/{self.max_epoch} EPOCH]" + " {msg}"
 
-      # set train and clear grad before next epoch in case of former evaluation
-      self.arch.student.train()
-      self.arch.teacher.eval()
+      # before epoch
+      self.arch.epoch_precede_hooks(runner=self)
       
-      self.solver.zero_grad()
       for self.step, batch_info in enumerate(self.train_dataloader):
         msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
         batch_info = DataSample(**batch_info).to(self.arch.device)
@@ -104,14 +102,6 @@ class Runner(object):
 
         # before forward step
         self.arch.step_precede_hooks(runner=self)
-
-        unused_param_size = 0
-        for name, param in self.arch.student.named_parameters():
-          if param.grad is None:
-            if unused_param_size == 0:
-              help_utils.print_log("rank: {}, {}, {}: {}".format(help_utils.dist_env.local_rank, name, param.requires_grad, param))
-            unused_param_size += param.numel()
-        help_utils.print_log(f"unused param size: {help_utils.PytorchNetworkUtils.convert_magnitude(unused_param_size)}")
 
         # forward step
         with torch.autocast(device_type=self.arch.device.type, 
@@ -131,24 +121,10 @@ class Runner(object):
 
         if (self.step + 1) % self.gradient_accumulation_every_n_steps == 0:
           # Step optimizer and update learning rate after gradient accumulation
-          unused_param_size = 0
-          for name, param in self.arch.student.named_parameters():
-            if param.grad is None:
-              if unused_param_size == 0:
-                help_utils.print_log("rank: {}, {}, {}: {}".format(help_utils.dist_env.local_rank, name, param.requires_grad, param))
-              unused_param_size += param.numel()
-          help_utils.print_log(f"unused param size: {help_utils.PytorchNetworkUtils.convert_magnitude(unused_param_size)}")
           self.gradient_scaler.step(self.solver)
           self.gradient_scaler.update()
           self.solver.zero_grad()
           self.solver.scheduler.step() # Scheduler is created when building solver
-          unused_param_size = 0
-          for name, param in self.arch.student.named_parameters():
-            if param.grad is None:
-              if unused_param_size == 0:
-                help_utils.print_log("rank: {}, {}, {}: {}".format(help_utils.dist_env.local_rank, name, param.requires_grad, param))
-              unused_param_size += param.numel()
-          help_utils.print_log(f"unused param size: {help_utils.PytorchNetworkUtils.convert_magnitude(unused_param_size)}")
 
         msg += f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}"
 
@@ -158,6 +134,9 @@ class Runner(object):
         # after forward step
         self.arch.step_succeed_hooks(runner=self)
 
+      # after epoch
+      self.arch.epoch_succeed_hooks(runner=self)
+      
       # Save checkpoint with strategy
       self.save_ckpt(self.model, self.solver, self.epoch, total_loss)
 
@@ -292,7 +271,7 @@ class Runner(object):
       help_utils.print_log(f"{'Resume' if resume else 'Load'} checkpoint from {load_from}")
       ckpt = torch.load(load_from, map_location="cpu")
       keys = model.load_state_dict(ckpt["model"], strict=(resume or strict))
-      keys = solver.load_state_dict(ckpt["solver"], strict=(resume or strict))
+      keys = solver.load_state_dict(ckpt["solver"])
       if resume:
         #TODO: check cfg
         self.epoch = ckpt["epoch"]

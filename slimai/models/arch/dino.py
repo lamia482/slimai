@@ -40,18 +40,25 @@ class DINO(BaseArch):
     teacher.load_state_dict(student.state_dict())
     help_utils.PytorchNetworkUtils.freeze(teacher)
 
-    return dict(teacher=teacher, student=student)
-  
-  def init_solver(self, solver, module):
-    return super().init_solver(solver, module["student"])
+    return torch.nn.ModuleDict(dict(teacher=teacher, student=student))
   
   @property
   def teacher(self):
-    return self.model["teacher"]
+    return self.model.teacher
   
   @property
   def student(self):
-    return self.model["student"]
+    return self.model.student
+  
+  def epoch_precede_hooks(self, *, runner):
+    super().epoch_precede_hooks(runner=runner)
+    # set train and clear grad before next epoch in case of former evaluation
+    self.student.train()
+    self.teacher.eval()
+    return
+  
+  def epoch_succeed_hooks(self, *, runner):
+    return super().epoch_succeed_hooks(runner=runner)
   
   def step_precede_hooks(self, *, runner):
     super().step_precede_hooks(runner=runner)
