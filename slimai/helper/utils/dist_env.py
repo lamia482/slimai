@@ -1,8 +1,10 @@
 import os
 import itertools
 import torch
+from typing import Dict
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from .network import PytorchNetworkUtils
 
 
 class DistEnv(object):
@@ -36,14 +38,31 @@ class DistEnv(object):
     # initialize distributed environment when not initialized and WORLD_SIZE is set
     if (not dist.is_initialized()) and (self.env.get("WORLD_SIZE", None) is not None):
       dist.init_process_group(backend=backend)
-
-    if module is not None:
       torch.cuda.set_device(self.local_rank)
       torch.backends.cudnn.benchmark = True
-      module.to(self.local_rank)
 
+    if module is not None:
+      assert isinstance(
+        module, (torch.nn.ModuleDict, torch.nn.Module, Dict)
+      ), "module must be a torch.nn.Module or Dict, but got {}".format(type(module))
       if self.is_dist_initialized():
-        module = DDP(module, device_ids=[self.local_rank])
+        def update_ddp(q):
+          q.to(self.local_rank)
+          return DDP(q, device_ids=[self.local_rank], static_graph=True) if (
+            PytorchNetworkUtils.get_params_size(q, grad_mode="trainable", magnitude="digit") > 0
+          ) else q
+        if isinstance(module, torch.nn.ModuleDict):
+          module = torch.nn.ModuleDict({
+            k: update_ddp(m)
+            for (k, m) in module.items()
+          })
+        elif isinstance(module, Dict):
+          module = {
+            k: update_ddp(m)
+            for (k, m) in module.items()
+          }
+        else:
+          module = update_ddp(module)
     return module
   
   def sync(self, data=None, tensor_op=dist.ReduceOp.AVG):

@@ -4,10 +4,12 @@ import sys
 import torch
 from typing import Optional, Union, Dict
 from slimai.helper import help_build, help_utils
+from slimai.helper.utils.dist_env import dist_env
 from slimai.helper.structure import DataSample
+from ..component.pipeline import Pipeline
 
 
-class BaseArch(torch.nn.Module):
+class BaseArch(object):
   def __init__(self, *, 
                encoder=dict(
                  backbone=None, neck=None, 
@@ -15,40 +17,61 @@ class BaseArch(torch.nn.Module):
                decoder=dict(
                  head=None, 
                ), 
-               loss=None, **kwargs): # **kwargs is better for inherit
+               loss=None, 
+               solver=None):
     super().__init__()
     self.epoch = 0
     
     # Initialize model layers
-    self.init_layers(encoder, decoder)
+    self.model = self.init_layers(encoder, decoder)
+    self.model = dist_env.init_dist(module=self.model)
+
+    # Initialize solver
+    self.solver = self.init_solver(solver, self.model)
 
     # Initialize loss
-    self.init_loss(loss)
+    self.loss = self.init_loss(loss)
+    self.loss = dist_env.init_dist(module=self.loss)
 
     # Log model parameter size
     help_utils.print_log(f"Model({self.__class__.__name__}) built successfully "
-                         f"with {help_utils.PytorchNetworkUtils.get_params_size(self)} parameters")
+                         f"with {help_utils.PytorchNetworkUtils.get_params_size(self.model)} parameters")
     return
 
-  def init_layers(self, encoder, decoder):
-    self.encoder = torch.nn.ModuleDict({
-      component: help_build.build_model(cfg)
-      for component, cfg in encoder.items()
-    })
-    self.decoder = torch.nn.ModuleDict({
-      component: help_build.build_model(cfg)
-      for component, cfg in decoder.items()
-    })
-    return
+  @abstractmethod
+  def init_layers(self, encoder, decoder) -> Dict[str, torch.nn.Module]:
+    help_utils.print_log(
+      f"Using default `init_layers` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    model = Pipeline(encoder.backbone, encoder.neck, decoder.head)
+    return model
 
-  def init_loss(self, loss):
-    self.loss = help_build.build_loss(loss)
-    return
+  @abstractmethod
+  def init_solver(self, solver, module):
+    help_utils.print_log(
+      f"Using default `init_solver` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    params = help_utils.PytorchNetworkUtils.get_module_params(module, grad_mode="trainable")
+    return help_build.build_solver(solver, params=params)
+
+  @abstractmethod
+  def init_loss(self, loss) -> torch.nn.Module:
+    help_utils.print_log(
+      f"Using default `init_loss` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    return help_build.build_loss(loss)
   
   @property
   def device(self):
     # Get the device of the model
-    return next(self.parameters()).device
+    if isinstance(self.model, Dict):
+      module = next(iter(self.model.values()))
+    else:
+      module = self.model
+    return next(module.parameters()).device
   
   @abstractmethod
   def step_precede_hooks(self, *, runner):
@@ -72,10 +95,10 @@ class BaseArch(torch.nn.Module):
     )
     return
   
-  def forward(self, 
-              batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
-              batch_info: Optional[Union[Dict, DataSample]] = None,
-              mode="tensor") -> Union[Dict, torch.Tensor, DataSample]:
+  def __call__(self, 
+               batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
+               batch_info: Optional[Union[Dict, DataSample]] = None,
+               mode="tensor") -> Union[Dict, torch.Tensor, DataSample]:
     # Forward pass with different modes: tensor, loss, predict
     expected_modes = ["tensor", "loss", "predict"]
     if mode not in expected_modes:
@@ -113,19 +136,7 @@ class BaseArch(torch.nn.Module):
       f"Using default `_forward_tensor` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
-
-    backbone = self.encoder.backbone(batch_data)
-    neck = self.encoder.neck(backbone)
-    head = self.decoder.head(neck)
-    if return_flow:
-      output = dict(
-        backbone=backbone, 
-        neck=neck, 
-        head=head, 
-      )
-    else:
-      output = head
-    return output
+    return self.model(batch_data, return_flow=return_flow)
 
   @abstractmethod
   def _forward_loss(self, 

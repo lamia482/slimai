@@ -1,61 +1,57 @@
-import copy
 import torch
 from typing import Union, Dict
-from slimai.helper import help_utils, help_build
+from slimai.helper import help_utils
 from slimai.helper.help_build import MODELS
 from slimai.helper.structure import DataSample
 from .base_arch import BaseArch
+from ..component.pipeline import Pipeline
 
 
 __all__ = [
   "DINO",
 ]
 
-
 @MODELS.register_module()
 class DINO(BaseArch):
-  def __init__(self, *args, **kwargs):
-    super().__init__(*args, **kwargs)
-    self.momentum_teacher = kwargs.get("momentum_teacher", 0.9995)
+  def __init__(self, *, 
+               encoder=dict(
+                 backbone=None, neck=None, 
+               ), 
+               decoder=dict(
+                 head=None, 
+               ), 
+               loss=None, 
+               solver=None, 
+               momentum_teacher=0.9995,
+               ):
+    super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
     assert (
-      0 < self.momentum_teacher < 1
-    ), f"momentum_teacher must be in the range (0, 1), but got {self.momentum_teacher}"
+      0 < momentum_teacher < 1
+    ), f"momentum_teacher must be in the range (0, 1), but got {momentum_teacher}"
+    self.momentum_teacher = momentum_teacher
     self.momentum_teacher_schedule = None # update in step_precede_hooks
     return
   
   def init_layers(self, encoder, decoder):
-    encoder_cfg, decoder_cfg = encoder.copy(), decoder.copy()
-    encoder = torch.nn.ModuleDict({
-      component: help_build.build_model(cfg)
-      for component, cfg in encoder_cfg.items()
-    })
-    decoder = torch.nn.ModuleDict({
-      component: help_build.build_model(cfg)
-      for component, cfg in decoder_cfg.items()
-    })
-    self.teacher = torch.nn.Sequential(
-      encoder.backbone,
-      encoder.neck,
-      decoder.head,
-    )
-
-    encoder = torch.nn.ModuleDict({
-      component: help_build.build_model(cfg)
-      for component, cfg in encoder_cfg.items()
-    })
-    decoder = torch.nn.ModuleDict({
-      component: help_build.build_model(cfg)
-      for component, cfg in decoder_cfg.items()
-    })
-    self.student = torch.nn.Sequential(
-      encoder.backbone,
-      encoder.neck,
-      decoder.head,
-    )
+    student = Pipeline(encoder.backbone, encoder.neck, decoder.head)
+    teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)
     
     # freeze teacher and only train student, ema student to teacher
-    help_utils.PytorchNetworkUtils.freeze(self.teacher)
-    return
+    teacher.load_state_dict(student.state_dict())
+    help_utils.PytorchNetworkUtils.freeze(teacher)
+
+    return dict(teacher=teacher, student=student)
+  
+  def init_solver(self, solver, module):
+    return super().init_solver(solver, module["student"])
+  
+  @property
+  def teacher(self):
+    return self.model["teacher"]
+  
+  @property
+  def student(self):
+    return self.model["student"]
   
   def step_precede_hooks(self, *, runner):
     super().step_precede_hooks(runner=runner)

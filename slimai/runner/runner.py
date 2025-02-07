@@ -9,6 +9,7 @@ import slimai
 from slimai.helper import help_build, help_utils
 from slimai.helper.structure import DataSample
 from slimai.helper.utils.dist_env import dist_env
+from slimai.helper.utils.network import PytorchNetworkUtils
 
 
 class Runner(object):
@@ -48,35 +49,33 @@ class Runner(object):
 
     # Build components like dataloaders, model, solver, and metric
     self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
-      self.model, self.solver, self.metric = self.build_components(self.cfg)
-    
-    if getattr(self.model, "module", None) is not None:
-      self.model_without_ddp = self.model.module
-    else:
-      self.model_without_ddp = self.model
+      self.arch, self.model, self.solver, self.metric = self.build_components(self.cfg)
     
     # Initialize epoch and load checkpoint if needed
     self.epoch = 0 # will be updated in `load_ckpt`
-    self.load_ckpt(self.model_without_ddp, 
+    self.load_ckpt(self.model, self.solver, 
                    resume=self.cfg.RUNNER.resume.enable, 
                    resume_from=self.cfg.RUNNER.resume.resume_from, 
                    load_from=self.cfg.RUNNER.resume.load_from)
     return
   
   def build_components(self, cfg):
-    """Build dataloader, model, solver, metric"""
+    """Build dataloader, arch, model, solver, metric"""
     cfg = cfg.copy()
+    
     train_loader = help_build.build_dataloader(cfg.TRAIN_LOADER)
     valid_loader = help_build.build_dataloader(cfg.get("VALID_LOADER", dict()))
     test_loader = help_build.build_dataloader(cfg.get("TEST_LOADER", dict()))
 
-    model = help_build.build_model(cfg.MODEL)
-    model = dist_env.init_dist(module=model)
-    solver = help_build.build_solver(cfg.RUNNER.solver, model)
+    arch = help_build.build_model(cfg.MODEL)
+    model = arch.model
+    solver = arch.solver
+
     metric = help_build.build_metric(cfg.METRIC)
+
     dist_env.sync()
     help_utils.print_log("Created runner, desc: {}".format(dist_env.desc), main_process_only=False)
-    return train_loader, valid_loader, test_loader, model, solver, metric
+    return train_loader, valid_loader, test_loader, arch, model, solver, metric
   
   @record
   def run(self, *, action):
@@ -94,21 +93,30 @@ class Runner(object):
       desc = f"[TRAIN {self.epoch}/{self.max_epoch} EPOCH]" + " {msg}"
 
       # set train and clear grad before next epoch in case of former evaluation
-      self.model.train()
+      self.arch.student.train()
+      self.arch.teacher.eval()
+      
       self.solver.zero_grad()
-
       for self.step, batch_info in enumerate(self.train_dataloader):
         msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
-        batch_info = DataSample(**batch_info).to(self.model_without_ddp.device)
+        batch_info = DataSample(**batch_info).to(self.arch.device)
         batch_data = batch_info.pop("image")
 
         # before forward step
-        self.model_without_ddp.step_precede_hooks(runner=self)
+        self.arch.step_precede_hooks(runner=self)
+
+        unused_param_size = 0
+        for name, param in self.arch.student.named_parameters():
+          if param.grad is None:
+            if unused_param_size == 0:
+              help_utils.print_log("rank: {}, {}, {}: {}".format(help_utils.dist_env.local_rank, name, param.requires_grad, param))
+            unused_param_size += param.numel()
+        help_utils.print_log(f"unused param size: {help_utils.PytorchNetworkUtils.convert_magnitude(unused_param_size)}")
 
         # forward step
-        with torch.autocast(device_type=self.model_without_ddp.device.type, 
+        with torch.autocast(device_type=self.arch.device.type, 
                             enabled=self.gradient_amp, dtype=torch.bfloat16):
-          loss_dict = self.model(batch_data, batch_info, mode="loss")
+          loss_dict = self.arch(batch_data, batch_info, mode="loss")
           
           # Reduce loss and sync to all processes
           loss_dict = dist_env.sync(loss_dict)
@@ -123,10 +131,24 @@ class Runner(object):
 
         if (self.step + 1) % self.gradient_accumulation_every_n_steps == 0:
           # Step optimizer and update learning rate after gradient accumulation
+          unused_param_size = 0
+          for name, param in self.arch.student.named_parameters():
+            if param.grad is None:
+              if unused_param_size == 0:
+                help_utils.print_log("rank: {}, {}, {}: {}".format(help_utils.dist_env.local_rank, name, param.requires_grad, param))
+              unused_param_size += param.numel()
+          help_utils.print_log(f"unused param size: {help_utils.PytorchNetworkUtils.convert_magnitude(unused_param_size)}")
           self.gradient_scaler.step(self.solver)
           self.gradient_scaler.update()
           self.solver.zero_grad()
           self.solver.scheduler.step() # Scheduler is created when building solver
+          unused_param_size = 0
+          for name, param in self.arch.student.named_parameters():
+            if param.grad is None:
+              if unused_param_size == 0:
+                help_utils.print_log("rank: {}, {}, {}: {}".format(help_utils.dist_env.local_rank, name, param.requires_grad, param))
+              unused_param_size += param.numel()
+          help_utils.print_log(f"unused param size: {help_utils.PytorchNetworkUtils.convert_magnitude(unused_param_size)}")
 
         msg += f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}"
 
@@ -134,10 +156,10 @@ class Runner(object):
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
         # after forward step
-        self.model_without_ddp.step_succeed_hooks(runner=self)
+        self.arch.step_succeed_hooks(runner=self)
 
       # Save checkpoint with strategy
-      self.save_ckpt(self.model_without_ddp, self.epoch, total_loss)
+      self.save_ckpt(self.model, self.solver, self.epoch, total_loss)
 
       # Evaluate on validation dataset
       if (self.epoch % self.eval_every_n_epochs == 0) and (self.valid_dataloader is not None):
@@ -150,7 +172,8 @@ class Runner(object):
   def infer(self, dataloader, result_file, ckpt_path=None):
     """Infer on dataloader, if ckpt_path is not None, load ckpt from ckpt_path."""
     if ckpt_path is not None:
-      self.load_ckpt(resume=False, resume_from=False, load_from=ckpt_path, strict=True)
+      self.load_ckpt(self.model, self.solver, 
+                     resume=False, resume_from=False, load_from=ckpt_path, strict=True)
 
     self.model.eval()
 
@@ -195,7 +218,7 @@ class Runner(object):
     dist_env.sync()
     return metrics
 
-  def save_ckpt(self, model, epoch, loss):
+  def save_ckpt(self, model, solver, epoch, loss):
     """Save latest N checkpoint and link best and latest checkpoint."""
     ckpt_path = self.ckpt_save_dir / f"epoch_{epoch}.pth"
     if (
@@ -210,6 +233,7 @@ class Runner(object):
       def _save(ckpt):
         Path(ckpt).resolve().parent.mkdir(parents=True, exist_ok=True)
         torch.save(dict(model=model.state_dict(), 
+                        solver=solver.state_dict(),
                         # cfg=self.cfg, 
                         epoch=epoch, loss=loss, min_loss=self.ckpt_min_loss), ckpt)
         return
@@ -243,7 +267,7 @@ class Runner(object):
     dist_env.sync()
     return ckpt_path
 
-  def load_ckpt(self, model, *, resume, resume_from, load_from=None, strict=True):
+  def load_ckpt(self, model, solver, *, resume, resume_from, load_from=None, strict=True):
     """Resume or just load from checkpoint, resume_from > load_from."""
     if resume_from in ["best", "latest"]:
       resume_from = getattr(self, f"ckpt_{resume_from}_path")
@@ -268,6 +292,7 @@ class Runner(object):
       help_utils.print_log(f"{'Resume' if resume else 'Load'} checkpoint from {load_from}")
       ckpt = torch.load(load_from, map_location="cpu")
       keys = model.load_state_dict(ckpt["model"], strict=(resume or strict))
+      keys = solver.load_state_dict(ckpt["solver"], strict=(resume or strict))
       if resume:
         #TODO: check cfg
         self.epoch = ckpt["epoch"]

@@ -6,13 +6,13 @@ and finally mmengine components.
 """
 import mmcv
 import torch
-from typing import Callable
+from typing import Callable, List
 from torch.utils.data.distributed import DistributedSampler
 from mmengine.dataset import Compose as ComposeTransform
 from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, OPTIMIZERS
 IMPORT = Registry("import")
 LOADERS = Registry("loaders")
-from slimai.helper.help_utils import print_log, dist_env
+from slimai.helper.help_utils import print_log, dist_env, PytorchNetworkUtils
 
 
 def compose_components(components, 
@@ -119,16 +119,20 @@ def build_model(cfg) -> torch.nn.Module:
   return module
 
 def build_loss(cfg) -> torch.nn.Module:
-  return compose_components(cfg, source=MODELS)
+  loss = compose_components(cfg, source=MODELS)
+  assert (
+    isinstance(loss, torch.nn.Module)
+  ), "Loss must be a torch.nn.Module, but got: {}".format(type(loss))
+  return loss
 
-def build_solver(cfg, module: torch.nn.Module):
+def build_solver(cfg, params: List[torch.nn.Parameter]):
   cfg = cfg.copy()
 
   if cfg.get("scheduler", None) is None:
     cfg["scheduler"] = dict(type="torch.optim.lr_scheduler.LambdaLR", lr_lambda=lambda epoch: 1)
   scheduler = cfg.pop("scheduler")
   
-  cfg.params = module.parameters()
+  cfg.params = params
   solver = compose_components(cfg, source=OPTIMIZERS)
 
   scheduler.optimizer = solver
