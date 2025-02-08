@@ -22,8 +22,14 @@ class Runner(object):
 
     # Runner configuration
     self.max_epoch = cfg.RUNNER.max_epoch
-    self.gradient_amp = cfg.RUNNER.gradient.get("amp", False)
+    self.gradient_amp = cfg.RUNNER.gradient.get("amp", False) and torch.cuda.is_bf16_supported()
     self.gradient_accumulation_every_n_steps = cfg.RUNNER.gradient.get("accumulation_every_n_steps", 1)
+    assert (
+      self.gradient_accumulation_every_n_steps >= 1
+    ), "gradient_accumulation_every_n_steps must be greater than or equal to 1, but got {}".format(self.gradient_accumulation_every_n_steps)
+    assert (
+      self.gradient_accumulation_every_n_steps == 1
+    ), "gradient accumulation is not supported yet"
     self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
 
     # Logger configuration
@@ -84,6 +90,42 @@ class Runner(object):
     action = getattr(self, action)
     return action()
   
+  def step_train(self, i_step, total_steps, 
+                 grad_accumulation_every_n_steps, 
+                 batch_data, batch_info):
+    """Train the model for one step."""
+    if i_step == 0: # clear grad before first step
+      self.solver.zero_grad()
+
+    accumulation_i_step = i_step % grad_accumulation_every_n_steps
+
+    with torch.autocast(device_type=self.arch.device.type, 
+                        enabled=self.gradient_amp, dtype=torch.bfloat16):
+      if (grad_accumulation_every_n_steps == 1 # no grad accumulation mode
+          ) or (i_step == total_steps - 1 # last step to accumulate grad
+          ) or (accumulation_i_step == grad_accumulation_every_n_steps - 1 # meet accumulation steps
+          ):
+        loss_dict = self.arch(batch_data, batch_info, mode="loss")
+        total_loss = sum(loss_dict.values())
+
+        # Scale loss with AMP mode and backward
+        self.gradient_scaler.scale(total_loss / (accumulation_i_step + 1)).backward()
+        
+        # Step optimizer and update learning rate after gradient accumulation
+        self.gradient_scaler.step(self.solver)
+        self.gradient_scaler.update()
+        self.solver.zero_grad()
+        self.solver.scheduler.step() # Scheduler is created when building solver
+      else:
+        # BUG: crash here
+        with self.arch.no_sync():
+          loss_dict = self.arch(batch_data, batch_info, mode="loss")
+        total_loss = sum(loss_dict.values())
+        # Scale loss with AMP mode and backward
+        self.gradient_scaler.scale(total_loss / (accumulation_i_step+ 1 )).backward()
+
+    return total_loss, loss_dict
+  
   def train(self):
     """Train the model."""
     for self.epoch in range(self.epoch, self.max_epoch):
@@ -96,7 +138,7 @@ class Runner(object):
       self.arch.epoch_precede_hooks(runner=self)
       
       for self.step, batch_info in enumerate(self.train_dataloader):
-        msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
+        msg = f"Step: {self.step+1}/{len(self.train_dataloader)}, Global Rank: {dist_env.global_rank}"
         batch_info = DataSample(**batch_info).to(self.arch.device)
         batch_data = batch_info.pop("image")
 
@@ -104,32 +146,16 @@ class Runner(object):
         self.arch.step_precede_hooks(runner=self)
 
         # forward step
-        with torch.autocast(device_type=self.arch.device.type, 
-                            enabled=self.gradient_amp, dtype=torch.bfloat16):
-          loss_dict = self.arch(batch_data, batch_info, mode="loss")
-          
-          # Reduce loss and sync to all processes
-          loss_dict = dist_env.sync(loss_dict)
-
-        total_loss = sum(loss_dict.values())
+        total_loss, loss_dict = self.step_train(self.step, len(self.train_dataloader), 
+                                                self.gradient_accumulation_every_n_steps, 
+                                                batch_data, batch_info)
         if len(loss_dict) > 1:
           msg += f", total_loss: {total_loss:.6f}"
         msg += ", " + ", ".join([f"{key}: {loss:.6f}" for key, loss in loss_dict.items()])
-
-        # Scale loss with AMP mode and backward
-        self.gradient_scaler.scale(total_loss).backward()
-
-        if (self.step + 1) % self.gradient_accumulation_every_n_steps == 0:
-          # Step optimizer and update learning rate after gradient accumulation
-          self.gradient_scaler.step(self.solver)
-          self.gradient_scaler.update()
-          self.solver.zero_grad()
-          self.solver.scheduler.step() # Scheduler is created when building solver
-
         msg += f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}"
 
         if (self.step + 1) % self.log_every_n_steps == 0:
-          help_utils.print_log(desc.format(msg=msg), level="INFO")
+          help_utils.print_log(desc.format(msg=msg), level="INFO", main_process_only=False)
 
         # after forward step
         self.arch.step_succeed_hooks(runner=self)
@@ -211,9 +237,10 @@ class Runner(object):
 
       def _save(ckpt):
         Path(ckpt).resolve().parent.mkdir(parents=True, exist_ok=True)
-        torch.save(dict(model=model.state_dict(), 
+        no_ddp_weight = PytorchNetworkUtils.fix_weight(model.state_dict(), to_ddp=False)
+        torch.save(dict(model=self.cfg.MODEL, 
+                        weight=no_ddp_weight, 
                         solver=solver.state_dict(),
-                        # cfg=self.cfg, 
                         epoch=epoch, loss=loss, min_loss=self.ckpt_min_loss), ckpt)
         return
       
@@ -246,7 +273,7 @@ class Runner(object):
     dist_env.sync()
     return ckpt_path
 
-  def load_ckpt(self, model, solver, *, resume, resume_from, load_from=None, strict=True):
+  def load_ckpt(self, model=None, solver=None, *, resume=True, resume_from=None, load_from=None, strict=True):
     """Resume or just load from checkpoint, resume_from > load_from."""
     if resume_from in ["best", "latest"]:
       resume_from = getattr(self, f"ckpt_{resume_from}_path")
@@ -262,6 +289,9 @@ class Runner(object):
 
     if load_from is None:
       help_utils.print_log("No checkpoint to load, build from scratch", level="WARNING")
+      assert (
+        model is not None
+      ), "model must be provided when no checkpoint to load"
     else:
       load_from = Path(load_from).resolve()
       if not load_from.exists():
@@ -270,17 +300,28 @@ class Runner(object):
 
       help_utils.print_log(f"{'Resume' if resume else 'Load'} checkpoint from {load_from}")
       ckpt = torch.load(load_from, map_location="cpu")
-      keys = model.load_state_dict(ckpt["model"], strict=(resume or strict))
-      keys = solver.load_state_dict(ckpt["solver"])
+
+      if model is None:
+        model = help_build.build_model(ckpt["model"])
+        # adapt model weight to ddp
+        if dist_env.is_dist_initialized():
+          ckpt["weight"] = PytorchNetworkUtils.fix_weight(ckpt["weight"], to_ddp=True)
+
+      model.load_state_dict(ckpt["weight"], strict=(resume or strict))
+      
+      if solver is not None:
+        solver.load_state_dict(ckpt["solver"])
+
       if resume:
         #TODO: check cfg
         self.epoch = ckpt["epoch"]
         self.ckpt_min_loss = ckpt.get("min_loss", float("inf"))
 
-    return dist_env.sync()
+    return model
   
   def dump_cfg(self):
     """Dump config and work dir."""
     help_utils.print_log(f"Work dir: {self.work_dir}")
     help_utils.print_log(f"Config: {self.cfg}")
+    # mmengine.Config.dump(self.cfg, self.work_dir / "config.py")
     return

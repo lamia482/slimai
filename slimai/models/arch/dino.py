@@ -36,10 +36,8 @@ class DINO(BaseArch):
     student = Pipeline(encoder.backbone, encoder.neck, decoder.head)
     teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)
     
-    # freeze teacher and only train student, ema student to teacher
     teacher.load_state_dict(student.state_dict())
-    help_utils.PytorchNetworkUtils.freeze(teacher)
-
+    
     return torch.nn.ModuleDict(dict(teacher=teacher, student=student))
   
   @property
@@ -52,13 +50,17 @@ class DINO(BaseArch):
   
   def epoch_precede_hooks(self, *, runner):
     super().epoch_precede_hooks(runner=runner)
-    # set train and clear grad before next epoch in case of former evaluation
+    
+    # freeze teacher and only train student, ema student to teacher
+    help_utils.PytorchNetworkUtils.freeze(self.teacher)
+    
     self.student.train()
     self.teacher.eval()
     return
   
   def epoch_succeed_hooks(self, *, runner):
-    return super().epoch_succeed_hooks(runner=runner)
+    super().epoch_succeed_hooks(runner=runner)
+    return
   
   def step_precede_hooks(self, *, runner):
     super().step_precede_hooks(runner=runner)

@@ -1,6 +1,3 @@
-from typing import Dict
-
-
 class PytorchNetworkUtils(object):
 
   @classmethod
@@ -10,18 +7,14 @@ class PytorchNetworkUtils(object):
     return module
 
   @classmethod
+  def fix_weight(cls, weight, to_ddp=True):
+    return weight
+
+  @classmethod
   def get_module_params(cls, module, grad_mode="all"):
-    """Get parameters from PyTorch model, handling both DDP and non-DDP cases.
-    
-    Args:
-      module: PyTorch model (nn.Module or DDP wrapped module)
-      
-    Returns:
-      Parameters of the underlying model
-    """
     assert (
-      grad_mode in ["all", "trainable", "frozen", "unused"]
-    ), "grad_mode must be one of ['all', 'trainable', 'frozen', 'unused']"
+      grad_mode in ["all", "trainable", "frozen", "unused", "grad"]
+    ), "grad_mode must be one of ['all', 'trainable', 'frozen', 'unused', 'grad'], but got {}".format(grad_mode)
 
     if grad_mode == "all":
       condition = lambda x: True
@@ -31,6 +24,8 @@ class PytorchNetworkUtils(object):
       condition = lambda x: not x.requires_grad
     elif grad_mode == "unused":
       condition = lambda x: x.grad is None
+    elif grad_mode == "grad":
+      condition = lambda x: x.grad is not None
 
     params = []
     for _, param in module.named_parameters():

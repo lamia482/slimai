@@ -2,6 +2,7 @@ from abc import abstractmethod
 import math
 import sys
 import torch
+from contextlib import ExitStack, contextmanager
 from typing import Optional, Union, Dict
 from slimai.helper import help_build, help_utils
 from slimai.helper.utils.dist_env import dist_env
@@ -25,6 +26,7 @@ class BaseArch(object):
     # Initialize model layers
     self.model = self.init_layers(encoder, decoder)
     self.model = dist_env.init_dist(module=self.model)
+    help_utils.print_log(self.model)
 
     # Initialize solver
     self.solver = self.init_solver(solver, self.model)
@@ -66,12 +68,17 @@ class BaseArch(object):
   
   @property
   def device(self):
-    # Get the device of the model
-    if isinstance(self.model, Dict):
-      module = next(iter(self.model.values()))
-    else:
-      module = self.model
-    return next(module.parameters()).device
+    return next(self.model.parameters()).device
+  
+  @contextmanager
+  def no_sync(self):
+    with ExitStack() as stack:
+      if not isinstance(self.model, torch.nn.ModuleDict):
+        stack.enter_context(self.model.no_sync())
+      else:
+        for module in self.model.values():
+          stack.enter_context(module.no_sync())
+      yield
   
   @abstractmethod
   def epoch_precede_hooks(self, *, runner):
@@ -79,8 +86,8 @@ class BaseArch(object):
       f"Using default `epoch_precede_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
+    # set train and clear grad before next epoch in case of former evaluation
     self.model.train()
-    self.solver.zero_grad()
     return
   
   @abstractmethod

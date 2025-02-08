@@ -43,8 +43,8 @@ class DistEnv(object):
 
     if module is not None:
       assert isinstance(
-        module, (torch.nn.ModuleDict, torch.nn.Module, Dict)
-      ), "module must be a torch.nn.Module or Dict, but got {}".format(type(module))
+        module, (torch.nn.ModuleDict, torch.nn.Module)
+      ), "module must be a torch.nn.Module, but got {}".format(type(module))
       if self.is_dist_initialized():
         def update_ddp(q):
           q.to(self.local_rank)
@@ -56,11 +56,6 @@ class DistEnv(object):
             k: update_ddp(m)
             for (k, m) in module.items()
           })
-        elif isinstance(module, Dict):
-          module = {
-            k: update_ddp(m)
-            for (k, m) in module.items()
-          }
         else:
           module = update_ddp(module)
     return module

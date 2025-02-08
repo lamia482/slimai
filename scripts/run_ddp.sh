@@ -13,7 +13,7 @@ NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 JOB_ID=12345
 MASTER_ADDR=localhost
 MASTER_PORT=12345
-MAX_RESTARTS=0
+MAX_RESTARTS=1
 
 ##### check args
 if [ -z "${CONFIG_FILE}" ]; then
