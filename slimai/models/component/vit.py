@@ -5,12 +5,12 @@ from slimai.helper.help_build import MODELS
 
 
 __all__ = [
-  "DINOViT", 
+  "ViT", 
   "FlexViT", 
 ]
 
 @MODELS.register_module()
-class DINOViT(torch.nn.Module):
+class ViT(torch.nn.Module):
   def __init__(self, *, 
                arch="base", 
                patch_size=16, 

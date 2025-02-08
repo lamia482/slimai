@@ -20,6 +20,12 @@ class BaseArch(object):
                ), 
                loss=None, 
                solver=None):
+    """initialize model and solver
+    1. create model and initialize weight randomly
+    2. wrap with ddp
+    3. create solver
+    4. create loss and move to model device
+    """
     super().__init__()
     self.epoch = 0
     

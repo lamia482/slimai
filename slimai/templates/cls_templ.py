@@ -127,17 +127,21 @@ MODEL = dict(
       type="ViT",
       arch="base",
       patch_size=16,
-      img_size=224,
-      use_lora=False,
-      pretrained_weight="IMAGENET1K_SWAG_E2E_V1",
+      drop_head=True,
     ),
     neck=None,
   ), 
   decoder=dict(
     head=dict(
-      type="torch.nn.Linear",
-      in_features=1000,
-      out_features=len(CLASS_NAMES),
+      type="MLP",
+      input_dim=768,
+      hidden_dim=2048,
+      bottleneck_dim=256, 
+      output_dim=65536,
+      n_layer=1,
+      act="gelu",
+      norm=None,
+      dropout=0.5,
     ),
   ),
   loss=dict(
@@ -146,7 +150,18 @@ MODEL = dict(
       type="torch.nn.CrossEntropyLoss",
       label_smoothing=0.1,
     )
-  )
+  ), 
+  solver=dict(
+    type="torch.optim.AdamW",
+    lr=1e-3,
+    weight_decay=1e-2, 
+    scheduler=dict(
+      type="torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
+      T_0=500,
+      T_mult=1,
+      eta_min=1e-5,
+    ),
+  ), 
 )
 
 ############################## 3. RUNNER
@@ -163,19 +178,7 @@ RUNNER = dict(
   logger=dict(
     log_level="INFO",
     log_dir="logs",
-    log_every_n_steps=10,
-  ), 
-
-  solver=dict(
-    type="torch.optim.AdamW",
-    lr=1e-3,
-    weight_decay=1e-2, 
-    scheduler=dict(
-      type="torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
-      T_0=500,
-      T_mult=1,
-      eta_min=1e-5,
-    ),
+    log_every_n_steps=1,
   ), 
 
   ckpt=dict(
@@ -212,8 +215,8 @@ METRIC = dict(
 
 
 ############################## ALL SET
-# create model signature
-from pathlib import Path
+# create model signature by default like 20250208-50adae7c
+# set static and specific signature for future auto-resume
 from datetime import datetime
 import hashlib
 signature = datetime.now().strftime("%Y%m%d-{:s}".format(

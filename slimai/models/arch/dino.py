@@ -25,6 +25,10 @@ class DINO(BaseArch):
                momentum_teacher=0.9995,
                ):
     super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
+    
+    # in DINO teacher use student weight by default
+    self.teacher.load_state_dict(self.student.state_dict())
+
     assert (
       0 < momentum_teacher < 1
     ), f"momentum_teacher must be in the range (0, 1), but got {momentum_teacher}"
@@ -34,10 +38,7 @@ class DINO(BaseArch):
   
   def init_layers(self, encoder, decoder):
     student = Pipeline(encoder.backbone, encoder.neck, decoder.head)
-    teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)
-    
-    teacher.load_state_dict(student.state_dict())
-    
+    teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)    
     return torch.nn.ModuleDict(dict(teacher=teacher, student=student))
   
   @property

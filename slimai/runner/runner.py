@@ -109,7 +109,7 @@ class Runner(object):
         total_loss = sum(loss_dict.values())
 
         # Scale loss with AMP mode and backward
-        self.gradient_scaler.scale(total_loss / (accumulation_i_step + 1)).backward()
+        self.gradient_scaler.scale(total_loss / grad_accumulation_every_n_steps).backward()
         
         # Step optimizer and update learning rate after gradient accumulation
         self.gradient_scaler.step(self.solver)
@@ -122,7 +122,7 @@ class Runner(object):
           loss_dict = self.arch(batch_data, batch_info, mode="loss")
         total_loss = sum(loss_dict.values())
         # Scale loss with AMP mode and backward
-        self.gradient_scaler.scale(total_loss / (accumulation_i_step+ 1 )).backward()
+        self.gradient_scaler.scale(total_loss / grad_accumulation_every_n_steps).backward()
 
     return total_loss, loss_dict
   
@@ -155,7 +155,7 @@ class Runner(object):
         msg += f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}"
 
         if (self.step + 1) % self.log_every_n_steps == 0:
-          help_utils.print_log(desc.format(msg=msg), level="INFO", main_process_only=False)
+          help_utils.print_log(desc.format(msg=msg), level="INFO")
 
         # after forward step
         self.arch.step_succeed_hooks(runner=self)
@@ -186,17 +186,19 @@ class Runner(object):
 
     results = []
     for step, batch_info in enumerate(dataloader):
-      batch_info = DataSample(**batch_info).to(self.model.device)
+      batch_info = DataSample(**batch_info).to(self.arch.device)
       batch_data = batch_info.pop("image")
-      batch_info = self.model(batch_data, batch_info, mode="predict").cpu()
+      batch_info = self.arch(batch_data, batch_info, mode="predict").cpu()
       results.extend(batch_info.split_as_list())
       pbar.update(sep="\r\t")
     pbar.close()
 
+    help_utils.print_log(f"Collecting data from all nodes...")
     results = dist_env.collect(results)
     results = dict(batch_info=results)
 
     if dist_env.is_main_process():
+      help_utils.print_log(f"Dump infer result into: {result_file}")
       mmengine.dump(results, result_file)
 
     dist_env.sync()
@@ -218,6 +220,7 @@ class Runner(object):
     if dist_env.is_main_process():
       help_utils.print_log(f"Metrics: {', '.join([f'{key}: {value:.6f}' for key, value in metrics.items()])}")
       results["metrics"] = metrics
+      help_utils.print_log(f"Dump metric result into: {result_file}")
       mmengine.dump(results, result_file)
 
     dist_env.sync()
@@ -239,7 +242,7 @@ class Runner(object):
         Path(ckpt).resolve().parent.mkdir(parents=True, exist_ok=True)
         no_ddp_weight = PytorchNetworkUtils.fix_weight(model.state_dict(), to_ddp=False)
         torch.save(dict(model=self.cfg.MODEL, 
-                        weight=no_ddp_weight, 
+                        weight=no_ddp_weight, # default save non-ddp weight
                         solver=solver.state_dict(),
                         epoch=epoch, loss=loss, min_loss=self.ckpt_min_loss), ckpt)
         return
@@ -302,9 +305,8 @@ class Runner(object):
       ckpt = torch.load(load_from, map_location="cpu")
 
       if model is None:
-        model = help_build.build_model(ckpt["model"])
-        # adapt model weight to ddp
-        if dist_env.is_dist_initialized():
+        model = help_build.build_model(ckpt["model"])        
+        if dist_env.is_dist_initialized(): # adapt model weight to ddp if necessary
           ckpt["weight"] = PytorchNetworkUtils.fix_weight(ckpt["weight"], to_ddp=True)
 
       model.load_state_dict(ckpt["weight"], strict=(resume or strict))

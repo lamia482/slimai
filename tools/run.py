@@ -19,6 +19,8 @@ def parse_args():
                       help="If specify checkpoint path, resume from it, while if not "
                       "specify, try to auto resume from the latest checkpoint "
                       "in the work directory.")
+  parser.add_argument("--timeout", type=int, default=3600, 
+                      help="the timeout of the distributed environment")
   # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
   # will pass the `--local-rank` parameter instead of `--local_rank`.
   parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
@@ -56,7 +58,7 @@ def main():
   cfg = parse_config(args)
 
   # Initialize distributed environment
-  help_utils.dist_env.init_dist()
+  help_utils.dist_env.init_dist(timeout=args.timeout)
 
   # Create and run the runner
   runner = Runner(cfg)

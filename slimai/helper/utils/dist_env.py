@@ -1,5 +1,6 @@
 import os
 import itertools
+import datetime
 import torch
 from typing import Dict
 import torch.distributed as dist
@@ -23,6 +24,10 @@ class DistEnv(object):
       "TORCHELASTIC_MAX_RESTARTS",
       "TORCHELASTIC_RUN_ID",
     ] if k in os.environ}
+  
+  def __init__(self) -> None:
+    self.timeout = 60
+    return
 
   def is_main_process(self):
     # Check if the current process is the main process
@@ -32,12 +37,14 @@ class DistEnv(object):
     # Check if the distributed environment is initialized
     return dist.is_initialized()
   
-  def init_dist(self, module=None, backend="nccl"):
+  def init_dist(self, *, module=None, backend="nccl", timeout=None):
     """Initialize distributed environment."""
 
     # initialize distributed environment when not initialized and WORLD_SIZE is set
     if (not dist.is_initialized()) and (self.env.get("WORLD_SIZE", None) is not None):
-      dist.init_process_group(backend=backend)
+      if timeout is not None:
+        self.timeout = datetime.timedelta(seconds=timeout)
+      dist.init_process_group(backend=backend, timeout=self.timeout)
       torch.cuda.set_device(self.local_rank)
       torch.backends.cudnn.benchmark = True
 
@@ -69,7 +76,7 @@ class DistEnv(object):
       if isinstance(_data, torch.Tensor):
         dist.all_reduce(_data, op=tensor_op)
         return _data
-      elif isinstance(_data, dict):
+      elif isinstance(_data, Dict):
         return {k: _sync_all_types(v) for k, v in _data.items()}
       else:
         raise ValueError(f"Unsupported data type: {type(_data)}")
@@ -77,11 +84,14 @@ class DistEnv(object):
     if data is not None:
       data = _sync_all_types(data)
 
-    dist.barrier()
+    work = dist.barrier(async_op=True)
+    work.wait(timeout=self.timeout)
     return data
 
   def collect(self, data):
-    """Collect list of objects from all processes and merge into a single list."""
+    """Collect list of objects from all processes and merge into a single list.
+    This collect may need sea of memory so that lead into crash.
+    """
     if not self.is_dist_initialized():
       return data
     
@@ -91,7 +101,7 @@ class DistEnv(object):
 
     output = [None for _ in range(self.global_world_size)]
     dist.all_gather_object(output, data)
-    dist.barrier()
+    self.sync()
     output = list(itertools.chain(*output))
     return output
 
