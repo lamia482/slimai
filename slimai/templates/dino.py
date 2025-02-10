@@ -48,11 +48,11 @@ train_dataset = dict(
   dataset=dict(
     files=[
       file 
-      for ext in [".kfb"]
+      for ext in [".png", ".kfb"]
       for file in glob.glob(osp.join(
-        "/mnt/wangqiang/server/10.168.100.21/ai/internal/projects/code_engineer/hzztai/data/THCA", 
+        "/mnt/wangqiang/server/10.168.100.21/ai/internal/projects/hzztai/projects/tct/cell_det/data/每类6000", 
         "**", f"*{ext}"), recursive=True)
-    ]*10
+    ]
   ),
   std_func=None,
   transform=view_transform, 
@@ -83,6 +83,8 @@ MODEL = dict(
       arch="large", 
       patch_size=16,
       drop_head=True,
+      dropout=0.5, 
+      attention_dropout=0.5, 
     ),
     neck=None, 
   ), 
@@ -93,24 +95,24 @@ MODEL = dict(
       hidden_dim=2048,
       bottleneck_dim=256, 
       output_dim=65536,
-      n_layer=1,
+      n_layer=2,
       act="gelu",
       norm=None,
-      dropout=0.5,
+      dropout=0.0,
     ),
   ),
   loss=dict(
     type="DINOLoss",
     output_dim=65536,
-    warmup_teacher_temp=0.02,
+    warmup_teacher_temp=0.04,
     warmup_teacher_temp_epochs=30,
-    teacher_temp=0.05,
+    teacher_temp=0.04,
     student_temp=0.1,
     center_momentum=0.9,
   ), 
   solver=dict(
     type="torch.optim.AdamW",
-    lr=1e-3,
+    lr=1e-4,
     weight_decay=1e-2, 
     scheduler=dict(
       type="torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
@@ -119,7 +121,7 @@ MODEL = dict(
       eta_min=1e-5,
     ),
   ), 
-  momentum_teacher=0.9995, # recommend setting a higher value with small batches: for example use 0.9995 with batch size of 256
+  momentum_teacher=0.9997, # recommend setting a higher value with small batches: for example use 0.9995 with batch size of 256
 )
 
 ############################## 3. RUNNER
@@ -130,7 +132,7 @@ RUNNER = dict(
   gradient=dict(
     amp=True, 
     accumulation_every_n_steps=1,
-    clip=None, 
+    clip=3.0, 
   ), 
 
   logger=dict(
@@ -141,11 +143,11 @@ RUNNER = dict(
 
   ckpt=dict(
     save_dir="ckpts",
-    save_every_n_epochs=10, 
+    save_every_n_epochs=1, 
     keep_max=3,
     keep_best=True, # keep ckpt with minimum loss on VALID dataset
     keep_latest=True, # keep ckpt link to latest epoch
-    eval_every_n_epochs=10, 
+    eval_every_n_epochs=1, 
   ),
 
   resume=dict(

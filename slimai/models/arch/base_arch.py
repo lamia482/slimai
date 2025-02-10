@@ -31,6 +31,7 @@ class BaseArch(object):
     
     # Initialize model layers
     self.model = self.init_layers(encoder, decoder)
+    self.model.apply(help_utils.PytorchNetworkUtils.init_weights)
     self.model = dist_env.init_dist(module=self.model)
     help_utils.print_log(self.model)
 
@@ -47,7 +48,7 @@ class BaseArch(object):
     return
 
   @abstractmethod
-  def init_layers(self, encoder, decoder) -> Dict[str, torch.nn.Module]:
+  def init_layers(self, encoder, decoder) -> torch.nn.Module:
     help_utils.print_log(
       f"Using default `init_layers` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
@@ -126,6 +127,7 @@ class BaseArch(object):
     )
     return
   
+  # TODO: add torch.compile
   def __call__(self, 
                batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                batch_info: Optional[Union[Dict, DataSample]] = None,
@@ -146,11 +148,14 @@ class BaseArch(object):
     elif mode == "loss":
       embedding_dict = self._forward_tensor(batch_data, return_flow=True)
       loss_dict = self._forward_loss(embedding_dict, batch_info)
+      assert (
+        isinstance(loss_dict, dict) and len(loss_dict) > 0
+      ), "`loss_dict` after `_forward_loss` must be a non-empty dictionary, but got {}".format(loss_dict)
 
       loss = sum(loss_dict.values())
       if not math.isfinite(loss.item()):
-          help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")
-          sys.exit(1)
+        help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")
+        sys.exit(1)
       output = loss_dict
 
     elif mode == "predict":

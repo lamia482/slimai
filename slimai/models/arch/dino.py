@@ -28,6 +28,9 @@ class DINO(BaseArch):
     
     # in DINO teacher use student weight by default
     self.teacher.load_state_dict(self.student.state_dict())
+    
+    # freeze teacher and only train student, ema student to teacher
+    help_utils.PytorchNetworkUtils.freeze(self.teacher)
 
     assert (
       0 < momentum_teacher < 1
@@ -36,7 +39,7 @@ class DINO(BaseArch):
     self.momentum_teacher_schedule = None # update in step_precede_hooks
     return
   
-  def init_layers(self, encoder, decoder):
+  def init_layers(self, encoder, decoder) -> Union[torch.nn.Module, Dict[str, torch.nn.Module]]:
     student = Pipeline(encoder.backbone, encoder.neck, decoder.head)
     teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)    
     return torch.nn.ModuleDict(dict(teacher=teacher, student=student))
@@ -51,10 +54,6 @@ class DINO(BaseArch):
   
   def epoch_precede_hooks(self, *, runner):
     super().epoch_precede_hooks(runner=runner)
-    
-    # freeze teacher and only train student, ema student to teacher
-    help_utils.PytorchNetworkUtils.freeze(self.teacher)
-    
     self.student.train()
     self.teacher.eval()
     return

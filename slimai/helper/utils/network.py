@@ -1,3 +1,6 @@
+import torch
+
+
 class PytorchNetworkUtils(object):
 
   @classmethod
@@ -8,7 +11,25 @@ class PytorchNetworkUtils(object):
 
   @classmethod
   def fix_weight(cls, weight, to_ddp=True):
+    """fix weight name to be compatible with ddp"""
+    is_already_ddp = "module." in list(weight.keys())[0]
+    if to_ddp and not is_already_ddp:
+      weight = {f"module.{k}": v for k, v in weight.items()}
+    elif not to_ddp and is_already_ddp:
+      weight = {k.replace("module.", ""): v for k, v in weight.items()}
     return weight
+
+  @classmethod
+  def clip_gradients(cls, model, clip=None):
+    norms = []
+    for name, p in model.named_parameters():
+      if p.grad is not None:
+        param_norm = p.grad.data.norm(2)
+        norms.append(param_norm.item())
+        clip_coef = 1 if clip is None else (clip / (param_norm + 1e-6))
+        if clip_coef < 1:
+          p.grad.data.mul_(clip_coef)
+    return norms
 
   @classmethod
   def get_module_params(cls, module, grad_mode="all"):
@@ -74,3 +95,35 @@ class PytorchNetworkUtils(object):
       param.requires_grad = True
     return module
   
+  @classmethod
+  def init_weights(cls, m):
+    if isinstance(m, torch.nn.Linear):
+      # Xavier/Glorot initialization for linear layers
+      torch.nn.init.xavier_uniform_(m.weight)
+      if m.bias is not None:
+        torch.nn.init.zeros_(m.bias)
+    elif isinstance(m, torch.nn.Conv2d):
+      # He/Kaiming initialization for conv layers with ReLU
+      torch.nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+      if m.bias is not None:
+        torch.nn.init.zeros_(m.bias)
+    elif isinstance(m, (torch.nn.BatchNorm2d, torch.nn.GroupNorm)):
+      # Initialize BN and GN with ones for weights and zeros for bias
+      torch.nn.init.constant_(m.weight, 1.0)
+      torch.nn.init.constant_(m.bias, 0.0)
+    elif isinstance(m, torch.nn.LayerNorm):
+      # Initialize LN with ones for weights and zeros for bias
+      torch.nn.init.constant_(m.weight, 1.0)
+      torch.nn.init.constant_(m.bias, 0.0)
+    elif isinstance(m, torch.nn.Embedding):
+      # Truncated normal initialization for embeddings
+      torch.nn.init.trunc_normal_(m.weight, std=0.02, a=-2, b=2)
+    elif isinstance(m, torch.nn.Parameter):
+      # Truncated normal initialization for parameters
+      torch.nn.init.trunc_normal_(m.data, std=0.02, a=-2, b=2)
+    elif isinstance(m, (torch.nn.ParameterList, torch.nn.ParameterDict)):
+      # Recursively initialize parameters in containers
+      for param in m.parameters():
+        if param is not None:
+          cls.init_weights(param)
+    return

@@ -24,12 +24,15 @@ class MLP(torch.nn.Module):
       self.create_layer(input_dim, (bottleneck_dim if n_layer == 1 else hidden_dim), **kwargs),
       *[self.create_layer(hidden_dim, hidden_dim, **kwargs) for _ in range(0, n_layer-2)],
       *[self.create_layer(hidden_dim, bottleneck_dim, **kwargs) for _ in range(max(0, n_layer-2), n_layer-1)],
-      self.create_layer(bottleneck_dim, output_dim, act=None, norm=None, dropout=dropout),
     )
+    self.last_layer = self.create_layer(bottleneck_dim, output_dim, act=None, norm=None, dropout=dropout)
     return
   
   def forward(self, x):
-    return self.mlp(x)
+    x = self.mlp(x)
+    x = torch.nn.functional.normalize(x, p=2, dim=-1)
+    x = self.last_layer(x)
+    return x
   
   def create_layer(self, in_features, out_features, act="relu", norm=None, dropout=0.0):
     act_dict = {
@@ -46,7 +49,8 @@ class MLP(torch.nn.Module):
     norm_dict = {
       None: torch.nn.Identity(),
       "layer_norm": torch.nn.LayerNorm,
-      "batch_norm": torch.nn.BatchNorm2d,
+      "batch_norm": torch.nn.BatchNorm2d, 
+      
     }
     assert (
       norm in norm_dict

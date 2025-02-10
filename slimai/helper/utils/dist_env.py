@@ -52,19 +52,23 @@ class DistEnv(object):
       assert isinstance(
         module, (torch.nn.ModuleDict, torch.nn.Module)
       ), "module must be a torch.nn.Module, but got {}".format(type(module))
-      if self.is_dist_initialized():
-        def update_ddp(q):
-          q.to(self.local_rank)
-          return DDP(q, device_ids=[self.local_rank], static_graph=True) if (
+
+      def update_module(q):
+        """move to cuda and wrap with DDP if needed"""
+        q = q.cuda().to(self.local_rank)
+        if self.is_dist_initialized():
+          q = DDP(q, device_ids=[self.local_rank], static_graph=True) if (
             PytorchNetworkUtils.get_params_size(q, grad_mode="trainable", magnitude="digit") > 0
           ) else q
-        if isinstance(module, torch.nn.ModuleDict):
-          module = torch.nn.ModuleDict({
-            k: update_ddp(m)
-            for (k, m) in module.items()
-          })
-        else:
-          module = update_ddp(module)
+        return q
+
+      if isinstance(module, torch.nn.ModuleDict):
+        module = torch.nn.ModuleDict({
+          k: update_module(m)
+          for (k, m) in module.items()
+        })
+      else:
+        module = update_module(module)
     return module
   
   def sync(self, data=None, tensor_op=dist.ReduceOp.AVG):

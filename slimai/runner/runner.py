@@ -31,6 +31,7 @@ class Runner(object):
       self.gradient_accumulation_every_n_steps == 1
     ), "gradient accumulation is not supported yet"
     self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
+    self.gradient_clip = cfg.RUNNER.gradient.get("clip", None)
 
     # Logger configuration
     self.log_level = cfg.RUNNER.logger.get("log_level", "INFO")
@@ -111,6 +112,10 @@ class Runner(object):
         # Scale loss with AMP mode and backward
         self.gradient_scaler.scale(total_loss / grad_accumulation_every_n_steps).backward()
         
+        if self.gradient_clip is not None and self.gradient_scaler.is_enabled():
+          self.gradient_scaler.unscale_(self.solver)
+        PytorchNetworkUtils.clip_gradients(self.model, self.gradient_clip)
+
         # Step optimizer and update learning rate after gradient accumulation
         self.gradient_scaler.step(self.solver)
         self.gradient_scaler.update()
