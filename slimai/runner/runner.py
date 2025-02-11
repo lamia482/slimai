@@ -142,6 +142,8 @@ class Runner(object):
       # before epoch
       self.arch.epoch_precede_hooks(runner=self)
       
+      # walk through one epoch
+      avg_loss = 0.0
       for self.step, batch_info in enumerate(self.train_dataloader):
         msg = f"Step: {self.step+1}/{len(self.train_dataloader)}, Global Rank: {dist_env.global_rank}"
         batch_info = DataSample(**batch_info).to(self.arch.device)
@@ -154,10 +156,15 @@ class Runner(object):
         total_loss, loss_dict = self.step_train(self.step, len(self.train_dataloader), 
                                                 self.gradient_accumulation_every_n_steps, 
                                                 batch_data, batch_info)
-        if len(loss_dict) > 1:
-          msg += f", total_loss: {total_loss:.6f}"
-        msg += ", " + ", ".join([f"{key}: {loss:.6f}" for key, loss in loss_dict.items()])
-        msg += f", lr: {self.solver.scheduler.get_last_lr()[0]:.6f}"
+        
+        # update avg loss
+        avg_loss = (avg_loss * self.step + total_loss.detach().cpu().item()) / (self.step + 1)
+
+        msg += ", " + ", ".join([
+          f"lr: {self.solver.scheduler.get_last_lr()[0]:.6f}", 
+          f"avg loss: {avg_loss:.6f}", 
+          *[f"{key}: {loss:.6f}" for key, loss in loss_dict.items()],
+        ])
 
         if (self.step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
@@ -169,7 +176,7 @@ class Runner(object):
       self.arch.epoch_succeed_hooks(runner=self)
       
       # Save checkpoint with strategy
-      self.save_ckpt(self.model, self.solver, self.epoch, total_loss)
+      self.save_ckpt(self.model, self.solver, self.epoch, avg_loss)
 
       # Evaluate on validation dataset
       if (self.epoch % self.eval_every_n_epochs == 0) and (self.valid_dataloader is not None):
@@ -271,9 +278,9 @@ class Runner(object):
       ))
       if (
         (self.ckpt_keep_max is not None and self.ckpt_keep_max > 0) 
-        and (len(records) >= self.ckpt_keep_max)
+        and (len(records) > self.ckpt_keep_max)
       ):
-        path = Path(records[-self.ckpt_keep_max]["ckpt"]).resolve()
+        path = Path(records[-self.ckpt_keep_max-1]["ckpt"]).resolve()
         path.unlink(missing_ok=True)
 
       mmengine.dump(records, self.ckpt_record_file)
