@@ -41,18 +41,13 @@ view_transform = [
     local_ncrops=8
   )]
 
-import glob, os.path as osp
 dataset_type = "UnSupervisedDataset"
 train_dataset = dict(
   type=dataset_type, 
   dataset=dict(
-    files=[
-      file 
-      for ext in [".png", ".kfb"]
-      for file in glob.glob(osp.join(
-        "/mnt/wangqiang/server/10.168.100.21/ai/internal/projects/hzztai/projects/tct/cell_det/data/每类6000", 
-        "**", f"*{ext}"), recursive=True)
-    ]
+    type="LocalSource",
+    path="/mnt/wangqiang/server/10.168.100.21/ai/internal/projects/hzztai/projects/tct/cell_det/data/每类6000", 
+    ext=[".png"], 
   ),
   std_func=None,
   transform=view_transform, 
@@ -186,3 +181,6 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
     )))).encode(encoding="UTF-8")
   ).hexdigest()[:8]
 ))
+
+############################## CLEAR FOR DUMP
+del datetime, hashlib

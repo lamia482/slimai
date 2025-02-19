@@ -40,7 +40,7 @@ def parse_config(args):
     signature = cfg.get("signature", None)
     if signature is None:
       raise ValueError("work_dir is not specified by CLI or config file")
-    cfg.work_dir = Path("experiments") / Path(args.config).stem / signature
+    cfg.work_dir = (Path("experiments") / Path(args.config).stem / signature).as_posix()
   
   if args.amp is True:
     cfg.RUNNER.gradient.amp = True
@@ -58,14 +58,17 @@ def main():
   cfg = parse_config(args)
 
   # Initialize distributed environment
+  help_utils.print_log("Waiting for other processes to start...")
   help_utils.dist_env.init_dist(timeout=args.timeout)
-
+  help_utils.print_log("All processes started")
+  
   # Create and run the runner
   runner = Runner(cfg)
   runner.run(action=args.action)
 
   # Close distributed environment
   help_utils.dist_env.close_dist()
+  help_utils.print_log("All processes finished")
   return
 
 if __name__ == "__main__":

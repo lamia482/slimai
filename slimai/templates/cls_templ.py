@@ -225,3 +225,6 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
     )))).encode(encoding="UTF-8")
   ).hexdigest()[:8]
 ))
+
+############################## CLEAR FOR DUMP
+del datetime, hashlib

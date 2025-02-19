@@ -2,6 +2,8 @@ from abc import abstractmethod
 import math
 import sys
 import torch
+import torch.utils.checkpoint as checkpoint
+from functools import partial
 from contextlib import ExitStack, contextmanager
 from typing import Optional, Union, Dict
 from slimai.helper import help_build, help_utils
@@ -27,7 +29,6 @@ class BaseArch(object):
     4. create loss and move to model device
     """
     super().__init__()
-    self.epoch = 0
     
     # Initialize model layers
     self.model = self.init_layers(encoder, decoder)
@@ -131,7 +132,8 @@ class BaseArch(object):
   def __call__(self, 
                batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                batch_info: Optional[Union[Dict, DataSample]] = None,
-               mode="tensor") -> Union[Dict, torch.Tensor, DataSample]:
+               mode="tensor", gradient_checkpointing=False
+               ) -> Union[Dict, torch.Tensor, DataSample]:
     # Forward pass with different modes: tensor, loss, predict
     expected_modes = ["tensor", "loss", "predict"]
     if mode not in expected_modes:
@@ -146,7 +148,13 @@ class BaseArch(object):
       output = self._forward_tensor(batch_data)
 
     elif mode == "loss":
-      embedding_dict = self._forward_tensor(batch_data, return_flow=True)
+      if gradient_checkpointing:
+        # use checkpoint to save memory during training
+        forward_func = partial(self._forward_tensor, return_flow=True)
+        embedding_dict = checkpoint.checkpoint(forward_func, batch_data, use_reentrant=False)
+      else:
+        embedding_dict = self._forward_tensor(batch_data, return_flow=True)
+        
       loss_dict = self._forward_loss(embedding_dict, batch_info)
       assert (
         isinstance(loss_dict, dict) and len(loss_dict) > 0

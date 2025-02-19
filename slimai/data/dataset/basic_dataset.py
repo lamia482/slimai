@@ -3,14 +3,14 @@ import mmcv
 import mmengine
 import torch
 from slimai.helper.help_utils import print_log
-from slimai.helper.help_build import DATASETS, LOADERS, build_transform, build_loader, compose_components
+from slimai.helper.help_build import DATASETS, build_transform, build_loader, build_source
 
 
-__all__ = ["UnSupervisedDataset"]
+__all__ = ["BasicDataset"]
 
 
 @DATASETS.register_module()
-class UnSupervisedDataset(torch.utils.data.Dataset):
+class BasicDataset(torch.utils.data.Dataset):
   version = "version"
   signature = "signature"
   collect_keys = ["indice", "image"]
@@ -28,6 +28,10 @@ class UnSupervisedDataset(torch.utils.data.Dataset):
     if isinstance(dataset, str):
       self.dataset_file = dataset
       dataset = mmengine.load(dataset)
+    elif isinstance(dataset, dict):
+      dataset = build_source(dataset)
+      dataset = dataset()
+      
     if std_func is not None:
       assert (
         callable(std_func)
@@ -37,6 +41,8 @@ class UnSupervisedDataset(torch.utils.data.Dataset):
     assert (
       isinstance(dataset, dict) and {"files", }.issubset(set(dataset.keys()))
     ), "Dataset must be a dictionary at least with keys: `files`, but got: {}".format(dataset.keys())
+
+    self.dataset = dataset
 
     files = dataset.pop("files")
     self.version = dataset.pop(self.version, None)

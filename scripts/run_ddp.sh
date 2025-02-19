@@ -2,18 +2,21 @@
 
 ##### define user args
 CONFIG_FILE="$1"
-CUDA_VISIBLE_DEVICES="0,1,2,3,4,5"
+
+GPU_NUM="nvidia-smi -L | grep -c "UUID""
+export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(($(eval $GPU_NUM)-1)))
+export CUDA_VISIBLE_DEVICES="2"
 
 ##### define nodes number for jobs
-NNODES=1
-NODE_RANK=0
+NNODES=${NNODES:-1}
+NODE_RANK=${NODE_RANK:-0}
 NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 
 ##### random DDP info
-JOB_ID=12345
-MASTER_ADDR=localhost
-MASTER_PORT=12345
-MAX_RESTARTS=1
+JOB_ID=${JOB_ID:-29603}
+MASTER_ADDR=${MASTER_ADDR:-localhost}
+MASTER_PORT=${MASTER_PORT:-29603}
+MAX_RESTARTS=${MAX_RESTARTS:-0}
 
 ##### check args
 if [ -z "${CONFIG_FILE}" ]; then

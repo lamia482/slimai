@@ -11,7 +11,8 @@
       "cwd": "/hzztai",
       "env": {
         "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH", 
-        "CUDA_VISIBLE_DEVICES": "5"
+        "CUDA_VISIBLE_DEVICES": "7", 
+        "PYDEVD_WARN_SLOW_RESOLVE": "0"
       },
       "program": "/hzztai/toolbox/tools/run.py",
       "console": "integratedTerminal", 
@@ -28,7 +29,9 @@
       "module": "torch.distributed.launch",
       "cwd": "/hzztai",
       "env": {
-        "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH"
+        "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH", 
+        "CUDA_VISIBLE_DEVICES": "7", 
+        "PYDEVD_WARN_SLOW_RESOLVE": "0"
       },
       "args": [
         "--nnodes=1",

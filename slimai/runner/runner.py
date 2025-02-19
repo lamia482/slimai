@@ -2,6 +2,7 @@ import sys
 import time
 import torch
 from pathlib import Path
+from functools import partial
 import torch.amp
 from torch.distributed.elastic.multiprocessing.errors import record
 import mmengine
@@ -20,23 +21,31 @@ class Runner(object):
     # Set up working directory
     self.work_dir = Path(cfg.work_dir).resolve()
 
-    # Runner configuration
-    self.max_epoch = cfg.RUNNER.max_epoch
-    self.gradient_amp = cfg.RUNNER.gradient.get("amp", False) and torch.cuda.is_bf16_supported()
-    self.gradient_accumulation_every_n_steps = cfg.RUNNER.gradient.get("accumulation_every_n_steps", 1)
-    assert (
-      self.gradient_accumulation_every_n_steps >= 1
-    ), "gradient_accumulation_every_n_steps must be greater than or equal to 1, but got {}".format(self.gradient_accumulation_every_n_steps)
-    assert (
-      self.gradient_accumulation_every_n_steps == 1
-    ), "gradient accumulation is not supported yet"
-    self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
-    self.gradient_clip = cfg.RUNNER.gradient.get("clip", None)
-
     # Logger configuration
     self.log_level = cfg.RUNNER.logger.get("log_level", "INFO")
     self.log_file = self.work_dir / cfg.RUNNER.logger.get("log_dir", "logs") / f"{int(time.time())}.txt"
     self.log_every_n_steps = cfg.RUNNER.logger.get("log_every_n_steps", 10)
+
+    # Initialize logger and environment
+    help_utils.update_logger(self.log_file, self.log_level)    
+    slimai.check_env()
+
+    # Runner configuration
+    self.max_epoch = cfg.RUNNER.max_epoch
+    self.gradient_amp = cfg.RUNNER.gradient.get("amp", False) and torch.cuda.is_bf16_supported()
+    self.gradient_accumulation_every_n_steps = cfg.RUNNER.gradient.get("accumulation_every_n_steps", 1)
+    assert ( # BUG: gradient accumulation is not supported yet
+      self.gradient_accumulation_every_n_steps == 1
+    ), "gradient accumulation is not supported yet"
+    assert (
+      self.gradient_accumulation_every_n_steps >= 1
+    ), "gradient_accumulation_every_n_steps must be greater than or equal to 1, but got {}".format(self.gradient_accumulation_every_n_steps)
+    if (not dist_env.is_dist_initialized()) and (self.gradient_accumulation_every_n_steps > 1):
+      self.gradient_accumulation_every_n_steps = 1
+      help_utils.print_log(f"gradient accumulation is not supported yet in non-dist mode, set to 1", level="WARNING")
+
+    self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
+    self.gradient_clip = cfg.RUNNER.gradient.get("clip", None)
 
     # Checkpoint configuration
     self.ckpt_save_dir = self.work_dir / cfg.RUNNER.ckpt.get("save_dir", "ckpts")
@@ -49,9 +58,8 @@ class Runner(object):
     self.ckpt_best_path = self.ckpt_save_dir / "best.pth"
     self.ckpt_latest_path = self.ckpt_save_dir / "latest.pth"
     self.eval_every_n_epochs = cfg.RUNNER.ckpt.get("eval_every_n_epochs", 1)
-    # Initialize logger and environment
-    help_utils.update_logger(self.log_file, self.log_level)    
-    slimai.check_env()
+
+    # Dump config to work_dir
     self.dump_cfg()
 
     # Build components like dataloaders, model, solver, and metric
@@ -78,7 +86,7 @@ class Runner(object):
     model = arch.model
     solver = arch.solver
 
-    metric = help_build.build_metric(cfg.METRIC)
+    metric = help_build.build_metric(cfg.get("METRIC", dict()))
 
     dist_env.sync()
     help_utils.print_log("Created runner, desc: {}".format(dist_env.desc), main_process_only=False)
@@ -100,13 +108,15 @@ class Runner(object):
 
     accumulation_i_step = i_step % grad_accumulation_every_n_steps
 
+    train_forward_func = partial(self.arch, mode="loss", gradient_checkpointing=True)
+
     with torch.autocast(device_type=self.arch.device.type, 
                         enabled=self.gradient_amp, dtype=torch.bfloat16):
       if (grad_accumulation_every_n_steps == 1 # no grad accumulation mode
           ) or (i_step == total_steps - 1 # last step to accumulate grad
           ) or (accumulation_i_step == grad_accumulation_every_n_steps - 1 # meet accumulation steps
           ):
-        loss_dict = self.arch(batch_data, batch_info, mode="loss")
+        loss_dict = train_forward_func(batch_data, batch_info)
         total_loss = sum(loss_dict.values())
 
         # Scale loss with AMP mode and backward
@@ -124,7 +134,7 @@ class Runner(object):
       else:
         # BUG: crash here
         with self.arch.no_sync():
-          loss_dict = self.arch(batch_data, batch_info, mode="loss")
+          loss_dict = train_forward_func(batch_data, batch_info)
         total_loss = sum(loss_dict.values())
         # Scale loss with AMP mode and backward
         self.gradient_scaler.scale(total_loss / grad_accumulation_every_n_steps).backward()
@@ -335,7 +345,13 @@ class Runner(object):
   
   def dump_cfg(self):
     """Dump config and work dir."""
+    try:
+      mmengine.Config.dump(self.cfg, self.work_dir / "config.py")
+    except Exception as e:
+      help_utils.print_log(f"Error dumping config: {e}", level="ERROR")
+      help_utils.print_log(f"Please check the config file", level="ERROR")
+      exit(2)
+
+    help_utils.print_log(f"Config: \n{self.cfg.dump()}")
     help_utils.print_log(f"Work dir: {self.work_dir}")
-    help_utils.print_log(f"Config: {self.cfg}")
-    # mmengine.Config.dump(self.cfg, self.work_dir / "config.py")
     return

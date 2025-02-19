@@ -104,7 +104,7 @@ class DINO(BaseArch):
   def _forward_loss(self, 
               embedding_dict: Dict[str, torch.Tensor], 
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
-    loss = self.loss(epoch=self.epoch, **embedding_dict)
+    loss = self.loss(epoch=self.current_train_epoch, **embedding_dict)
     return loss
 
   def postprocess(self, 

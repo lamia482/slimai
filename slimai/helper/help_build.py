@@ -12,7 +12,8 @@ from mmengine.dataset import Compose as ComposeTransform
 from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, OPTIMIZERS
 IMPORT = Registry("import")
 LOADERS = Registry("loaders")
-from slimai.helper.help_utils import print_log, dist_env, PytorchNetworkUtils
+SOURCES = Registry("sources")
+from slimai.helper.help_utils import print_log, dist_env
 
 
 def compose_components(components, 
@@ -78,6 +79,9 @@ def build_loader(cfg) -> Callable:
   if cfg is None:
     return mmcv.imread
   return compose_components(cfg, source=LOADERS)
+
+def build_source(cfg) -> Callable:
+  return compose_components(cfg, source=SOURCES)
 
 def build_transform(cfg) -> Callable:
   transforms = compose_components(cfg, source=TRANSFORMS)

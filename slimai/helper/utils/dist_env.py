@@ -111,6 +111,7 @@ class DistEnv(object):
 
   def close_dist(self):
     """Close the distributed environment."""
+    self.sync()
     if dist.is_initialized():
       dist.destroy_process_group()
     return
