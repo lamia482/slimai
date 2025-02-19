@@ -128,6 +128,7 @@ RUNNER = dict(
     amp=True, 
     accumulation_every_n_steps=1,
     clip=3.0, 
+    checkpointing=True, 
   ), 
 
   logger=dict(
@@ -157,16 +158,6 @@ RUNNER = dict(
 ############################## 4. Metric
 METRIC = dict(
   type="DINOMetric",
-  acc=dict(
-    type="torchmetrics.Accuracy",
-    task="multiclass",
-    num_classes=1000,
-  ), 
-  kappa=dict(
-    type="torchmetrics.CohenKappa",
-    task="multiclass",
-    num_classes=1000,
-  ),
 )
 
 

@@ -46,6 +46,7 @@ class Runner(object):
 
     self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
     self.gradient_clip = cfg.RUNNER.gradient.get("clip", None)
+    self.gradient_checkpointing = cfg.RUNNER.gradient.get("checkpointing", True)
 
     # Checkpoint configuration
     self.ckpt_save_dir = self.work_dir / cfg.RUNNER.ckpt.get("save_dir", "ckpts")
@@ -108,7 +109,7 @@ class Runner(object):
 
     accumulation_i_step = i_step % grad_accumulation_every_n_steps
 
-    train_forward_func = partial(self.arch, mode="loss", gradient_checkpointing=False)
+    train_forward_func = partial(self.arch, mode="loss", gradient_checkpointing=self.gradient_checkpointing)
 
     with torch.autocast(device_type=self.arch.device.type, 
                         enabled=self.gradient_amp, dtype=torch.bfloat16):
@@ -185,13 +186,14 @@ class Runner(object):
       # after epoch
       self.arch.epoch_succeed_hooks(runner=self)
       
-      # Save checkpoint with strategy
-      self.save_ckpt(self.model, self.solver, self.epoch, avg_loss)
-
       # Evaluate on validation dataset
       if (self.epoch % self.eval_every_n_epochs == 0) and (self.valid_dataloader is not None):
         result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
-        self.evaluate(self.valid_dataloader, result_file)
+        eval_metrics = self.evaluate(self.valid_dataloader, result_file)
+        avg_loss = eval_metrics["metrics"].get("loss", avg_loss)
+
+      # Save checkpoint with strategy
+      self.save_ckpt(self.model, self.solver, self.epoch, avg_loss)
 
     return
   

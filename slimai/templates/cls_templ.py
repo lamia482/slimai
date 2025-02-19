@@ -173,6 +173,7 @@ RUNNER = dict(
     amp=True, 
     accumulation_every_n_steps=1,
     clip=None, 
+    checkpointing=True, 
   ), 
 
   logger=dict(
