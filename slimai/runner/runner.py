@@ -108,7 +108,7 @@ class Runner(object):
 
     accumulation_i_step = i_step % grad_accumulation_every_n_steps
 
-    train_forward_func = partial(self.arch, mode="loss", gradient_checkpointing=True)
+    train_forward_func = partial(self.arch, mode="loss", gradient_checkpointing=False)
 
     with torch.autocast(device_type=self.arch.device.type, 
                         enabled=self.gradient_amp, dtype=torch.bfloat16):
@@ -262,7 +262,8 @@ class Runner(object):
 
       def _save(ckpt):
         Path(ckpt).resolve().parent.mkdir(parents=True, exist_ok=True)
-        no_ddp_weight = PytorchNetworkUtils.fix_weight(model.state_dict(), to_ddp=False)
+        no_ddp_weight = PytorchNetworkUtils.fix_weight(model.state_dict(), to_ddp=False, 
+                                                       is_module_dict=isinstance(model, torch.nn.ModuleDict))
         torch.save(dict(model=self.cfg.MODEL, 
                         weight=no_ddp_weight, # default save non-ddp weight
                         solver=solver.state_dict(),
@@ -327,10 +328,12 @@ class Runner(object):
       ckpt = torch.load(load_from, map_location="cpu")
 
       if model is None:
-        model = help_build.build_model(ckpt["model"])        
-        if dist_env.is_dist_initialized(): # adapt model weight to ddp if necessary
-          ckpt["weight"] = PytorchNetworkUtils.fix_weight(ckpt["weight"], to_ddp=True)
+        model = help_build.build_model(ckpt["model"])
 
+      if dist_env.is_dist_initialized(): # adapt model weight to ddp if necessary
+        ckpt["weight"] = PytorchNetworkUtils.fix_weight(ckpt["weight"], to_ddp=True, 
+                                                        is_module_dict=isinstance(model, torch.nn.ModuleDict))
+        
       model.load_state_dict(ckpt["weight"], strict=(resume or strict))
       
       if solver is not None:
