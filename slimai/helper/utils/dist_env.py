@@ -44,7 +44,9 @@ class DistEnv(object):
     if (not dist.is_initialized()) and (self.env.get("WORLD_SIZE", None) is not None):
       if timeout is not None:
         self.timeout = datetime.timedelta(seconds=timeout)
-      dist.init_process_group(backend=backend, timeout=self.timeout)
+      dist.init_process_group(backend=backend, 
+                              timeout=self.timeout, 
+                              )
       torch.cuda.set_device(self.local_rank)
       torch.backends.cudnn.benchmark = True
 
@@ -57,7 +59,7 @@ class DistEnv(object):
         """move to cuda and wrap with DDP if needed"""
         q = q.cuda().to(self.local_rank)
         if self.is_dist_initialized():
-          q = DDP(q, device_ids=[self.local_rank], static_graph=True) if (
+          q = DDP(q, static_graph=True) if (
             PytorchNetworkUtils.get_params_size(q, grad_mode="trainable", magnitude="digit") > 0
           ) else q
         return q

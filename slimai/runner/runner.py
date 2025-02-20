@@ -11,6 +11,7 @@ from slimai.helper import help_build, help_utils
 from slimai.helper.structure import DataSample
 from slimai.helper.utils.dist_env import dist_env
 from slimai.helper.utils.network import PytorchNetworkUtils
+from .exporter import Exporter
 
 
 class Runner(object):
@@ -262,7 +263,7 @@ class Runner(object):
         self.ckpt_min_loss = loss
         update_best = True and self.ckpt_keep_best
 
-      def _save(ckpt):
+      def _save(ckpt, export=False):
         Path(ckpt).resolve().parent.mkdir(parents=True, exist_ok=True)
         no_ddp_weight = PytorchNetworkUtils.fix_weight(model.state_dict(), to_ddp=False, 
                                                        is_module_dict=isinstance(model, torch.nn.ModuleDict))
@@ -270,17 +271,21 @@ class Runner(object):
                         weight=no_ddp_weight, # default save non-ddp weight
                         solver=solver.state_dict(),
                         epoch=epoch, loss=loss, min_loss=self.ckpt_min_loss), ckpt)
+        
+        if export:
+          exporter = Exporter(ckpt, disable_log=True)
+          exporter.export(self.work_dir / "exps", "onnx")
         return
       
       help_utils.print_log(f"Save checkpoint to {ckpt_path}")
-      _save(ckpt_path)
+      _save(ckpt_path, export=False)
 
       if self.ckpt_keep_latest:
         self.ckpt_latest_path.unlink(missing_ok=True)
         self.ckpt_latest_path.symlink_to(ckpt_path)
 
       if update_best:
-        _save(self.ckpt_best_path)
+        _save(self.ckpt_best_path, export=True)
 
       if not self.ckpt_record_file.exists():
         mmengine.dump([], self.ckpt_record_file)

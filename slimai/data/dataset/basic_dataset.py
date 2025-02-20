@@ -22,7 +22,8 @@ class BasicDataset(torch.utils.data.Dataset):
                loader=None, 
                to_rgb=True, 
                desc=None, 
-               max_sample_num=None,
+               max_sample_num=None, 
+               repeat=1,
                **kwargs):
     self.dataset_file = "Not file"
     if isinstance(dataset, str):
@@ -64,11 +65,14 @@ class BasicDataset(torch.utils.data.Dataset):
     else:
       self.max_sample_num = max_sample_num
       self.length = min(max_sample_num, len(files))
+    
+    self.repeat = repeat
 
     print_log(f"Dataset {self}", level="INFO")
     return
 
   def __getitem__(self, item):
+    item = item % self.length
     data = self.select_sample(item)
 
     # check data keys
@@ -89,13 +93,18 @@ class BasicDataset(torch.utils.data.Dataset):
     if self.to_rgb:
       image = mmcv.bgr2rgb(image)
 
-    data = dict(indice=item, image=image)  
+    data = dict(indice=item, image=image)
+    data = self.load_extra_keys(data, index=item)
+
     data = self.transform(data)
     
     return data
+  
+  def load_extra_keys(self, data, index):
+    return data
 
   def __str__(self):
-    repr_str = f"Total {len(self)} samples(selected from {len(self.files)} samples with max_sample_num: '{self.max_sample_num}')\n"
+    repr_str = f"Total {len(self)} samples(selected from {len(self.files)} samples with max_sample_num: '{self.max_sample_num}' with repeat: '{self.repeat}')\n"
     repr_str += f"\tWith Signature: {self.signature}\n"
     repr_str += f"\tDataset file: {self.dataset_file}\n"
     repr_str += f"\tDescription: {self.desc}\n"
@@ -105,5 +114,5 @@ class BasicDataset(torch.utils.data.Dataset):
   __repr__=__str__
   
   def __len__(self):
-    return self.length
+    return self.length * self.repeat
   

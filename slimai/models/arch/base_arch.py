@@ -45,7 +45,7 @@ class BaseArch(object):
 
     # Log model parameter size
     help_utils.print_log(f"Model({self.__class__.__name__}) built successfully "
-                         f"with {help_utils.PytorchNetworkUtils.get_params_size(self.model)} parameters")
+                         f"with {help_utils.PytorchNetworkUtils.get_params_size(self.export_model)} parameters")
     return
 
   @abstractmethod
@@ -56,6 +56,15 @@ class BaseArch(object):
     )
     model = Pipeline(encoder.backbone, encoder.neck, decoder.head)
     return model
+  
+  @property
+  @abstractmethod
+  def export_model(self):
+    help_utils.print_log(
+      f"Using default `export_model` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    return self.model
 
   @abstractmethod
   def init_solver(self, solver, module):
@@ -77,6 +86,15 @@ class BaseArch(object):
   @property
   def device(self):
     return next(self.model.parameters()).device
+  
+  @abstractmethod
+  def load_state_dict(self, state_dict, strict=True):
+    help_utils.print_log(
+      f"Using default `load_state_dict` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    self.model.load_state_dict(state_dict, strict=strict)
+    return
   
   @contextmanager
   def no_sync(self):

@@ -26,7 +26,7 @@ view_transform = [
   dict(type="DINOTransform", 
     global_transforms=dict(
       type="TorchTransform", transforms=[
-        dict(type="RandomResizedCrop", size=224, scale=(0.2, 1.)),
+        dict(type="RandomResizedCrop", size=224, scale=(0.4, 1.)),
         *flip_and_color_jitter,
         *normalize,
       ]),
@@ -34,7 +34,7 @@ view_transform = [
 
     local_transforms=dict(
       type="TorchTransform", transforms=[
-        dict(type="RandomResizedCrop", size=96, scale=(0.2, 1.)),
+        dict(type="RandomResizedCrop", size=96, scale=(0.05, 0.4)),
         *flip_and_color_jitter,
         *normalize,
       ]), 
@@ -54,6 +54,7 @@ train_dataset = dict(
   loader=loader, 
   desc="train custom dino", 
   max_sample_num=None,
+  repeat=1,
 )
 
 ########## 1.3 DATA LOADER
@@ -78,8 +79,8 @@ MODEL = dict(
       arch="large", 
       patch_size=16,
       drop_head=True,
-      dropout=0.5, 
-      attention_dropout=0.5, 
+      dropout=0.1, 
+      attention_dropout=0.1, 
     ),
     neck=None, 
   ), 
@@ -93,7 +94,7 @@ MODEL = dict(
       n_layer=2,
       act="gelu",
       norm=None,
-      dropout=0.0,
+      dropout=0.1,
     ),
   ),
   loss=dict(

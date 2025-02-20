@@ -5,9 +5,13 @@ class PytorchNetworkUtils(object):
 
   @classmethod
   def get_module(cls, module):
-    if hasattr(module, "module"):
-      module = module.module
-    return module
+    def _get_module(_module):
+      if hasattr(_module, "module"):
+        _module = _module.module
+      return _module
+    if isinstance(module, torch.nn.ModuleDict):
+      return torch.nn.ModuleDict({k: _get_module(v) for k, v in module.items()})
+    return _get_module(module)
 
   @classmethod
   def fix_weight(cls, weight, *, to_ddp, is_module_dict, ddp_prefix="module."):
@@ -34,27 +38,38 @@ class PytorchNetworkUtils(object):
         if clip_coef < 1:
           p.grad.data.mul_(clip_coef)
     return norms
+  
+  @classmethod
+  def cancel_gradient(cls, module, current_epoch, first_n_epoch_freeze_last_layer):
+    if current_epoch >= first_n_epoch_freeze_last_layer:
+      return
+    for param in cls.get_module_params(module, 
+                                       grad_mode=lambda name, _: "last_layer" in name):
+      param.grad = None
+    return module
 
   @classmethod
   def get_module_params(cls, module, grad_mode="all"):
     assert (
-      grad_mode in ["all", "trainable", "frozen", "unused", "grad"]
-    ), "grad_mode must be one of ['all', 'trainable', 'frozen', 'unused', 'grad'], but got {}".format(grad_mode)
+      grad_mode in ["all", "trainable", "frozen", "unused", "grad"] or isinstance(grad_mode, callable)
+    ), "grad_mode must be one of ['all', 'trainable', 'frozen', 'unused', 'grad'] or a callable, but got {}".format(grad_mode)
 
     if grad_mode == "all":
-      condition = lambda x: True
+      condition = lambda _, x: True
     elif grad_mode == "trainable":
-      condition = lambda x: x.requires_grad
+      condition = lambda _, x: x.requires_grad
     elif grad_mode == "frozen":
-      condition = lambda x: not x.requires_grad
+      condition = lambda _, x: not x.requires_grad
     elif grad_mode == "unused":
-      condition = lambda x: x.grad is None
+      condition = lambda _, x: x.grad is None
     elif grad_mode == "grad":
-      condition = lambda x: x.grad is not None
+      condition = lambda _, x: x.grad is not None
+    elif isinstance(grad_mode, callable):
+      condition = grad_mode
 
     params = []
-    for _, param in module.named_parameters():
-      if condition(param):
+    for name, param in module.named_parameters():
+      if condition(name, param):
         params.append(param)
     return params
     

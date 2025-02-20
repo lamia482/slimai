@@ -21,8 +21,8 @@ def update_logger(log_file: Path, log_level: str = "INFO"):
 
 _warned_messages = set()
 
-def print_log(msg, level="INFO", main_process_only=True, warn_once=False):
-  if not dist_env.is_main_process() and main_process_only:
+def print_log(msg, level="INFO", main_process_only=True, warn_once=False, disable_log=False):
+  if (not dist_env.is_main_process() and main_process_only) or disable_log:
     return
   assert (
     level in ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]

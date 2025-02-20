@@ -15,7 +15,7 @@ class ViT(torch.nn.Module):
                arch="base", 
                patch_size=16, 
                image_size=224, 
-               drop_head=True, 
+               drop_head=False, 
                **kwargs):
     super().__init__()
     vit_param = FlexViT.vit_arch.get(arch, None)

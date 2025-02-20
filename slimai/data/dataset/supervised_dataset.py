@@ -31,23 +31,10 @@ __all__ = ["SupervisedDataset"]
 """
 @DATASETS.register_module()
 class SupervisedDataset(BasicDataset):
-  def __init__(self, dataset, 
-               *, 
-               std_func=None, 
-               ann_keys=["label", "mask", "instance", "text"],
-               transform=None, 
-               to_rgb=True, 
-               loader=None,
-               desc=None, 
-               max_sample_num=None,
+  def __init__(self, *args, 
+               ann_keys=["label", "mask", "instance", "text"], 
                **kwargs):
-    super().__init__(dataset, 
-                     std_func=std_func, 
-                     transform=transform, 
-                     loader=loader, 
-                     to_rgb=to_rgb, 
-                     desc=desc, 
-                     max_sample_num=max_sample_num)
+    super().__init__(*args, **kwargs)
     dataset = self.dataset
     files = self.files
 
@@ -71,6 +58,11 @@ class SupervisedDataset(BasicDataset):
 
     print_log(f"Dataset {self}", level="INFO")
     return
+
+  def load_extra_keys(self, data, index):
+    for key in self.ann_keys:
+      data[key] = self.annotations[key][index]
+    return data
 
   def __str__(self):
     repr_str = super().__str__()

@@ -22,7 +22,7 @@ class DINO(BaseArch):
                ), 
                loss=None, 
                solver=None, 
-               momentum_teacher=0.9995,
+               momentum_teacher=0.9995, 
                ):
     super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
     
@@ -39,11 +39,15 @@ class DINO(BaseArch):
     self.momentum_teacher_schedule = None # update in step_precede_hooks
     return
   
-  def init_layers(self, encoder, decoder) -> Union[torch.nn.Module, Dict[str, torch.nn.Module]]:
+  def init_layers(self, encoder, decoder) -> Union[torch.nn.Module, torch.nn.ModuleDict]:
     student = Pipeline(encoder.backbone, encoder.neck, decoder.head)
     teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)    
     return torch.nn.ModuleDict(dict(teacher=teacher, student=student))
   
+  @property
+  def export_model(self):
+    return self.teacher
+
   @property
   def teacher(self):
     return self.model.teacher
