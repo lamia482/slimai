@@ -27,10 +27,10 @@ class DINO(BaseArch):
     super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
     
     # in DINO teacher use student weight by default
-    self.teacher.load_state_dict(self.student.state_dict())
+    self.model.teacher.load_state_dict(self.model.student.state_dict())
     
     # freeze teacher and only train student, ema student to teacher
-    help_utils.PytorchNetworkUtils.freeze(self.teacher)
+    help_utils.PytorchNetworkUtils.freeze(self.model.teacher)
 
     assert (
       0 < momentum_teacher < 1
@@ -44,22 +44,10 @@ class DINO(BaseArch):
     teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)    
     return torch.nn.ModuleDict(dict(teacher=teacher, student=student))
   
-  @property
-  def export_model(self):
-    return self.teacher
-
-  @property
-  def teacher(self):
-    return self.model.teacher
-  
-  @property
-  def student(self):
-    return self.model.student
-  
   def epoch_precede_hooks(self, *, runner):
     super().epoch_precede_hooks(runner=runner)
-    self.student.train()
-    self.teacher.eval()
+    self.model.student.train()
+    self.model.teacher.eval()
     return
   
   def epoch_succeed_hooks(self, *, runner):
@@ -80,8 +68,8 @@ class DINO(BaseArch):
     with torch.no_grad():
       global_train_step = self.current_train_epoch * self.max_train_step + self.current_train_step
       m = self.momentum_teacher_schedule[global_train_step]  # momentum parameter
-      for ps, pt in zip(help_utils.PytorchNetworkUtils.get_module_params(self.student), 
-                        help_utils.PytorchNetworkUtils.get_module_params(self.teacher)):
+      for ps, pt in zip(help_utils.PytorchNetworkUtils.get_module_params(self.model.student), 
+                        help_utils.PytorchNetworkUtils.get_module_params(self.model.teacher)):
         pt.data.mul_(m).add_((1 - m) * ps.detach().data)
     return
 
@@ -92,8 +80,8 @@ class DINO(BaseArch):
     n_global_views, n_local_views = len(global_views), len(local_views)
     global_views, local_views = torch.cat(global_views), torch.cat(local_views)
 
-    teacher_output = self.teacher(global_views)
-    student_output = self.student(local_views)
+    teacher_output = self.model.teacher(global_views)
+    student_output = self.model.student(local_views)
 
     if return_flow:
       return dict(
@@ -110,10 +98,8 @@ class DINO(BaseArch):
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
     loss = self.loss(epoch=self.current_train_epoch, **embedding_dict)
     return loss
-
-  def postprocess(self, 
-                  batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
-                  batch_info: DataSample) -> DataSample:
-    # Postprocess the output by assigning it to batch_info
-    batch_info.output = batch_data
-    return batch_info
+  
+  def export_model(self) -> torch.nn.Module:
+    # Export model for inference and export to onnx
+    backbone = self.model.teacher.backbone
+    return backbone

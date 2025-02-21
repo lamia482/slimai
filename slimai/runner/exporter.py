@@ -1,7 +1,11 @@
+import onnx
+from onnxsim import simplify
 import torch
 from pathlib import Path
+from functools import partial
 from mmengine.model.utils import revert_sync_batchnorm
 from slimai.helper import help_build, help_utils
+from slimai.models.component.pipeline import Pipeline
 
 
 class Exporter(torch.nn.Module):
@@ -22,7 +26,7 @@ class Exporter(torch.nn.Module):
     arch = help_build.build_model(ckpt["model"])
     arch.model = help_utils.PytorchNetworkUtils.get_module(arch.model)
     arch.load_state_dict(ckpt["weight"], strict=True)
-    model = revert_sync_batchnorm(arch.export_model)
+    model = revert_sync_batchnorm(arch.export_model())
 
     self.model = model.eval()
     help_utils.print_log("Model initialized successfully", disable_log=self.disable_log)
@@ -34,7 +38,10 @@ class Exporter(torch.nn.Module):
     return next(self.model.parameters()).device
   
   def forward(self, input_tensor):
-    return self.model(input_tensor, return_flow=True)
+    forward_func = self.model.forward
+    if isinstance(self.model, Pipeline):
+      forward_func = partial(forward_func, return_flow=True)
+    return forward_func(input_tensor)
   
   def export(self, output_dir, *, format="onnx"):    
     help_utils.print_log(f"Exporting model to {format} format", disable_log=self.disable_log)
@@ -49,11 +56,38 @@ class Exporter(torch.nn.Module):
     nested_model_file = Path(output_dir) / "-".join(Path(self.ckpt_path).with_suffix(f".{format}").parts[-3:])
     nested_model_file.parent.mkdir(parents=True, exist_ok=True)
 
-    help_utils.print_log(f"Saving model to {nested_model_file}", disable_log=self.disable_log)
+    help_utils.print_log(f"Exporting model to {nested_model_file}", disable_log=self.disable_log)
     if format == "onnx":
-      torch.onnx.export(self, input_tensor, nested_model_file)
-      help_utils.print_log("Model exported successfully", disable_log=self.disable_log)
+      nested_output = self._export_onnx(input_tensor, nested_model_file)
     else:
       raise ValueError("Invalid format, expect 'onnx', but got {}".format(format))
-    
+        
+    assert ( # TODO: validate output
+      True # pytorch_output == nested_output
+    ), "Output mismatch"
+
+    help_utils.print_log("Model exported successfully", disable_log=self.disable_log)
     return
+
+  ############################################################
+  # ONNX export
+  ############################################################
+  def _export_onnx(self, input_tensor, onnx_file):
+    export_options = dict(
+      export_params=True, 
+      opset_version=17, 
+      do_constant_folding=True, 
+      input_names=["input"], 
+      output_names=["output"], 
+      dynamic_axes={
+        "input": {0: "batch_size", 1: "channel", 2: "height", 3: "width"}, 
+        "output": {0: "batch_size"}, 
+      }
+    )
+    torch.onnx.export(self, input_tensor, onnx_file, **export_options)
+    onnx_model = onnx.load(onnx_file)
+    onnx.checker.check_model(onnx_model, full_check=True)
+    onnx_model, check = simplify(onnx_model)
+    assert check, "Simplified ONNX model could not be validated"
+    onnx.save_model(onnx_model, onnx_file)
+    return 

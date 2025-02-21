@@ -87,6 +87,10 @@ class Runner(object):
     arch = help_build.build_model(cfg.MODEL)
     model = arch.model
     solver = arch.solver
+    # Log model parameter size
+    param_size = help_utils.PytorchNetworkUtils.get_params_size(model, grad_mode="trainable")
+    help_utils.print_log(f"Model({arch.__class__.__name__}) built successfully "
+                         f"with {param_size} parameters")
 
     metric = help_build.build_metric(cfg.get("METRIC", dict()))
 

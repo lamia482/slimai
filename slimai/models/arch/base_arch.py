@@ -42,10 +42,6 @@ class BaseArch(object):
     # Initialize loss
     self.loss = self.init_loss(loss)
     self.loss = dist_env.init_dist(module=self.loss)
-
-    # Log model parameter size
-    help_utils.print_log(f"Model({self.__class__.__name__}) built successfully "
-                         f"with {help_utils.PytorchNetworkUtils.get_params_size(self.export_model)} parameters")
     return
 
   @abstractmethod
@@ -56,15 +52,6 @@ class BaseArch(object):
     )
     model = Pipeline(encoder.backbone, encoder.neck, decoder.head)
     return model
-  
-  @property
-  @abstractmethod
-  def export_model(self):
-    help_utils.print_log(
-      f"Using default `export_model` in {self.__class__.__name__}",
-      level="WARNING", warn_once=True
-    )
-    return self.model
 
   @abstractmethod
   def init_solver(self, solver, module):
@@ -214,6 +201,11 @@ class BaseArch(object):
     targets = batch_info.label
     loss = self.loss(logits, targets)
     return loss
+  
+  @abstractmethod
+  def export_model(self) -> torch.nn.Module:
+    # Export model for inference and export to onnx
+    raise NotImplementedError("`export_model` is not implemented and is necessary for `predict`")
 
   @abstractmethod
   def postprocess(self, 
@@ -227,6 +219,6 @@ class BaseArch(object):
               batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
               batch_info: DataSample) -> DataSample:
     # Predict method using postprocess
-    output = self._forward_tensor(batch_data)
+    output = self.export_model(batch_data)
     return self.postprocess(output, batch_info)
   
