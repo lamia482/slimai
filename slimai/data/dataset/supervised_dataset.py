@@ -39,8 +39,8 @@ class SupervisedDataset(BasicDataset):
     files = self.files
 
     assert (
-      isinstance(dataset, dict) and {"class_names", "files", "annotations"}.issubset(set(dataset.keys()))
-    ), "Dataset must be a dictionary at least with keys: `class_names`, `files`, `annotations`, but got: {}".format(dataset.keys())
+      isinstance(dataset, dict) and {"class_names", "annotations"}.issubset(set(dataset.keys()))
+    ), "Dataset must be a dictionary at least with keys: `class_names`, `annotations`, but got: {}".format(dataset.keys())
 
     class_names = dataset.pop("class_names")
     annotations = dataset.pop("annotations")
@@ -56,7 +56,6 @@ class SupervisedDataset(BasicDataset):
     self.annotations = annotations.copy()
     self.ann_keys = ann_keys
 
-    print_log(f"Dataset {self}", level="INFO")
     return
 
   def load_extra_keys(self, data, index):

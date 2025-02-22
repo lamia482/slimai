@@ -101,5 +101,13 @@ class DINO(BaseArch):
   
   def export_model(self) -> torch.nn.Module:
     # Export model for inference and export to onnx
-    backbone = self.model.teacher.backbone
+    teacher_without_ddp = help_utils.PytorchNetworkUtils.get_module(self.model.teacher)
+    backbone = teacher_without_ddp.backbone
     return backbone
+  
+  def postprocess(self, 
+                  batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
+                  batch_info: DataSample) -> DataSample:
+    # Postprocess the output by assigning it to batch_info
+    batch_info.output = batch_data
+    return batch_info

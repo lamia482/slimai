@@ -85,10 +85,14 @@ def build_source(cfg) -> Callable:
 
 def build_transform(cfg) -> Callable:
   transforms = compose_components(cfg, source=TRANSFORMS)
+  if not isinstance(transforms, list):
+    transforms = [transforms]
   return ComposeTransform(transforms)
 
 def build_dataset(cfg) -> torch.utils.data.Dataset:
-  return compose_components(cfg, source=DATASETS)
+  dataset = compose_components(cfg, source=DATASETS)
+  print_log(f"Dataset {dataset}", level="INFO")
+  return dataset
 
 def build_dataloader(cfg) -> torch.utils.data.DataLoader:
   dataset = build_dataset(cfg.pop("dataset", None))
@@ -100,7 +104,7 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
     ), "Sampler is not allowed in dataloader when DDP is enabled"
     print_log("use torch.utils.data.DistributedSampler for DDP")
     cfg["sampler"] = DistributedSampler(dataset, 
-                                        shuffle=cfg.pop("shuffle", True),
+                                        shuffle=cfg.pop("shuffle", False),
                                         seed=dist_env.global_rank, 
                                         num_replicas=dist_env.global_world_size, 
                                         rank=dist_env.global_rank)

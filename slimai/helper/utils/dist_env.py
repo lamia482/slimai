@@ -59,7 +59,7 @@ class DistEnv(object):
         """move to cuda and wrap with DDP if needed"""
         q = q.cuda().to(self.local_rank)
         if self.is_dist_initialized():
-          q = DDP(q, static_graph=True) if (
+          q = self.update2ddp(q) if (
             PytorchNetworkUtils.get_params_size(q, grad_mode="trainable", magnitude="digit") > 0
           ) else q
         return q
@@ -71,6 +71,11 @@ class DistEnv(object):
         })
       else:
         module = update_module(module)
+    return module
+
+  def update2ddp(self, module):
+    """Update module to be DDP"""
+    module = DDP(module, static_graph=True)
     return module
   
   def sync(self, data=None, tensor_op=dist.ReduceOp.AVG):

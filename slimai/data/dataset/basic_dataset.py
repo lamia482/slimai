@@ -24,6 +24,7 @@ class BasicDataset(torch.utils.data.Dataset):
                desc=None, 
                max_sample_num=None, 
                repeat=1,
+               shuffle=False,
                **kwargs):
     self.dataset_file = "Not file"
     if isinstance(dataset, str):
@@ -50,6 +51,9 @@ class BasicDataset(torch.utils.data.Dataset):
     self.signature = dataset.pop(self.signature, None)
 
     self.files = files
+    self.indices = list(range(len(files)))
+    if shuffle:
+      np.random.shuffle(self.indices)
 
     self.transform = build_transform(transform)
     
@@ -67,12 +71,11 @@ class BasicDataset(torch.utils.data.Dataset):
       self.length = min(max_sample_num, len(files))
     
     self.repeat = repeat
-
-    print_log(f"Dataset {self}", level="INFO")
     return
 
   def __getitem__(self, item):
     item = item % self.length
+    item = self.indices[item]
     data = self.select_sample(item)
 
     # check data keys
@@ -114,5 +117,5 @@ class BasicDataset(torch.utils.data.Dataset):
   __repr__=__str__
   
   def __len__(self):
-    return self.length * self.repeat
+    return int(self.length * self.repeat)
   

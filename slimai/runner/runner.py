@@ -1,6 +1,7 @@
 import sys
 import time
 import torch
+import matplotlib
 from pathlib import Path
 from functools import partial
 import torch.amp
@@ -81,7 +82,7 @@ class Runner(object):
     cfg = cfg.copy()
     
     train_loader = help_build.build_dataloader(cfg.TRAIN_LOADER)
-    valid_loader = help_build.build_dataloader(cfg.get("VALID_LOADER", dict()))
+    valid_loader = help_build.build_dataloader(cfg.get("VALID_LOADER", cfg.get("VAL_LOADER", dict())))
     test_loader = help_build.build_dataloader(cfg.get("TEST_LOADER", dict()))
 
     arch = help_build.build_model(cfg.MODEL)
@@ -247,7 +248,14 @@ class Runner(object):
     metrics = self.metric(logits, targets)
 
     if dist_env.is_main_process():
-      help_utils.print_log(f"Metrics: {', '.join([f'{key}: {value:.6f}' for key, value in metrics.items()])}")
+      msg_list = []
+      for key, fig in metrics.items():
+        if isinstance(fig, matplotlib.figure.Figure):
+          fig.savefig(str(result_file).replace(".pkl", f"_{key}.png"))
+        else:
+          msg_list.append(f"{key}: {fig:.6f}")
+
+      help_utils.print_log(f"Metrics: {', '.join(msg_list)}")
       results["metrics"] = metrics
       help_utils.print_log(f"Dump metric result into: {result_file}")
       mmengine.dump(results, result_file)
@@ -278,7 +286,7 @@ class Runner(object):
         
         if export:
           exporter = Exporter(ckpt, disable_log=True)
-          exporter.export(self.work_dir / "exps", "onnx")
+          exporter.export(self.work_dir / "exps", format="onnx")
         return
       
       help_utils.print_log(f"Save checkpoint to {ckpt_path}")

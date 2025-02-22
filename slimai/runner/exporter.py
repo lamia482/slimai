@@ -26,7 +26,8 @@ class Exporter(torch.nn.Module):
     arch = help_build.build_model(ckpt["model"])
     arch.model = help_utils.PytorchNetworkUtils.get_module(arch.model)
     arch.load_state_dict(ckpt["weight"], strict=True)
-    model = revert_sync_batchnorm(arch.export_model())
+    model = help_utils.PytorchNetworkUtils.get_module(arch.export_model())
+    model = revert_sync_batchnorm(model)
 
     self.model = model.eval()
     help_utils.print_log("Model initialized successfully", disable_log=self.disable_log)

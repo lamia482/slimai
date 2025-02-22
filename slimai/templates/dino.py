@@ -17,7 +17,7 @@ normalize = [
 
 loader = dict(
   type="ReadWsiLoader", 
-  random_scale=[10, 20, 20, 20, 40], 
+  random_scale=[5, 10, 20, 20, 20, 40], 
   random_crop_size=[256, 512, 1024], 
   anchor_file=None,
 )
@@ -46,8 +46,8 @@ train_dataset = dict(
   type=dataset_type, 
   dataset=dict(
     type="LocalSource",
-    path="/mnt/wangqiang/server/10.168.100.21/ai/internal/projects/hzztai/projects/tct/cell_det/data/每类6000", 
-    ext=[".png"], 
+    path="/mnt/wangqiang/server/172.16.10.17/slice/uploads/TCT/已入库",
+    ext=[".kfb"], 
   ),
   std_func=None,
   transform=view_transform, 
@@ -57,12 +57,43 @@ train_dataset = dict(
   repeat=1,
 )
 
+val_dataset_type = "SupervisedDataset"
+val_dataset = dict(
+  type=val_dataset_type, 
+  dataset="/hzztai/toolbox/_debug_/cls_dataset.pkl",
+  std_func=None,
+  ann_keys=["label"],
+  transform=dict(
+    type="TorchTransform", 
+    transforms=[
+      dict(type="Resize", size=[224, 224]),
+      *normalize,
+    ],
+  ), 
+  loader=None, 
+  desc="val custom dino", 
+  max_sample_num=None, 
+  repeat=1,
+  shuffle=False,
+)
+
+
 ########## 1.3 DATA LOADER
 batch_size = 64
-num_workers = 10
+num_workers = 8
 persistent_workers = True if num_workers > 0 else False
+
 TRAIN_LOADER = dict(
   dataset=train_dataset,
+  batch_size=batch_size,
+  num_workers=num_workers,
+  persistent_workers=persistent_workers,
+  shuffle=True,
+  pin_memory=True,
+)
+
+VALID_LOADER = dict(
+  dataset=val_dataset,
   batch_size=batch_size,
   num_workers=num_workers,
   persistent_workers=persistent_workers,
@@ -76,7 +107,7 @@ MODEL = dict(
   encoder=dict(
     backbone=dict(
       type="ViT",
-      arch="large", 
+      arch="huge", 
       patch_size=16,
       drop_head=True,
       dropout=0.1, 
@@ -87,7 +118,7 @@ MODEL = dict(
   decoder=dict(
     head=dict(
       type="MLP",
-      input_dim=1024,
+      input_dim=1280,
       hidden_dim=2048,
       bottleneck_dim=256, 
       output_dim=65536,
@@ -117,13 +148,13 @@ MODEL = dict(
       eta_min=1e-5,
     ),
   ), 
-  momentum_teacher=0.9997, # recommend setting a higher value with small batches: for example use 0.9995 with batch size of 256
+  momentum_teacher=0.9998, # recommend setting a higher value with small batches: for example use 0.9995 with batch size of 256
 )
 
 ############################## 3. RUNNER
 
 RUNNER = dict(
-  max_epoch=120,
+  max_epoch=300,
 
   gradient=dict(
     amp=True, 
@@ -158,9 +189,42 @@ RUNNER = dict(
 
 ############################## 4. Metric
 METRIC = dict(
-  type="DINOMetric",
+  type="DINOMetric", 
+  class_names=["ASC-US", "LSIL", "ASC-H", "HSIL", "AGC-N", 
+               "TRI", "FUNGI", "WS", "CC", "ACTINO", 
+               "GEC", "NILM", "Glycogen", "Repair", "Debris"], 
+  classifier=dict(
+    type="CosineSimilarityClassifier"
+  ),
+  umap=dict(
+    type="UMAP", 
+    color_map = {
+      "ASC-US": '#FF0000',    # Red
+      "LSIL": '#FF1493',      # DeepPink 
+      "ASC-H": '#FF00FF',     # Magenta
+      "HSIL": '#DA70D6',      # Orchid
+      "AGC-N": '#800080',     # Purple
+      "TRI": '#0000FF',       # Blue
+      "FUNGI": '#4169E1',     # RoyalBlue
+      "WS": '#00BFFF',        # DeepSkyBlue
+      "CC": '#87CEEB',        # SkyBlue
+      "ACTINO": '#98FB98',    # PaleGreen
+      "GEC": '#90EE90',       # LightGreen
+      "NILM": '#32CD32',      # LimeGreen
+      "Glycogen": '#228B22',  # ForestGreen
+      "Repair": '#006400',    # DarkGreen
+      "Debris": '#808080'     # Gray
+    }
+  ), 
+  acc=dict(
+    type="torchmetrics.Accuracy",
+    task="multiclass"
+  ), 
+  kappa=dict(
+    type="torchmetrics.CohenKappa", 
+    task="multiclass"
+  )
 )
-
 
 ############################## ALL SET
 # create model signature by default like 20250208-50adae7c

@@ -42,6 +42,9 @@ class BaseArch(object):
     # Initialize loss
     self.loss = self.init_loss(loss)
     self.loss = dist_env.init_dist(module=self.loss)
+
+    # Initialize model cache for inference
+    self.infer_model_cache = None
     return
 
   @abstractmethod
@@ -219,6 +222,8 @@ class BaseArch(object):
               batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
               batch_info: DataSample) -> DataSample:
     # Predict method using postprocess
-    output = self.export_model(batch_data)
+    if self.infer_model_cache is None:
+      self.infer_model_cache = self.export_model()
+    output = self.infer_model_cache(batch_data)
     return self.postprocess(output, batch_info)
   

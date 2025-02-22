@@ -14,5 +14,7 @@ class ClassificationArch(BaseArch):
                   batch_data: torch.Tensor, 
                   batch_info: DataSample) -> DataSample:
     # Postprocess the output by assigning it to batch_info
-    batch_info.output = batch_data
+    logits = batch_data
+    scores = torch.softmax(logits, dim=1)
+    batch_info.output = scores
     return batch_info
