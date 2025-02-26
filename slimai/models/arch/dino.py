@@ -52,6 +52,8 @@ class DINO(BaseArch):
   
   def epoch_succeed_hooks(self, *, runner):
     super().epoch_succeed_hooks(runner=runner)
+    self.model.student.eval()
+    self.model.teacher.eval()
     return
   
   def step_precede_hooks(self, *, runner):
@@ -59,7 +61,7 @@ class DINO(BaseArch):
     if self.momentum_teacher_schedule is None:
       self.momentum_teacher_schedule = help_utils.cosine_scheduler(
         base_value=self.momentum_teacher, final_value=1, epochs=self.max_train_epoch, 
-        niter_per_ep=self.max_train_step, warmup_epochs=1, start_warmup_value=0
+        niter_per_ep=self.max_train_step, warmup_epochs=0, start_warmup_value=0
       )
     return
 

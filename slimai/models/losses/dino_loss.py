@@ -1,4 +1,3 @@
-from turtle import tracer
 import numpy as np
 import torch
 from typing import Dict
@@ -42,7 +41,7 @@ class DINOLoss(torch.nn.Module):
     cls_loss = 0
     for i in range(student_n_crops):
       for j in range(teacher_n_crops):
-        cls_loss -= torch.sum(student_out[i] * teacher_out[j], dim=-1).mean()
+        cls_loss += torch.sum(-teacher_out[j] * student_out[i], dim=-1).mean()
     cls_loss = cls_loss / student_n_crops / teacher_n_crops
 
     self.update_center(teacher_output)
@@ -53,7 +52,7 @@ class DINOLoss(torch.nn.Module):
     """
     Update center used for teacher output.
     """
-    batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
+    batch_center = torch.mean(teacher_output, dim=0, keepdim=True)
     batch_center = dist_env.sync(batch_center) # already divided by world size, no need to divide again
 
     # ema update

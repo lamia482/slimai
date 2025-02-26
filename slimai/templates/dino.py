@@ -10,6 +10,13 @@ flip_and_color_jitter = [
   dict(type="RandomGrayscale", p=0.2),
 ]
 
+quality = dict(
+  type="RandomChoice", transforms=[
+    dict(type="GaussianBlur", kernel_size=(5, 5), sigma=(0.5, 2.0)), 
+    dict(type="RandomErasing", p=0.3, scale=(0.02, 0.33), ratio=(0.3, 3.3), value=0, inplace=False),
+  ], p=0.5
+)
+
 normalize = [
   dict(type="ToTensor"), 
   dict(type="Normalize", mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
@@ -29,6 +36,7 @@ view_transform = [
         dict(type="RandomResizedCrop", size=224, scale=(0.4, 1.)),
         *flip_and_color_jitter,
         *normalize,
+        quality, 
       ]),
     global_ncrops=2, 
 
@@ -37,6 +45,7 @@ view_transform = [
         dict(type="RandomResizedCrop", size=96, scale=(0.05, 0.4)),
         *flip_and_color_jitter,
         *normalize,
+        quality, 
       ]), 
     local_ncrops=8
   )]
@@ -54,13 +63,14 @@ train_dataset = dict(
   loader=loader, 
   desc="train custom dino", 
   max_sample_num=None,
-  repeat=1,
+  repeat=1, 
+  cache=True,
 )
 
 val_dataset_type = "SupervisedDataset"
 val_dataset = dict(
   type=val_dataset_type, 
-  dataset="/hzztai/toolbox/_debug_/cls_dataset.pkl",
+  dataset="/hzztai/toolbox/_debug_/cls_dataset_valid.pkl",
   std_func=None,
   ann_keys=["label"],
   transform=dict(
@@ -75,11 +85,11 @@ val_dataset = dict(
   max_sample_num=None, 
   repeat=1,
   shuffle=False,
+  cache=True,
 )
 
-
 ########## 1.3 DATA LOADER
-batch_size = 64
+batch_size = 32
 num_workers = 8
 persistent_workers = True if num_workers > 0 else False
 
@@ -97,7 +107,7 @@ VALID_LOADER = dict(
   batch_size=batch_size,
   num_workers=num_workers,
   persistent_workers=persistent_workers,
-  shuffle=True,
+  shuffle=False,
   pin_memory=True,
 )
 
@@ -120,8 +130,8 @@ MODEL = dict(
       type="MLP",
       input_dim=1280,
       hidden_dim=2048,
-      bottleneck_dim=256, 
-      output_dim=65536,
+      bottleneck_dim=384, 
+      output_dim=131072,
       n_layer=2,
       act="gelu",
       norm=None,
@@ -130,7 +140,7 @@ MODEL = dict(
   ),
   loss=dict(
     type="DINOLoss",
-    output_dim=65536,
+    output_dim=131072,
     warmup_teacher_temp=0.04,
     warmup_teacher_temp_epochs=30,
     teacher_temp=0.04,

@@ -31,17 +31,17 @@ class BaseArch(object):
     super().__init__()
     
     # Initialize model layers
-    self.model = self.init_layers(encoder, decoder)
-    self.model.apply(help_utils.PytorchNetworkUtils.init_weights)
-    self.model = dist_env.init_dist(module=self.model)
+    model = self.init_layers(encoder, decoder)
+    model.apply(help_utils.PytorchNetworkUtils.init_weights)
+    self.model = dist_env.init_dist(module=model)
     help_utils.print_log(self.model)
 
     # Initialize solver
     self.solver = self.init_solver(solver, self.model)
 
     # Initialize loss
-    self.loss = self.init_loss(loss)
-    self.loss = dist_env.init_dist(module=self.loss)
+    loss = self.init_loss(loss)
+    self.loss = dist_env.init_dist(module=loss)
 
     # Initialize model cache for inference
     self.infer_model_cache = None

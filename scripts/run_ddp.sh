@@ -18,7 +18,7 @@ NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 
 ##### random DDP info
 MASTER_ADDR=${MASTER_ADDR:-localhost}
-MASTER_PORT=${MASTER_PORT:-29603}
+MASTER_PORT=${MASTER_PORT:-0}
 MAX_RESTARTS=${MAX_RESTARTS:-0}
 JOB_ID=${JOB_ID:-${MASTER_PORT}}
 
@@ -40,13 +40,17 @@ MASTER_PORT: ${MASTER_PORT}
 MAX_RESTARTS: ${MAX_RESTARTS}
 ===================
 """
+if  [ "${NNODES}" -eq 1 ]; then
+  STANDALONE="--standalone"; \
+  echo "Running in standalone mode"
+fi
 
 ##### cd working path
 TOOLBOX_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
 export PYTHONPATH="${TOOLBOX_ROOT_DIR}":"${PYTHONPATH}"
 
 ##### DDP RUN
-torchrun \
+torchrun ${STANDALONE}\
   --nnodes=${NNODES} \
   --node-rank=${NODE_RANK} \
   --nproc-per-node=${NPROC_PER_NODE} \
@@ -56,5 +60,4 @@ torchrun \
   --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} \
   ${TOOLBOX_ROOT_DIR}/tools/run.py \
   --config="${CONFIG_FILE}" \
-  --action="train" \
   ${@:2}

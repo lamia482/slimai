@@ -1,7 +1,9 @@
+import hashlib
 import numpy as np
 import mmcv
 import mmengine
 import torch
+from pathlib import Path
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import DATASETS, build_transform, build_loader, build_source
 
@@ -24,15 +26,36 @@ class BasicDataset(torch.utils.data.Dataset):
                desc=None, 
                max_sample_num=None, 
                repeat=1,
-               shuffle=False,
+               shuffle=False, 
+               cache=False, 
                **kwargs):
     self.dataset_file = "Not file"
-    if isinstance(dataset, str):
-      self.dataset_file = dataset
-      dataset = mmengine.load(dataset)
-    elif isinstance(dataset, dict):
-      dataset = build_source(dataset)
-      dataset = dataset()
+
+    cache_file = Path("/tmp/slimai_cache/{}.pkl".format(
+      hashlib.md5("+".join(map(str, [dataset, desc])).encode(encoding="UTF-8")
+    ).hexdigest()))
+
+    if cache and cache_file.exists():
+      cache = False
+      try:
+        dataset = mmengine.load(cache_file)
+        cache = True
+      except Exception as e:
+        print_log(f"Error loading cache file {cache_file}: {e}", level="WARNING")
+
+    if cache:
+      print_log(f"Loading dataset from cache")
+      self.dataset_file, dataset = dataset
+    else:
+      print_log(f"Building dataset from scratch")
+      if isinstance(dataset, str):
+        self.dataset_file = dataset
+        dataset = mmengine.load(dataset)
+      elif isinstance(dataset, dict):
+        dataset = build_source(dataset)
+        dataset = dataset()
+      print_log(f"Build dataset done, save cache to: {cache_file}")
+      mmengine.dump((self.dataset_file, dataset), cache_file)
       
     if std_func is not None:
       assert (

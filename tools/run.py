@@ -12,7 +12,7 @@ def parse_args():
                       help="the yaml config file of the pipeline")
   parser.add_argument("--work_dir", "--work-dir", type=str, default=None, 
                       help="the dir to save the logs and checkpoints")
-  parser.add_argument("--action", choices=["train", "infer", "evaluate"], type=str, required=True, 
+  parser.add_argument("--action", choices=["train", "infer", "evaluate"], type=str, default="train", 
                       help="the action to run, train, infer, evaluate")
   parser.add_argument("--amp", action="store_true", help="whether to use amp")
   parser.add_argument("--resume", nargs="?", type=str, const="auto",

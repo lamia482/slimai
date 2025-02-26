@@ -78,6 +78,16 @@ class DistEnv(object):
     module = DDP(module, static_graph=True)
     return module
   
+  def broadcast(self, data):
+    """Broadcast data to all processes."""
+    if not self.is_dist_initialized():
+      return data
+    
+    output = [data] # wrap to list to use broadcast_object_list
+    dist.broadcast_object_list(output, src=0) # auto barrier across all processes
+    data = output[0]
+    return data
+  
   def sync(self, data=None, tensor_op=dist.ReduceOp.AVG):
     """Reduce data (Tensor or Dict of Tensor) across all processes."""
     if not self.is_dist_initialized():
@@ -111,8 +121,7 @@ class DistEnv(object):
     ), "collect data must be a list, but got {}".format(type(data))
 
     output = [None for _ in range(self.global_world_size)]
-    dist.all_gather_object(output, data)
-    self.sync()
+    dist.all_gather_object(output, data) # auto barrier across all processes
     output = list(itertools.chain(*output))
     return output
 

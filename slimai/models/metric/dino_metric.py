@@ -23,7 +23,7 @@ class DINOMetric(torch.nn.Module):
   def forward(self, 
               embeddings: torch.Tensor, 
               targets: torch.Tensor) -> Dict[str, torch.Tensor]:
-    fig = self.umap(embeddings, targets)
+    fig = self.umap(embeddings.cpu(), targets.cpu()) # cpu for umap
     self.classifier.fit(embeddings, targets)
     preds = self.classifier.predict(embeddings)
     acc = self.acc(preds, targets)

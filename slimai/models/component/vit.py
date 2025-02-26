@@ -88,13 +88,13 @@ class FlexViT(models.VisionTransformer):
     batch_class_token = self.class_token.expand(B, -1, -1)
     x = torch.cat([batch_class_token, x], dim=1)
 
-    """/opt/conda/lib/python3.8/site-packages/torchvision/models/vision_transformer.py:154
+    """.../site-packages/torchvision/models/vision_transformer.py:154
     # x = self.encoder(x)
     """
     torch._assert(x.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x.shape}")
     pos_embedding = self.interpolate_pos_encoding(self.encoder.pos_embedding, x, w, h)
     x = x + pos_embedding
-    self.encoder.ln(self.encoder.layers(self.encoder.dropout(x)))
+    x = self.encoder.ln(self.encoder.layers(self.encoder.dropout(x)))
 
     # Classifier "token" as used by standard language architectures
     x = x[:, 0]

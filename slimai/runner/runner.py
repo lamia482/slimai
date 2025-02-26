@@ -46,7 +46,7 @@ class Runner(object):
       self.gradient_accumulation_every_n_steps = 1
       help_utils.print_log(f"gradient accumulation is not supported yet in non-dist mode, set to 1", level="WARNING")
 
-    self.gradient_scaler = torch.cuda.amp.GradScaler(enabled=self.gradient_amp)
+    self.gradient_scaler = torch.amp.GradScaler("cuda", enabled=self.gradient_amp)
     self.gradient_clip = cfg.RUNNER.gradient.get("clip", None)
     self.gradient_checkpointing = cfg.RUNNER.gradient.get("checkpointing", True)
 
@@ -81,7 +81,7 @@ class Runner(object):
     """Build dataloader, arch, model, solver, metric"""
     cfg = cfg.copy()
     
-    train_loader = help_build.build_dataloader(cfg.TRAIN_LOADER)
+    train_loader = help_build.build_dataloader(cfg.get("TRAIN_LOADER", dict()))
     valid_loader = help_build.build_dataloader(cfg.get("VALID_LOADER", cfg.get("VAL_LOADER", dict())))
     test_loader = help_build.build_dataloader(cfg.get("TEST_LOADER", dict()))
 
@@ -94,6 +94,7 @@ class Runner(object):
                          f"with {param_size} parameters")
 
     metric = help_build.build_metric(cfg.get("METRIC", dict()))
+    metric = dist_env.init_dist(module=metric)
 
     dist_env.sync()
     help_utils.print_log("Created runner, desc: {}".format(dist_env.desc), main_process_only=False)
@@ -103,8 +104,15 @@ class Runner(object):
   def run(self, *, action):
     """Run the runner, action can be "train", "infer", "evaluate"."""
     assert action in ["train", "infer", "evaluate"]
-    action = getattr(self, action)
-    return action()
+    if action == "train":
+      return self.train()
+    elif action == "infer":
+      return self.infer(self.test_dataloader, self.work_dir / "results" / "test.pkl")
+    elif action == "evaluate":
+      return self.evaluate(self.test_dataloader, self.work_dir / "results" / "test.pkl")
+    else:
+      raise ValueError(f"Invalid action: {action}")
+    return
   
   def step_train(self, i_step, total_steps, 
                  grad_accumulation_every_n_steps, 
@@ -150,6 +158,10 @@ class Runner(object):
   
   def train(self):
     """Train the model."""
+    assert (
+      self.train_dataloader is not None
+    ), "train_dataloader must be provided"
+
     for self.epoch in range(self.epoch, self.max_epoch):
       self.train_dataloader.sampler.set_epoch(self.epoch)
 
@@ -196,7 +208,7 @@ class Runner(object):
       if (self.epoch % self.eval_every_n_epochs == 0) and (self.valid_dataloader is not None):
         result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
         eval_metrics = self.evaluate(self.valid_dataloader, result_file)
-        avg_loss = eval_metrics["metrics"].get("loss", avg_loss)
+        avg_loss = eval_metrics.get("loss", avg_loss)
 
       # Save checkpoint with strategy
       self.save_ckpt(self.model, self.solver, self.epoch, avg_loss)
@@ -206,6 +218,10 @@ class Runner(object):
   @torch.no_grad()
   def infer(self, dataloader, result_file, ckpt_path=None):
     """Infer on dataloader, if ckpt_path is not None, load ckpt from ckpt_path."""
+    assert (
+      dataloader is not None
+    ), "dataloader must be provided for infer"
+
     if ckpt_path is not None:
       self.load_ckpt(self.model, self.solver, 
                      resume=False, resume_from=False, load_from=ckpt_path, strict=True)
@@ -242,12 +258,14 @@ class Runner(object):
     else:
       results = mmengine.load(result_file)
 
-    batch_info = results["batch_info"]
-    logits = torch.stack([result.output for result in batch_info])
-    targets = torch.stack([result.label for result in batch_info])
-    metrics = self.metric(logits, targets)
+    metrics = None
 
     if dist_env.is_main_process():
+      batch_info = results["batch_info"]
+      # for better performance, move to gpu first
+      logits = torch.stack([result.output for result in batch_info]).to(self.arch.device)
+      targets = torch.stack([result.label for result in batch_info]).to(self.arch.device)
+      metrics = self.metric(logits, targets)
       msg_list = []
       for key, fig in metrics.items():
         if isinstance(fig, matplotlib.figure.Figure):
@@ -256,11 +274,11 @@ class Runner(object):
           msg_list.append(f"{key}: {fig:.6f}")
 
       help_utils.print_log(f"Metrics: {', '.join(msg_list)}")
-      results["metrics"] = metrics
-      help_utils.print_log(f"Dump metric result into: {result_file}")
+      results["metrics"] = DataSample(**metrics).to("cpu").to_dict() # move to cpu to dump
+      help_utils.print_log(f"Dump metric into: {result_file}")
       mmengine.dump(results, result_file)
 
-    dist_env.sync()
+    metrics = dist_env.broadcast(metrics)
     return metrics
 
   def save_ckpt(self, model, solver, epoch, loss):
@@ -297,7 +315,7 @@ class Runner(object):
         self.ckpt_latest_path.symlink_to(ckpt_path)
 
       if update_best:
-        _save(self.ckpt_best_path, export=True)
+        _save(self.ckpt_best_path, export=False)
 
       if not self.ckpt_record_file.exists():
         mmengine.dump([], self.ckpt_record_file)
