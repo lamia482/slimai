@@ -118,7 +118,7 @@ MODEL = dict(
     backbone=dict(
       type="ViT",
       arch="huge", 
-      patch_size=16,
+      patch_size=14,
       drop_head=True,
       dropout=0.1, 
       attention_dropout=0.1, 
@@ -158,7 +158,7 @@ MODEL = dict(
       eta_min=1e-5,
     ),
   ), 
-  momentum_teacher=0.9998, # recommend setting a higher value with small batches: for example use 0.9995 with batch size of 256
+  momentum_teacher=0.9997, # recommend setting a higher value with small batches: for example use 0.9995 with batch size of 256
 )
 
 ############################## 3. RUNNER

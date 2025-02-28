@@ -362,7 +362,7 @@ class Runner(object):
         sys.exit(2)
 
       help_utils.print_log(f"{'Resume' if resume else 'Load'} checkpoint from {load_from}")
-      ckpt = torch.load(load_from, map_location="cpu")
+      ckpt = torch.load(load_from, map_location="cpu", weights_only=False)
 
       if model is None:
         model = help_build.build_model(ckpt["model"])
