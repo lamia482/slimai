@@ -35,7 +35,8 @@
       "console": "integratedTerminal",
       "args": [
         "--config=/hzztai/toolbox/_debug_/debug.py",
-        "--action=train"
+        "--action=train", 
+        "--work-dir=/hzztai/experiments/debug"
       ],
       "justMyCode": false
     },

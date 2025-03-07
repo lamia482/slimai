@@ -12,12 +12,20 @@ then
   exit 1
 fi
 
-WORKING_PATH="$(git rev-parse --show-toplevel)"
+WORKING_PATH="/hzztai"
 
 CREATE_DIR="${WORKING_PATH}/projects"
 
 echo "[*] Create Project: ${PROJECT_NAME}"
 echo "[*] Under: ${CREATE_DIR}"
+
+# show project path, and require user to confirm
+echo "[*] Project Path: ${CREATE_DIR}/${PROJECT_NAME}"
+read -p "Are you sure to create this project? (y/n): " confirm
+if [ "${confirm,,}" != "y" ] && [ "${confirm,,}" != "Y" ]; then
+  echo "[-] Abort"
+  exit 1
+fi
 
 # # #
 PROJECT_DIR="${CREATE_DIR}/${PROJECT_NAME}"

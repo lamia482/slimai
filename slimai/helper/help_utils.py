@@ -13,6 +13,8 @@ from .utils.vis import put_gt_on_image, put_pred_on_image, hstack_imgs, vstack_i
 from .utils.split_dataset import split_dataset
 
 
+_CACHE_ROOT_DIR_ = "/.slimai/cache"
+
 def update_logger(log_file: Path, log_level: str = "INFO"):
   if not dist_env.is_main_process():
     return
@@ -28,7 +30,7 @@ def print_log(msg, level="INFO", main_process_only=True, warn_once=False, disabl
     level in ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
   ), "Invalid log level: {}".format(level)
   
-  if warn_once and level == "WARNING":
+  if warn_once:
     if msg in _warned_messages:
       return
     _warned_messages.add(msg)

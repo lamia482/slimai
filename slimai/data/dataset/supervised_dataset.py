@@ -32,23 +32,25 @@ __all__ = ["SupervisedDataset"]
 @DATASETS.register_module()
 class SupervisedDataset(BasicDataset):
   def __init__(self, *args, 
+               class_names=None, 
                ann_keys=["label", "mask", "instance", "text"], 
                **kwargs):
     super().__init__(*args, **kwargs)
     dataset = self.dataset
     files = self.files
 
+    if class_names is not None:
+      dataset["class_names"] = class_names
     assert (
       isinstance(dataset, dict) and {"class_names", "annotations"}.issubset(set(dataset.keys()))
     ), "Dataset must be a dictionary at least with keys: `class_names`, `annotations`, but got: {}".format(dataset.keys())
 
     class_names = dataset.pop("class_names")
-    annotations = dataset.pop("annotations")
-
     self.class_names = class_names
+
+    annotations = dataset.pop("annotations")
     if isinstance(annotations, str):  
       annotations = mmengine.load(annotations)
-    
     DatasetChecker.check_annotations(annotations, ann_keys, len(files))
 
     self.collect_keys = sorted(self.collect_keys + ann_keys)

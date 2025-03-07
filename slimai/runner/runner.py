@@ -88,10 +88,15 @@ class Runner(object):
     arch = help_build.build_model(cfg.MODEL)
     model = arch.model
     solver = arch.solver
+
     # Log model parameter size
-    param_size = help_utils.PytorchNetworkUtils.get_params_size(model, grad_mode="trainable")
+    all_param_size = help_utils.PytorchNetworkUtils.get_params_size(model, grad_mode="all")
+    trainable_param_size = help_utils.PytorchNetworkUtils.get_params_size(model, grad_mode="trainable")
+    all_param_num = help_utils.PytorchNetworkUtils.get_params_size(model, grad_mode="all", magnitude="digit")
+    trainable_param_num = help_utils.PytorchNetworkUtils.get_params_size(model, grad_mode="trainable", magnitude="digit")
     help_utils.print_log(f"Model({arch.__class__.__name__}) built successfully "
-                         f"with {param_size} parameters")
+                         f"with total {all_param_size} parameters, in which "
+                         f"{trainable_param_size} parameters are trainable({100*trainable_param_num/all_param_num:.2f}%)")
 
     metric = help_build.build_metric(cfg.get("METRIC", dict()))
     metric = dist_env.init_dist(module=metric)

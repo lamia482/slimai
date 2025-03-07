@@ -113,6 +113,9 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
     cfg["pin_memory"] = True
     cfg["pin_memory_device"] = f"cuda:{dist_env.local_rank}"
 
+  if collate_fn := cfg.pop("collate_fn", None):
+    cfg["collate_fn"] = build_loader(collate_fn)
+
   loader = torch.utils.data.DataLoader(dataset, **cfg)
   
   if getattr(loader.sampler, "set_epoch", None) is None:

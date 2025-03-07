@@ -4,7 +4,7 @@ import mmcv
 import mmengine
 import torch
 from pathlib import Path
-from slimai.helper.help_utils import print_log
+from slimai.helper.help_utils import print_log, _CACHE_ROOT_DIR_
 from slimai.helper.help_build import DATASETS, build_transform, build_loader, build_source
 
 
@@ -31,7 +31,7 @@ class BasicDataset(torch.utils.data.Dataset):
                **kwargs):
     self.dataset_file = "Not file"
 
-    cache_file = Path("/tmp/slimai_cache/{}.pkl".format(
+    cache_file = Path(_CACHE_ROOT_DIR_, "dataset", "{}.pkl".format(
       hashlib.md5("+".join(map(str, [dataset, desc])).encode(encoding="UTF-8")
     ).hexdigest()))
 
@@ -44,7 +44,7 @@ class BasicDataset(torch.utils.data.Dataset):
         print_log(f"Error loading cache file {cache_file}: {e}", level="WARNING")
 
     if cache:
-      print_log(f"Loading dataset from cache")
+      print_log(f"Loading dataset from cache<{cache_file}>")
       self.dataset_file, dataset = dataset
     else:
       print_log(f"Building dataset from scratch")
@@ -52,12 +52,16 @@ class BasicDataset(torch.utils.data.Dataset):
         self.dataset_file = dataset
         dataset = mmengine.load(dataset)
       elif isinstance(dataset, dict):
-        dataset = build_source(dataset)
-        dataset = dataset()
+        dataset_fn = build_source(dataset)
+        dataset = dataset_fn()
       print_log(f"Build dataset done, save cache to: {cache_file}")
       mmengine.dump((self.dataset_file, dataset), cache_file)
       
     if std_func is not None:
+      if isinstance(std_func, str):
+        std_func = eval(std_func)
+      elif isinstance(std_func, dict):
+        raise NotImplementedError("Standard function must be callable")
       assert (
         callable(std_func)
       ), "Standard function must be callable"
@@ -117,7 +121,10 @@ class BasicDataset(torch.utils.data.Dataset):
       return self.select_sample(item)
 
     if self.to_rgb:
-      image = mmcv.bgr2rgb(image)
+      if isinstance(image, (list, tuple)):
+        image = list(map(mmcv.bgr2rgb, image))
+      else:
+        image = mmcv.bgr2rgb(image)
 
     data = dict(indice=item, image=image)
     data = self.load_extra_keys(data, index=item)

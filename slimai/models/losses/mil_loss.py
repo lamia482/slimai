@@ -3,8 +3,12 @@ from typing import Dict
 from slimai.helper.help_build import MODELS, build_loss
 
 
+__all__ = [
+  "MILLoss", 
+]
+
 @MODELS.register_module()
-class BasicClassificationLoss(torch.nn.Module):
+class MILLoss(torch.nn.Module):
   def __init__(self, 
                cls_loss=dict(
                   type="torch.nn.CrossEntropyLoss",

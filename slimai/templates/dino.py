@@ -23,10 +23,9 @@ normalize = [
 ]
 
 loader = dict(
-  type="ReadWsiLoader", 
-  random_scale=[5, 10, 20, 20, 20, 40], 
-  random_crop_size=[256, 512, 1024], 
-  anchor_file=None,
+  type="RandomTileLoader", 
+  random_scale=[10, 20, 20, 20, 40], 
+  random_crop_size=[128, 256, 512], 
 )
 
 view_transform = [
@@ -153,9 +152,9 @@ MODEL = dict(
     weight_decay=1e-2, 
     scheduler=dict(
       type="torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
-      T_0=500,
+      T_0=1000,
       T_mult=1,
-      eta_min=1e-5,
+      eta_min=1e-6,
     ),
   ), 
   momentum_teacher=0.9997, # recommend setting a higher value with small batches: for example use 0.9995 with batch size of 256
@@ -164,7 +163,7 @@ MODEL = dict(
 ############################## 3. RUNNER
 
 RUNNER = dict(
-  max_epoch=300,
+  max_epoch=500,
 
   gradient=dict(
     amp=True, 
