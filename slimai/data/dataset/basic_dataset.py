@@ -31,20 +31,13 @@ class BasicDataset(torch.utils.data.Dataset):
                **kwargs):
     self.dataset_file = "Not file"
 
-    cache_file = Path(_CACHE_ROOT_DIR_, "dataset", "{}.pkl".format(
+    cache_file = Path(_CACHE_ROOT_DIR_, "dataset", self.__class__.__name__, "{}.pkl".format(
       hashlib.md5("+".join(map(str, [dataset, desc])).encode(encoding="UTF-8")
     ).hexdigest()))
 
-    if cache and cache_file.exists():
-      cache = False
-      try:
-        dataset = mmengine.load(cache_file)
-        cache = True
-      except Exception as e:
-        print_log(f"Error loading cache file {cache_file}: {e}", level="WARNING")
-
-    if cache:
-      print_log(f"Loading dataset from cache<{cache_file}>")
+    if cache_file.exists() and cache:
+      dataset = mmengine.load(cache_file)
+      print_log(f"Dataset loaded from cache<{cache_file}>")
       self.dataset_file, dataset = dataset
     else:
       print_log(f"Building dataset from scratch")
@@ -54,8 +47,10 @@ class BasicDataset(torch.utils.data.Dataset):
       elif isinstance(dataset, dict):
         dataset_fn = build_source(dataset)
         dataset = dataset_fn()
-      print_log(f"Build dataset done, save cache to: {cache_file}")
-      mmengine.dump((self.dataset_file, dataset), cache_file)
+
+      if cache:
+        print_log(f"Build dataset done, save cache to: {cache_file}")
+        mmengine.dump((self.dataset_file, dataset), cache_file)
       
     if std_func is not None:
       if isinstance(std_func, str):

@@ -1,9 +1,11 @@
 from .random_tile_loader import RandomTileLoader
 from .stack_tile_loader import StackTileLoader
-from .mil_collate import MILCollate
+from .asymmetry_shape_collate import AsymmetryShapeCollate
+from .region_tile_loader import RegionTileLoader
 
 __all__ = [
   "RandomTileLoader",
   "StackTileLoader",
-  "MILCollate",
+  "AsymmetryShapeCollate",
+  "RegionTileLoader",
 ]

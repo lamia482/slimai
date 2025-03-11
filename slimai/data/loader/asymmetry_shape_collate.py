@@ -4,7 +4,7 @@ from slimai.helper.help_build import LOADERS
 
 
 @LOADERS.register_module()
-class MILCollate():
+class AsymmetryShapeCollate():
   image_key = "image"
 
   def __init__(self):

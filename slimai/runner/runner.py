@@ -48,7 +48,6 @@ class Runner(object):
 
     self.gradient_scaler = torch.amp.GradScaler("cuda", enabled=self.gradient_amp)
     self.gradient_clip = cfg.RUNNER.gradient.get("clip", None)
-    self.gradient_checkpointing = cfg.RUNNER.gradient.get("checkpointing", True)
 
     # Checkpoint configuration
     self.ckpt_save_dir = self.work_dir / cfg.RUNNER.ckpt.get("save_dir", "ckpts")
@@ -128,7 +127,7 @@ class Runner(object):
 
     accumulation_i_step = i_step % grad_accumulation_every_n_steps
 
-    train_forward_func = partial(self.arch, mode="loss", gradient_checkpointing=self.gradient_checkpointing)
+    train_forward_func = partial(self.arch, mode="loss")
 
     with torch.autocast(device_type=self.arch.device.type, 
                         enabled=self.gradient_amp, dtype=torch.bfloat16):

@@ -172,8 +172,7 @@ RUNNER = dict(
   gradient=dict(
     amp=True, 
     accumulation_every_n_steps=1,
-    clip=None, 
-    checkpointing=True, 
+    clip=None
   ), 
 
   logger=dict(

@@ -33,7 +33,7 @@ class StackTileLoader():
     return
   
   def __call__(self, file):
-    cache_file = Path(_CACHE_ROOT_DIR_, "loader", "{}-{}.pkl".format(
+    cache_file = Path(_CACHE_ROOT_DIR_, "loader", self.__class__.__name__, "{}-{}.pkl".format(
       hashlib.md5("+".join(map(str, [self.magnification, self.tile_size, self.tile_stride, self.region, self.padding_value])).encode(encoding="UTF-8")
     ).hexdigest(), file))
     if self.cache and cache_file.exists():

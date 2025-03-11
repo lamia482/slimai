@@ -140,7 +140,7 @@ class BaseArch(object):
   def __call__(self, 
                batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                batch_info: Optional[Union[Dict, DataSample]] = None,
-               mode="tensor", gradient_checkpointing=False
+               mode="tensor"
                ) -> Union[Dict, torch.Tensor, DataSample]:
     # Forward pass with different modes: tensor, loss, predict
     expected_modes = ["tensor", "loss", "predict"]
@@ -156,13 +156,7 @@ class BaseArch(object):
       output = self._forward_tensor(batch_data)
 
     elif mode == "loss":
-      if gradient_checkpointing:
-        # use checkpoint to save memory during training
-        forward_func = partial(self._forward_tensor, return_flow=True)
-        embedding_dict = checkpoint.checkpoint(forward_func, batch_data, use_reentrant=False)
-      else:
-        embedding_dict = self._forward_tensor(batch_data, return_flow=True)
-        
+      embedding_dict = self._forward_tensor(batch_data, return_flow=True)        
       loss_dict = self._forward_loss(embedding_dict, batch_info)
       assert (
         isinstance(loss_dict, dict) and len(loss_dict) > 0

@@ -32,7 +32,7 @@ class MIL(BaseArch):
                 batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                 return_flow: bool = False) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
     def forward_backbone(images, group_size=self.embedding_group_size):
-      if group_size == -1:
+      if group_size <= 0:
         group_size = len(images)
       output = []
       for i in range(0, len(images), group_size):
