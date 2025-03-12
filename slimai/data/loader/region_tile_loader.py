@@ -67,7 +67,6 @@ class RegionTileLoader():
     y_chunks = np.ceil(np.sqrt(num_threads)).astype(np.int32)
     y_tile_size = np.ceil((ymax - ymin) / y_chunks).astype(np.int32)
     
-
     # Create readers upfront for each thread
     thread_readers = []
     for _ in range(num_threads):
@@ -75,7 +74,7 @@ class RegionTileLoader():
       thread_readers.append(thread_reader)
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
-      def read_roi_chunk(x, y, w, h, thread_id):
+      def read_roi_chunk(ox, oy, thread_id, x, y, w, h):
         if w <= 0 or h <= 0:
           return
         # Get reader from thread's reader list
@@ -84,6 +83,7 @@ class RegionTileLoader():
           chunk = thread_reader.ReadRoi(x, y, w, h, scale=thread_reader.getReadScale())
         except Exception as e:
           chunk = np.full((h, w, 3), self.padding_value, dtype=np.uint8)
+        x, y = x - ox, y - oy
         image[y:y+h, x:x+w, :] = chunk
         return
 
@@ -98,8 +98,8 @@ class RegionTileLoader():
           start_x = xmin + j * x_tile_size
           end_x = min(start_x + x_tile_size, xmax)
           
-          future = executor.submit(read_roi_chunk, start_x, start_y, end_x - start_x, end_y - start_y, 
-                                 thread_counter % num_threads)
+          future = executor.submit(read_roi_chunk, xmin, ymin, thread_counter % num_threads, 
+                                   start_x, start_y, end_x - start_x, end_y - start_y)
           futures.append(future)
           thread_counter += 1
       

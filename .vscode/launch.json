@@ -8,11 +8,11 @@
       "name": "EXPORT",
       "type": "debugpy",
       "request": "launch",
-      "program": "/hzztai/toolbox/tools/export.py",
+      "program": "/hzztai/slimai/tools/export.py",
       "console": "integratedTerminal", 
       "justMyCode": false, 
       "env": {
-        "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH", 
+        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH", 
         "CUDA_VISIBLE_DEVICES": "7"
       }, 
       "args": [
@@ -27,14 +27,14 @@
       "request": "launch",
       "cwd": "/hzztai",
       "env": {
-        "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH",
+        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
         "CUDA_VISIBLE_DEVICES": "7",
         "PYDEVD_WARN_SLOW_RESOLVE": "0"
       },
-      "program": "/hzztai/toolbox/tools/run.py",
+      "program": "/hzztai/slimai/tools/run.py",
       "console": "integratedTerminal",
       "args": [
-        "--config=/hzztai/toolbox/_debug_/debug.py",
+        "--config=/hzztai/slimai/_debug_/debug.py",
         "--action=train", 
         "--work-dir=/hzztai/experiments/debug"
       ],
@@ -47,7 +47,7 @@
       "module": "torch.distributed.launch",
       "cwd": "/hzztai",
       "env": {
-        "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH",
+        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
         "CUDA_VISIBLE_DEVICES": "7",
         "PYDEVD_WARN_SLOW_RESOLVE": "0"
       },
@@ -57,8 +57,8 @@
         "--nproc_per_node=1",
         "--master_addr=localhost",
         "--master_port=12345",
-        "/hzztai/toolbox/tools/run.py",
-        "--config=/hzztai/toolbox/_debug_/debug.py",
+        "/hzztai/slimai/tools/run.py",
+        "--config=/hzztai/slimai/_debug_/debug.py",
         "--action=train"
       ],
       "console": "integratedTerminal",
@@ -72,7 +72,7 @@
       "console": "integratedTerminal", 
       "justMyCode": false, 
       "env": {
-        "PYTHONPATH": "/hzztai/toolbox:$PYTHONPATH", 
+        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH", 
         "CUDA_VISIBLE_DEVICES": "7"
       }
     }
