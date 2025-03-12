@@ -43,9 +43,17 @@ class RegionTileLoader():
       return None
     
     xmin, ymin, xmax, ymax = [self.region[k] for k in ["xmin", "ymin", "xmax", "ymax"]]
-    if xmax == -1:
+    if 0 < xmin < 1:
+      xmin = int(xmin * reader.getReadWidth())
+    if 0 < ymin < 1:
+      ymin = int(ymin * reader.getReadHeight())
+    if 0 < xmax < 1:
+      xmax = int(xmax * reader.getReadWidth())
+    if 0 < ymax < 1:
+      ymax = int(ymax * reader.getReadHeight())
+    if xmax <= 0:
       xmax = reader.getReadWidth()
-    if ymax == -1:
+    if ymax <= 0:
       ymax = reader.getReadHeight()
     
     if self.num_threads:
