@@ -5,23 +5,6 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "EXPORT",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "/hzztai/slimai/tools/export.py",
-      "console": "integratedTerminal", 
-      "justMyCode": false, 
-      "env": {
-        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH", 
-        "CUDA_VISIBLE_DEVICES": "7"
-      }, 
-      "args": [
-        "--ckpt_path=/hzztai/experiments/debug/20250219-55229a14/ckpts/best.pth",
-        "--output_dir=/hzztai/experiments/debug/20250219-55229a14/exps",
-        "--format=onnx"
-      ]
-    },
-    {
       "name": "RUN",
       "type": "debugpy",
       "request": "launch",
@@ -64,6 +47,23 @@
       "console": "integratedTerminal",
       "justMyCode": false
     }, 
+    {
+      "name": "EXPORT",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "/hzztai/slimai/tools/export.py",
+      "console": "integratedTerminal", 
+      "justMyCode": false, 
+      "env": {
+        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH", 
+        "CUDA_VISIBLE_DEVICES": "7"
+      }, 
+      "args": [
+        "--ckpt_path=/hzztai/experiments/debug/20250219-55229a14/ckpts/best.pth",
+        "--output_dir=/hzztai/experiments/debug/20250219-55229a14/exps",
+        "--format=onnx"
+      ]
+    },
     {
       "name": "Python Debugger: Current File",
       "type": "debugpy",

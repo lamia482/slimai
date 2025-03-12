@@ -21,10 +21,13 @@ class MIL(BaseArch):
                ), 
                loss=None, 
                solver=None, 
-               embedding_group_size=1,
+               embedding_group_size=1, 
+               freeze_backbone=False,
                ):
     super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
-    help_utils.PytorchNetworkUtils.freeze(self.model.backbone)
+    if freeze_backbone:
+      help_utils.print_log("Freezing backbone.")
+      help_utils.PytorchNetworkUtils.freeze(self.model.backbone)
     self.embedding_group_size = embedding_group_size
     return
   

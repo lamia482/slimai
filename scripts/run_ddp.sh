@@ -60,4 +60,5 @@ torchrun ${STANDALONE}\
   --rdzv-endpoint=${MASTER_ADDR}:${MASTER_PORT} \
   ${TOOLBOX_ROOT_DIR}/tools/run.py \
   --config="${CONFIG_FILE}" \
+  --action="train" \
   ${@:2}
