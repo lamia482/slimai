@@ -34,10 +34,15 @@ class StackTileLoader():
   
   def __call__(self, file):
     cache_file = Path(_CACHE_ROOT_DIR_, "loader", self.__class__.__name__, "{}-{}.pkl".format(
-      hashlib.md5("+".join(map(str, [self.magnification, self.tile_size, self.tile_stride, self.region, self.padding_value])).encode(encoding="UTF-8")
-    ).hexdigest(), file))
+      hashlib.md5("+".join(map(str, [self.magnification, self.tile_size, self.tile_stride, self.region, self.padding_value])
+      ).encode(encoding="UTF-8")).hexdigest(), 
+      hashlib.md5(file.encode(encoding="UTF-8")).hexdigest()
+    ))
     if self.cache and cache_file.exists():
-      return mmengine.load(cache_file)
+      try:
+        return mmengine.load(cache_file)
+      except Exception as e:
+        pass
 
     wsi_file_path = file
 
@@ -53,8 +58,8 @@ class StackTileLoader():
     image_list = self._read_roi_async(reader, x, y, w, h)
 
     if self.cache:
-      cache_file.parent.mkdir(parents=True, exist_ok=True)
       mmengine.dump(image_list, cache_file)
+    
     return image_list
 
   def _read_roi_async(self, reader, xmin, ymin, xmax, ymax):

@@ -217,7 +217,12 @@ class BaseArch(object):
               batch_info: DataSample) -> DataSample:
     # Predict method using postprocess
     if self.infer_model_cache is None:
-      self.infer_model_cache = self.export_model()
+      try:
+        help_utils.print_log("Try exporting model for inference", level="INFO", warn_once=True)
+        self.infer_model_cache = self.export_model()
+      except Exception as e:
+        help_utils.print_log("Failed to export model for inference, using default forward pass", level="WARNING", warn_once=True)
+        self.infer_model_cache = partial(self._forward_tensor, return_flow=False)
     output = self.infer_model_cache(batch_data)
     return self.postprocess(output, batch_info)
   

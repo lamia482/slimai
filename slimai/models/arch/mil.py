@@ -1,7 +1,8 @@
 import torch
 from typing import Union, Dict
+from functools import partial
 from slimai.helper import help_utils
-from slimai.helper.help_build import MODELS
+from slimai.helper.help_build import MODELS, build_model
 from slimai.helper.structure import DataSample
 from .base_arch import BaseArch
 
@@ -30,6 +31,16 @@ class MIL(BaseArch):
       help_utils.PytorchNetworkUtils.freeze(self.model.backbone)
     self.embedding_group_size = embedding_group_size
     return
+
+  def init_layers(self, encoder, decoder) -> torch.nn.Module:
+    help_utils.print_log(
+      f"Using default `init_layers` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
+    backbone = build_model(encoder.backbone)
+    neck = build_model(encoder.neck)
+    head = build_model(decoder.head)
+    return torch.nn.ModuleDict(dict(backbone=backbone, neck=neck, head=head))
   
   def _forward_tensor(self, 
                 batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
@@ -44,9 +55,7 @@ class MIL(BaseArch):
       return torch.cat(output, dim=0)
 
     # batch_data in shape (B, ~N, C, H, W)
-    help_utils.print_log(f"Start forward backbone with B={len(batch_data)}, GS={self.embedding_group_size}")
     backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
-    help_utils.print_log("Embedding gathered.")
     neck = self.model.neck(backbone) # (B, D)
     head = self.model.head(neck) # (B, C)
 
@@ -58,12 +67,6 @@ class MIL(BaseArch):
       )
     else:
       return head
-  
-  def export_model(self) -> torch.nn.Module:
-    # Export model for inference and export to onnx
-    teacher_without_ddp = help_utils.PytorchNetworkUtils.get_module(self.model.teacher)
-    backbone = teacher_without_ddp.backbone
-    return backbone
   
   def postprocess(self, 
                   batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 

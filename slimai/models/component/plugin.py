@@ -31,8 +31,8 @@ class Plugin(torch.nn.Module):
       # Load from installed package
       module = importlib.import_module(module_name)
     
-    self.module = getattr(module, method_name)(**kwargs)
+    self.layer = getattr(module, method_name)(**kwargs)
     return
   
   def forward(self, x):
-    return self.module(x)
+    return self.layer(x)

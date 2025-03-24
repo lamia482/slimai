@@ -22,8 +22,10 @@ class RegionTileLoader():
     self.magnification = magnification
     self.region = region
     assert (
-      isinstance(region, dict) and {"xmin", "ymin", "xmax", "ymax"}.issubset(set(region.keys()))
-    ), "Region must be a dictionary with keys: 'xmin', 'ymin', 'xmax', 'ymax'"
+      region is None or (
+        isinstance(region, dict) and {"xmin", "ymin", "xmax", "ymax"}.issubset(set(region.keys()))
+      )
+    ), "Region must be None or a dictionary with keys: 'xmin', 'ymin', 'xmax', 'ymax'"
     self.cache = cache
     self.num_threads = num_threads
     self.padding_value = padding_value
@@ -31,10 +33,15 @@ class RegionTileLoader():
   
   def __call__(self, file):
     cache_file = Path(_CACHE_ROOT_DIR_, "loader", self.__class__.__name__, "{}-{}.pkl".format(
-      hashlib.md5("+".join(map(str, [self.magnification, self.region])).encode(encoding="UTF-8")
-    ).hexdigest(), file))
+      hashlib.md5("+".join(map(str, [self.magnification, self.region, self.padding_value])
+      ).encode(encoding="UTF-8")).hexdigest(), 
+      hashlib.md5(file.encode(encoding="UTF-8")).hexdigest()
+    ))
     if self.cache and cache_file.exists():
-      return mmengine.load(cache_file)
+      try:
+        return mmengine.load(cache_file)
+      except Exception as e:
+        pass
     
     wsi_file_path = file
 
