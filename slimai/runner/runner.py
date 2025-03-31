@@ -178,7 +178,7 @@ class Runner(object):
       # walk through one epoch
       avg_loss = 0.0
       for self.step, batch_info in enumerate(self.train_dataloader):
-        msg = f"Step: {self.step+1}/{len(self.train_dataloader)}, Global Rank: {dist_env.global_rank}"
+        msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
         batch_info = DataSample(**batch_info).to(self.arch.device)
         batch_data = batch_info.pop("image")
 
