@@ -25,3 +25,4 @@ class MILLoss(torch.nn.Module):
     # Compute classification loss
     cls_loss = self.cls_loss(logits, targets)
     return dict(cls_loss=cls_loss)
+    # cls_loss, (logits.argmax(-1) == targets).type_as(logits).mean(), targets, logits.argmax(-1)

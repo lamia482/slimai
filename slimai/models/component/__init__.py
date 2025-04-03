@@ -3,6 +3,7 @@ from .vit import ViT
 from .mlp import MLP
 from .plugin import Plugin
 from .abmil import ABMIL
+from .qmil import QMIL
 
 __all__ = [
   "Pipeline",
@@ -10,4 +11,5 @@ __all__ = [
   "MLP",
   "Plugin",
   "ABMIL",
+  "QMIL",
 ]
