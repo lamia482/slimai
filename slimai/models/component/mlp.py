@@ -12,7 +12,7 @@ class MLP(torch.nn.Module):
                bottleneck_dim=256, 
                n_layer=1, 
                act="relu", 
-               norm=None,
+               norm="batch_norm",
                dropout=0.0):
     super().__init__()
     assert (
@@ -47,9 +47,10 @@ class MLP(torch.nn.Module):
     ), "act must be one of {}, but got {}".format(act_dict.keys(), act)
 
     norm_dict = {
-      None: torch.nn.Identity(),
-      "layer_norm": torch.nn.LayerNorm,
-      "batch_norm": torch.nn.BatchNorm2d, 
+      None: lambda nfeat: torch.nn.Identity(),
+      "layer_norm": lambda nfeat: torch.nn.LayerNorm(nfeat),
+      "batch_norm_1d": lambda nfeat: torch.nn.BatchNorm1d(nfeat), 
+      "batch_norm_2d": lambda nfeat: torch.nn.BatchNorm2d(nfeat), 
       
     }
     assert (
@@ -59,6 +60,6 @@ class MLP(torch.nn.Module):
     return torch.nn.Sequential(
       torch.nn.Linear(in_features, out_features),
       act_dict[act],
-      norm_dict[norm], 
+      norm_dict[norm](out_features), 
       torch.nn.Dropout(dropout),
     )

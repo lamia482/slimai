@@ -34,7 +34,7 @@ train_view_transform = [
   dict(type="MILTransform", 
     tile_size=1024, 
     tile_stride=896, 
-    random_crop_patch_size=256, # random crop n patch from each tile
+    random_crop_patch_size=224, # random crop n patch from each tile
     random_crop_patch_num=16, 
     topk=0,
     shuffle=True, # shuffle patches
@@ -46,10 +46,10 @@ train_view_transform = [
 
 val_view_transform = [
   dict(type="MILTransform", 
-    tile_size=1024, 
-    tile_stride=896, 
-    random_crop_patch_size=256, # random crop n patch from each tile
-    random_crop_patch_num=16, 
+    tile_size=224, 
+    tile_stride=224, 
+    random_crop_patch_size=None, # random crop n patch from each tile
+    random_crop_patch_num=None, 
     topk=0,
     shuffle=False,
     padding_value=255,
@@ -72,9 +72,9 @@ train_dataset = dict(
       "_SHEET_NAME_": "producer", 
     },
     # sheet_name=["BD", "Thinprep", "kfbio"],
-    sheet_name=["BD", "kfbio"],
+    sheet_name=["kfbio"],
     filter=[
-      ("phase", "==", "test"), 
+      ("phase", "==", "train"), 
     ], 
     apply=[
       ("files", "lambda file: file.replace('/root/workspace/server21/AI/ai_21/yujie', '/mnt/wangqiang/server/10.168.100.21/ai/yujie')"), 
@@ -105,7 +105,7 @@ val_dataset = dict(
       "_SHEET_NAME_": "producer", 
     },
     # sheet_name=["BD", "Thinprep", "kfbio"],
-    sheet_name=["BD", "kfbio"],
+    sheet_name=["kfbio"],
     filter=[
       ("phase", "==", "test"), 
     ], 
@@ -127,8 +127,8 @@ val_dataset = dict(
 )
 
 ########## 1.3 DATA LOADER
-batch_size = 6
-num_workers = 3
+batch_size = 8
+num_workers = 2
 persistent_workers = True if num_workers > 0 else False
 
 TRAIN_LOADER = dict(
@@ -164,22 +164,17 @@ MODEL = dict(
   freeze_backbone=True,
   encoder=dict(
     backbone=dict(
-      # type="ViT",
-      # arch="base", 
-      # patch_size=14,
-      # drop_head=True,
-      # dropout=0.1, 
-      # attention_dropout=0.1, 
       type="Plugin",
       module="/.slimai/plugins/standalone/get_embedding.py:get_backbone", 
     ),
     neck=dict(
-      type="ABMIL", 
+      type="QMIL", 
       input_dim=768, 
       num_heads=12, 
       num_layers=3,
+      act="gelu",
+      norm="layer_norm",
       dropout=0.5,
-      topk=128,
     ), 
   ), 
   decoder=dict(
@@ -191,7 +186,7 @@ MODEL = dict(
       output_dim=len(class_names),
       n_layer=2,
       act="gelu",
-      norm=None,
+      norm="batch_norm_1d",
       dropout=0.5,
     ),
   ),
@@ -200,13 +195,13 @@ MODEL = dict(
   ), 
   solver=dict(
     type="torch.optim.AdamW",
-    lr=1e-5,
+    lr=1e-4,
     weight_decay=1e-2, 
     scheduler=dict(
       type="torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
       T_0=500,
       T_mult=1,
-      eta_min=1e-6,
+      eta_min=1e-5,
     ),
   ), 
 )
@@ -230,7 +225,7 @@ RUNNER = dict(
 
   ckpt=dict(
     save_dir="ckpts",
-    save_every_n_epochs=10, 
+    save_every_n_epochs=1, 
     keep_max=3,
     keep_best=True, # keep ckpt with minimum loss on VALID dataset
     keep_latest=True, # keep ckpt link to latest epoch

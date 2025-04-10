@@ -41,6 +41,7 @@ class DINOLoss(torch.nn.Module):
     cls_loss = 0
     for i in range(student_n_crops):
       for j in range(teacher_n_crops):
+        #TODO: skip when view i and view j are the same
         cls_loss += torch.sum(-teacher_out[j] * student_out[i], dim=-1).mean()
     cls_loss = cls_loss / student_n_crops / teacher_n_crops
 

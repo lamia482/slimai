@@ -13,6 +13,21 @@ __all__ = [
 
 @MODELS.register_module()
 class MIL(BaseArch):
+  """Multiple Instance Learning (MIL) architecture.
+  
+  This class implements a MIL architecture for processing bags of instances.
+  It consists of a backbone for feature extraction, a neck for aggregating
+  instance features into bag-level representations, and a head for classification.
+  
+  Args:
+    encoder (dict): Configuration for the encoder, including backbone and neck components.
+    decoder (dict): Configuration for the decoder, including the head component.
+    loss (dict, optional): Configuration for the loss function.
+    solver (dict, optional): Configuration for the optimizer.
+    embedding_group_size (int): Number of instances to process together in the backbone.
+      This helps manage memory usage for large bags.
+    freeze_backbone (bool): Whether to freeze the backbone parameters during training.
+  """
   def __init__(self, *, 
                encoder=dict(
                  backbone=None, neck=None, 
@@ -33,6 +48,15 @@ class MIL(BaseArch):
     return
 
   def init_layers(self, encoder, decoder) -> torch.nn.Module:
+    """Initialize the model layers.
+    
+    Args:
+      encoder (dict): Configuration for the encoder components.
+      decoder (dict): Configuration for the decoder components.
+      
+    Returns:
+      torch.nn.ModuleDict: Dictionary containing the backbone, neck, and head modules.
+    """
     help_utils.print_log(
       f"Using default `init_layers` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
@@ -45,7 +69,29 @@ class MIL(BaseArch):
   def _forward_tensor(self, 
                 batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                 return_flow: bool = False) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+    """Forward pass for tensor input.
+    
+    Processes a batch of bags through the model. Each bag contains multiple instances.
+    
+    Args:
+      batch_data: Input data containing bags of instances, shape (B, ~N, C, H, W)
+                 where B is batch size, ~N is variable number of instances per bag.
+      return_flow: If True, returns intermediate outputs from each component.
+      
+    Returns:
+      If return_flow is True, returns a dictionary with outputs from backbone, neck, and head.
+      Otherwise, returns only the head output (classification logits).
+    """
     def forward_backbone(images, group_size=self.embedding_group_size):
+      """Process instances through backbone in groups to manage memory.
+      
+      Args:
+        images: Tensor of instances from a single bag.
+        group_size: Number of instances to process together.
+        
+      Returns:
+        Tensor of instance embeddings.
+      """
       if group_size <= 0:
         group_size = len(images)
       output = []
@@ -71,6 +117,15 @@ class MIL(BaseArch):
   def postprocess(self, 
                   batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                   batch_info: DataSample) -> DataSample:
+    """Postprocess model outputs.
+    
+    Args:
+      batch_data: Model output data.
+      batch_info: DataSample object to store results.
+      
+    Returns:
+      Updated DataSample with model outputs.
+    """
     # Postprocess the output by assigning it to batch_info
     batch_info.output = batch_data
     return batch_info

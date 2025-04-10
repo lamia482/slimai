@@ -8,19 +8,22 @@ __all__ = [
 
 @MODELS.register_module()
 class QMIL(torch.nn.Module):
+
+  MLP = MODELS.get("MLP")
+
   def __init__(self, *, input_dim, num_heads, num_layers, dropout=0.1, 
-               **kwargs):
+               act="gelu", norm="batch_norm", **kwargs):
     super().__init__()
     self.input_dim = input_dim
     self.cls_token = torch.nn.Parameter(torch.randn(1, input_dim))
     self.ln = torch.nn.LayerNorm(input_dim)
-    self.atten_weight = torch.nn.Sequential(
-      torch.nn.LayerNorm(input_dim), 
-      torch.nn.Linear(input_dim, input_dim // num_heads), 
-      torch.nn.GELU(), 
-      torch.nn.Linear(input_dim // num_heads, 1), 
-    )
-    self.proj = torch.nn.Linear(input_dim*2, input_dim)
+    self.atten_weight = self.MLP(input_dim=input_dim, output_dim=1, 
+                                 hidden_dim=input_dim // num_heads, 
+                                 bottleneck_dim=input_dim // num_heads, 
+                                 n_layer=num_layers, act=act, norm=norm, dropout=dropout)
+    self.proj = self.MLP(input_dim=input_dim*2, output_dim=input_dim, 
+                        hidden_dim=input_dim, bottleneck_dim=input_dim, 
+                        n_layer=num_layers, act=act, norm=norm, dropout=dropout)
     self.atten_topk = torch.nn.ModuleList([
       torch.nn.MultiheadAttention(input_dim, num_heads, dropout=dropout, batch_first=True)
       for _ in range(num_layers)
@@ -33,7 +36,6 @@ class QMIL(torch.nn.Module):
 
     for _x in x:
       _bx = _x.unsqueeze(0) # [1, ~N, D]
-      # TODO: classify patch embedding to neg/pos, and then combine them
       _weight = self.atten_weight(_bx).squeeze([0, 2]).sigmoid() # [~N]
       _neg_indices = torch.where(_weight < 0.5)[0]
       _pos_indices = torch.where(_weight >= 0.5)[0]

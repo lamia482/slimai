@@ -83,7 +83,7 @@ class DINO(BaseArch):
     global_views, local_views = torch.cat(global_views), torch.cat(local_views)
 
     teacher_output = self.model.teacher(global_views)
-    student_output = self.model.student(local_views)
+    student_output = self.model.student(local_views) #TODO: add global views to student
 
     if return_flow:
       return dict(
