@@ -299,8 +299,11 @@ class Runner(object):
 
       def _save(ckpt, export=False):
         Path(ckpt).resolve().parent.mkdir(parents=True, exist_ok=True)
-        no_ddp_weight = PytorchNetworkUtils.fix_weight(model.state_dict(), to_ddp=False, 
-                                                       is_module_dict=isinstance(model, torch.nn.ModuleDict))
+        if dist_env.use_fsdp:
+          no_ddp_weight = dist_env.fsdp_cpu_weight(model)
+        else:
+          no_ddp_weight = PytorchNetworkUtils.fix_weight(model.state_dict(), to_ddp=False, 
+                                                        is_module_dict=isinstance(model, torch.nn.ModuleDict))
         torch.save(dict(model=self.cfg.MODEL, 
                         weight=no_ddp_weight, # default save non-ddp weight
                         solver=solver.state_dict(),

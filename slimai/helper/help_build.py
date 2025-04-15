@@ -20,6 +20,7 @@ def compose_components(components,
                        *, 
                        source, 
                        recursive_key=None):
+  """Compose components from configuration."""
   if not isinstance(source, (tuple, list)):
     source = [source]
   # convert source to callable
@@ -76,20 +77,24 @@ def compose_components(components,
   return components
 
 def build_loader(cfg) -> Callable:
+  """Build loader from configuration."""
   if cfg is None:
     return mmcv.imread
   return compose_components(cfg, source=LOADERS)
 
 def build_source(cfg) -> Callable:
+  """Build source from configuration."""
   return compose_components(cfg, source=SOURCES)
 
 def build_transform(cfg) -> Callable:
+  """Build transform from configuration."""
   transforms = compose_components(cfg, source=TRANSFORMS)
   if not isinstance(transforms, list):
     transforms = [transforms]
   return ComposeTransform(transforms)
 
 def build_dataset(cfg) -> torch.utils.data.Dataset:
+  """Build dataset from configuration."""
   dataset = compose_components(cfg, source=DATASETS)
   print_log(f"Dataset {dataset}", level="INFO")
   return dataset

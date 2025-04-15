@@ -2,9 +2,11 @@ import torch
 
 
 class PytorchNetworkUtils(object):
-
+  """A collection of utility functions for PyTorch networks."""
+  
   @classmethod
   def get_module(cls, module):
+    """Get module from module dict or module."""
     def _get_module(_module):
       if hasattr(_module, "module"):
         _module = _module.module

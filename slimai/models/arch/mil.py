@@ -62,8 +62,9 @@ class MIL(BaseArch):
       level="WARNING", warn_once=True
     )
     backbone = build_model(encoder.backbone)
-    neck = build_model(encoder.neck)
+    neck = build_model(encoder.neck) 
     head = build_model(decoder.head)
+    
     return torch.nn.ModuleDict(dict(backbone=backbone, neck=neck, head=head))
   
   def _forward_tensor(self, 

@@ -21,6 +21,8 @@ def parse_args():
                       "in the work directory.")
   parser.add_argument("--timeout", type=int, default=3600, 
                       help="the timeout of the distributed environment")
+  parser.add_argument("--ddp", type=str, default=None, choices=["ddp", "fsdp"],
+                      help="the distributed environment to use, ddp or fsdp")
   # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
   # will pass the `--local-rank` parameter instead of `--local_rank`.
   parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
@@ -59,7 +61,7 @@ def main():
 
   # Initialize distributed environment
   help_utils.print_log("Waiting for other processes to start...")
-  help_utils.dist_env.init_dist(timeout=args.timeout)
+  help_utils.dist_env.init_dist(timeout=args.timeout, ddp=args.ddp)
   help_utils.print_log("All processes started")
   
   # Create and run the runner

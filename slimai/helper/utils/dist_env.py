@@ -2,9 +2,23 @@ import os
 import itertools
 import datetime
 import torch
+import functools
 from typing import Dict
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed.fsdp import (
+    FullyShardedDataParallel as FSDP,
+    MixedPrecision,
+    BackwardPrefetch,
+    ShardingStrategy,
+    FullStateDictConfig,
+    StateDictType,
+)
+from torch.distributed.fsdp.wrap import (
+    transformer_auto_wrap_policy,
+    enable_wrap,
+    wrap, size_based_auto_wrap_policy
+)
 from .network import PytorchNetworkUtils
 
 
@@ -27,6 +41,7 @@ class DistEnv(object):
   
   def __init__(self) -> None:
     self.timeout = 60
+    self.use_fsdp = False
     return
 
   def is_main_process(self):
@@ -37,7 +52,7 @@ class DistEnv(object):
     # Check if the distributed environment is initialized
     return dist.is_initialized()
   
-  def init_dist(self, *, module=None, backend="nccl", timeout=None):
+  def init_dist(self, *, module=None, backend="nccl", timeout=None, ddp=None):
     """Initialize distributed environment."""
 
     # initialize distributed environment when not initialized and WORLD_SIZE is set
@@ -49,6 +64,9 @@ class DistEnv(object):
                               )
       torch.cuda.set_device(self.local_rank)
       torch.backends.cudnn.benchmark = True
+      if ddp is not None:
+        assert ddp in ["ddp", "fsdp"], "ddp must be 'ddp' or 'fsdp'"
+        self.use_fsdp = (ddp == "fsdp")
 
     if module is not None:
       assert isinstance(
@@ -75,8 +93,40 @@ class DistEnv(object):
 
   def update2ddp(self, module):
     """Update module to be DDP"""
-    module = DDP(module, static_graph=True)
+    if self.use_fsdp:
+      my_auto_wrap_policy = functools.partial(
+        size_based_auto_wrap_policy, min_num_params=20000
+      )
+      module = FSDP(module, 
+                    auto_wrap_policy=my_auto_wrap_policy, 
+                    mixed_precision=self.fsdp_bf16, 
+                    device_id=torch.cuda.current_device(), 
+                    sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,
+                    backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+                    )
+    else:
+      module = DDP(module, static_graph=True)
     return module
+  
+  def fsdp_cpu_weight(self, module):
+    with FSDP.state_dict_type(module, StateDictType.FULL_STATE_DICT, FullStateDictConfig(offload_to_cpu=True, rank0_only=True)):
+      cpu_state = module.state_dict()
+    return cpu_state
+
+  @property
+  def fsdp_fp16(self):
+    return self.wrap_fsdp_mix_precision(torch.float16)
+
+  @property
+  def fsdp_bf16(self):
+    return self.wrap_fsdp_mix_precision(torch.bfloat16)
+
+  @property
+  def fsdp_fp32(self):
+    return self.wrap_fsdp_mix_precision(torch.float32)
+
+  def wrap_fsdp_mix_precision(self, dtype):
+    return MixedPrecision(param_dtype=dtype, reduce_dtype=dtype, buffer_dtype=dtype)
   
   def broadcast(self, data):
     """Broadcast data to all processes."""

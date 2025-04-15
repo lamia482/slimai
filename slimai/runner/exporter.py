@@ -9,7 +9,10 @@ from slimai.models.component.pipeline import Pipeline
 
 
 class Exporter(torch.nn.Module):
+  """A class for exporting PyTorch models to ONNX format."""
+
   def __init__(self, ckpt_path, *, disable_log=False):
+    """Initialize exporter with checkpoint path."""
     super().__init__()
     self.ckpt_path = ckpt_path
     self.disable_log = disable_log
@@ -24,6 +27,7 @@ class Exporter(torch.nn.Module):
     # turn to non-ddp mode
     help_utils.print_log("Building model architecture", disable_log=self.disable_log)
     arch = help_build.build_model(ckpt["model"])
+    #TODO: fit fsdp
     arch.model = help_utils.PytorchNetworkUtils.get_module(arch.model)
     arch.load_state_dict(ckpt["weight"], strict=True)
     model = help_utils.PytorchNetworkUtils.get_module(arch.export_model())
@@ -36,15 +40,18 @@ class Exporter(torch.nn.Module):
 
   @property
   def device(self):
+    """Get device of the model."""
     return next(self.model.parameters()).device
   
   def forward(self, input_tensor):
+    """Forward function of the model."""
     forward_func = self.model.forward
     if isinstance(self.model, Pipeline):
       forward_func = partial(forward_func, return_flow=True)
     return forward_func(input_tensor)
   
   def export(self, output_dir, *, format="onnx"):    
+    """Export model to ONNX format."""
     help_utils.print_log(f"Exporting model to {format} format", disable_log=self.disable_log)
     help_utils.print_log(f"Using device: {self.device}", disable_log=self.disable_log)
     input_tensor = torch.randn(1, 3, 224, 224).to(self.device)
@@ -74,6 +81,7 @@ class Exporter(torch.nn.Module):
   # ONNX export
   ############################################################
   def _export_onnx(self, input_tensor, onnx_file):
+    """Export model to ONNX format."""
     export_options = dict(
       export_params=True, 
       opset_version=17, 
