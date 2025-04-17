@@ -170,7 +170,7 @@ class Checkpoint(object):
       load_from = resume_from
 
     if load_from is None:
-      ckpt = None
+      ckpt = dict()
       print_log("No checkpoint to load, build from scratch", level="WARNING")
       assert (
         model is not None

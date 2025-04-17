@@ -3,6 +3,7 @@ from typing import Union, Dict
 from slimai.helper import help_utils
 from slimai.helper.help_build import MODELS
 from slimai.helper.structure import DataSample
+from slimai.helper.utils import PytorchNetworkUtils
 from .base_arch import BaseArch
 from ..component.pipeline import Pipeline
 
@@ -30,7 +31,7 @@ class DINO(BaseArch):
     self.model.teacher.load_state_dict(self.model.student.state_dict())
     
     # freeze teacher and only train student, ema student to teacher
-    help_utils.PytorchNetworkUtils.freeze(self.model.teacher)
+    PytorchNetworkUtils.freeze(self.model.teacher)
 
     assert (
       0 < momentum_teacher < 1
@@ -70,8 +71,8 @@ class DINO(BaseArch):
     with torch.no_grad():
       global_train_step = self.current_train_epoch * self.max_train_step + self.current_train_step
       m = self.momentum_teacher_schedule[global_train_step]  # momentum parameter
-      for ps, pt in zip(help_utils.PytorchNetworkUtils.get_module_params(self.model.student), 
-                        help_utils.PytorchNetworkUtils.get_module_params(self.model.teacher)):
+      for ps, pt in zip(PytorchNetworkUtils.get_module_params(self.model.student), 
+                        PytorchNetworkUtils.get_module_params(self.model.teacher)):
         pt.data.mul_(m).add_((1 - m) * ps.detach().data)
     return
 
@@ -83,9 +84,12 @@ class DINO(BaseArch):
     global_views, local_views = torch.cat(global_views), torch.cat(local_views)
 
     teacher_output = self.model.teacher(global_views)
-    student_output = self.model.student(local_views) #TODO: add global views to student
 
     if return_flow:
+      student_output = torch.cat([
+        self.model.student(global_views), 
+        self.model.student(local_views)
+      ])
       return dict(
         student_n_crops=n_local_views, 
         student_output=student_output,
@@ -103,7 +107,7 @@ class DINO(BaseArch):
   
   def export_model(self) -> torch.nn.Module:
     # Export model for inference and export to onnx
-    teacher_without_ddp = help_utils.PytorchNetworkUtils.get_module(self.model.teacher)
+    teacher_without_ddp = PytorchNetworkUtils.get_module(self.model.teacher)
     backbone = teacher_without_ddp.backbone
     return backbone
   

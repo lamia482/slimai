@@ -62,7 +62,7 @@ class Runner(object):
 
     # Build components like dataloaders, model, solver, and metric
     self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
-      self.arch, self.model, self.solver, self.metric = self.build_components(self.cfg)
+      self.arch, self.model, self.solver, self.loss, self.metric = self.build_components(self.cfg)
     
     # Initialize epoch and load checkpoint if needed
     resume = cfg.RUNNER.resume
@@ -76,7 +76,8 @@ class Runner(object):
     self.epoch = ckpt.get("epoch", 0)
 
     # prepare model and solver for distributed training
-    self.model = self.dist.prepare_for_distributed(self.model)
+    self.model, self.solver, self.loss = self.dist.prepare_for_distributed(
+      self.model, self.solver, self.loss)
     return
   
   def build_components(self, cfg):
@@ -92,6 +93,7 @@ class Runner(object):
     arch = help_build.build_model(cfg.MODEL)
     model = arch.model
     solver = arch.solver
+    loss = arch.loss
 
     # Log model parameter size
     help_utils.print_log(f"Model({arch.__class__.__name__}) built successfully, "
@@ -101,7 +103,7 @@ class Runner(object):
 
     self.dist.env.sync()
     help_utils.print_log("Created runner, desc: {}".format(self.dist.env.desc), main_process_only=False)
-    return train_loader, valid_loader, test_loader, arch, model, solver, metric
+    return train_loader, valid_loader, test_loader, arch, model, solver, loss, metric
   
   @record
   def run(self, *, action):

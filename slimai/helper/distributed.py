@@ -7,7 +7,7 @@ from torch.distributed.fsdp import (
   MixedPrecision, ShardingStrategy, StateDictType, FullStateDictConfig
 )
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-from .utils import dist_env
+from .utils import dist_env, PytorchNetworkUtils
 
 
 __all__ = ["Distributed"]
@@ -119,7 +119,8 @@ class Distributed(object):
       return module
     
     if self.parallel_mode == "ddp":
-      return DDP(
+      return module if not PytorchNetworkUtils.get_params_size(
+        module, grad_mode="trainable", magnitude="digit") else DDP(
         module, static_graph=True
       )
     elif self.parallel_mode == "fsdp":

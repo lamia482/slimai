@@ -31,17 +31,18 @@ class DINOLoss(torch.nn.Module):
     else:
       teacher_temp = self.warmup_teacher_temp_schedule[epoch]
 
-    # 为什么论文的log_softmax要放在for循环里？
     student_out = torch.log_softmax(student_output / self.student_temp, dim=-1)
-    student_out = student_out.chunk(student_n_crops)
+    student_out = student_out.chunk(teacher_n_crops + student_n_crops)
 
     teacher_out = torch.softmax((teacher_output - self.center) / teacher_temp, dim=-1)
     teacher_out = teacher_out.detach().chunk(teacher_n_crops)
 
     cls_loss = 0
-    for i in range(student_n_crops):
+    for i in range(teacher_n_crops + student_n_crops):
       for j in range(teacher_n_crops):
-        #TODO: skip when view i and view j are the same
+        # skip when view i and view j are the same
+        if i == j:
+          continue
         cls_loss += torch.sum(-teacher_out[j] * student_out[i], dim=-1).mean()
     cls_loss = cls_loss / student_n_crops / teacher_n_crops
 

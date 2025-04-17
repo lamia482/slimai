@@ -14,31 +14,6 @@ class PytorchNetworkUtils(object):
             f"{trainable_param_size} parameters are trainable({100*trainable_param_num/all_param_num:.2f}%)")
 
   @classmethod
-  def get_module(cls, module):
-    """Get module from module dict or module."""
-    def _get_module(_module):
-      if hasattr(_module, "module"):
-        _module = _module.module
-      return _module
-    if isinstance(module, torch.nn.ModuleDict):
-      return torch.nn.ModuleDict({k: _get_module(v) for k, v in module.items()})
-    return _get_module(module)
-
-  @classmethod
-  def fix_weight(cls, weight, *, to_ddp, is_module_dict, ddp_prefix="module."):
-    """fix weight name to be compatible with ddp"""
-    is_already_ddp = ddp_prefix in list(weight.keys())[0]
-    if to_ddp and not is_already_ddp:
-      def update_key(k):
-        names = k.split(".")
-        start_idx = 1 if is_module_dict else 0
-        return ".".join(names[:start_idx] + [ddp_prefix.replace(".", "")] + names[start_idx:])
-      weight = {update_key(k): v for k, v in weight.items()}
-    elif not to_ddp and is_already_ddp:
-      weight = {k.replace(ddp_prefix, ""): v for k, v in weight.items()}
-    return weight
-
-  @classmethod
   def clip_gradients(cls, model, clip=None):
     norms = []
     for name, p in model.named_parameters():

@@ -1,9 +1,10 @@
 import torch
 from typing import Union, Dict
 from functools import partial
-from slimai.helper import help_utils
+from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import MODELS, build_model
 from slimai.helper.structure import DataSample
+from slimai.helper.utils import PytorchNetworkUtils
 from .base_arch import BaseArch
 
 
@@ -42,8 +43,8 @@ class MIL(BaseArch):
                ):
     super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
     if freeze_backbone:
-      help_utils.print_log("Freezing backbone.")
-      help_utils.PytorchNetworkUtils.freeze(self.model.backbone)
+      print_log("Freezing backbone.")
+      PytorchNetworkUtils.freeze(self.model.backbone)
     self.embedding_group_size = embedding_group_size
     return
 
@@ -57,7 +58,7 @@ class MIL(BaseArch):
     Returns:
       torch.nn.ModuleDict: Dictionary containing the backbone, neck, and head modules.
     """
-    help_utils.print_log(
+    print_log(
       f"Using default `init_layers` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
