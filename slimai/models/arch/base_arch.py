@@ -2,13 +2,11 @@ from abc import abstractmethod
 import math
 import sys
 import torch
-import torch.utils.checkpoint as checkpoint
 from functools import partial
-from contextlib import ExitStack, contextmanager
 from typing import Optional, Union, Dict
-from slimai.helper import help_build, help_utils
-from slimai.helper.utils.dist_env import dist_env
-from slimai.helper.structure import DataSample
+from slimai.helper import help_build, DataSample
+from slimai.helper.help_utils import print_log
+from slimai.helper.utils import PytorchNetworkUtils
 from ..component.pipeline import Pipeline
 
 
@@ -29,19 +27,17 @@ class BaseArch(object):
     4. create loss and move to model device
     """
     super().__init__()
-    
+
     # Initialize model layers
     model = self.init_layers(encoder, decoder)
-    model.apply(help_utils.PytorchNetworkUtils.init_weights)
-    self.model = dist_env.init_dist(module=model)
-    help_utils.print_log(self.model)
+    self.model = model.apply(PytorchNetworkUtils.init_weights)
+    print_log(model)
 
     # Initialize solver
     self.solver = self.init_solver(solver, self.model)
 
     # Initialize loss
-    loss = self.init_loss(loss)
-    self.loss = dist_env.init_dist(module=loss)
+    self.loss = self.init_loss(loss)
 
     # Initialize model cache for inference
     self.infer_model_cache = None
@@ -49,7 +45,7 @@ class BaseArch(object):
 
   @abstractmethod
   def init_layers(self, encoder, decoder) -> torch.nn.Module:
-    help_utils.print_log(
+    print_log(
       f"Using default `init_layers` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
@@ -58,16 +54,16 @@ class BaseArch(object):
 
   @abstractmethod
   def init_solver(self, solver, module):
-    help_utils.print_log(
+    print_log(
       f"Using default `init_solver` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
-    params = help_utils.PytorchNetworkUtils.get_module_params(module, grad_mode="trainable")
+    params = PytorchNetworkUtils.get_module_params(module, grad_mode="all")
     return help_build.build_solver(solver, params=params)
 
   @abstractmethod
   def init_loss(self, loss) -> torch.nn.Module:
-    help_utils.print_log(
+    print_log(
       f"Using default `init_loss` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
@@ -79,26 +75,16 @@ class BaseArch(object):
   
   @abstractmethod
   def load_state_dict(self, state_dict, strict=True):
-    help_utils.print_log(
+    print_log(
       f"Using default `load_state_dict` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
     self.model.load_state_dict(state_dict, strict=strict)
     return
   
-  @contextmanager
-  def no_sync(self):
-    with ExitStack() as stack:
-      if not isinstance(self.model, torch.nn.ModuleDict):
-        stack.enter_context(self.model.no_sync())
-      else:
-        for module in self.model.values():
-          stack.enter_context(module.no_sync())
-      yield
-  
   @abstractmethod
   def epoch_precede_hooks(self, *, runner):
-    help_utils.print_log(
+    print_log(
       f"Using default `epoch_precede_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
@@ -108,7 +94,7 @@ class BaseArch(object):
   
   @abstractmethod
   def epoch_succeed_hooks(self, *, runner):
-    help_utils.print_log(
+    print_log(
       f"Using default `epoch_succeed_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
@@ -117,7 +103,7 @@ class BaseArch(object):
   @abstractmethod
   def step_precede_hooks(self, *, runner):
     # Default step_precede_hooks
-    help_utils.print_log(
+    print_log(
       f"Using default `step_precede_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
@@ -130,7 +116,7 @@ class BaseArch(object):
   @abstractmethod
   def step_succeed_hooks(self, *, runner):
     # Default step_succeed_hooks
-    help_utils.print_log(
+    print_log(
       f"Using default `step_succeed_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
@@ -164,7 +150,7 @@ class BaseArch(object):
 
       loss = sum(loss_dict.values())
       if not math.isfinite(loss.item()):
-        help_utils.print_log("Loss is {}, stopping training".format(loss), level="ERROR")
+        print_log("Loss is {}, stopping training".format(loss), level="ERROR")
         sys.exit(1)
       output = loss_dict
 
@@ -178,7 +164,7 @@ class BaseArch(object):
                 batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                 return_flow: bool = False) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
     # Default forward pass through encoder and decoder
-    help_utils.print_log(
+    print_log(
       f"Using default `_forward_tensor` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
@@ -189,7 +175,7 @@ class BaseArch(object):
               embedding_dict: Dict[str, torch.Tensor], 
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
     # Default loss computation
-    help_utils.print_log(
+    print_log(
       f"Using default `_forward_loss` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
@@ -218,10 +204,10 @@ class BaseArch(object):
     # Predict method using postprocess
     if self.infer_model_cache is None:
       try:
-        help_utils.print_log("Try exporting model for inference", level="INFO", warn_once=True)
+        print_log("Try exporting model for inference", level="INFO", warn_once=True)
         self.infer_model_cache = self.export_model()
       except Exception as e:
-        help_utils.print_log("Failed to export model for inference, using default forward pass", level="WARNING", warn_once=True)
+        print_log("Failed to export model for inference, using default forward pass", level="WARNING", warn_once=True)
         self.infer_model_cache = partial(self._forward_tensor, return_flow=False)
     output = self.infer_model_cache(batch_data)
     return self.postprocess(output, batch_info)

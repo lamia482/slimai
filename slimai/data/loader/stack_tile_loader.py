@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 from sdk.reader import get_reader_by_file
 from slimai.helper.help_build import LOADERS
-from slimai.helper.help_utils import _CACHE_ROOT_DIR_, dist_env
+from slimai.helper.help_utils import _CACHE_ROOT_DIR_
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -80,7 +80,7 @@ class StackTileLoader():
     # Calculate number of tiles needed
     y_chunks = (ymax - ymin + self.tile_size - 1) // self.tile_size
     x_chunks = (xmax - xmin + self.tile_size - 1) // self.tile_size
-    num_threads = self.num_threads or min(os.cpu_count(), x_chunks * y_chunks) // 4 // dist_env.local_world_size
+    num_threads = self.num_threads or min(os.cpu_count(), x_chunks * y_chunks) // 4
 
     # Create readers upfront for each thread
     file_path, scale = reader.file, reader.getReadScale()

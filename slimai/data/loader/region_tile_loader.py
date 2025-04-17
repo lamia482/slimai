@@ -7,7 +7,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sdk.reader import get_reader_by_file
 from slimai.helper.help_build import LOADERS
-from slimai.helper.help_utils import _CACHE_ROOT_DIR_, dist_env, print_log
+from slimai.helper.help_utils import _CACHE_ROOT_DIR_
 
 
 @LOADERS.register_module()

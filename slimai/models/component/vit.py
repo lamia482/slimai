@@ -94,13 +94,13 @@ class FlexViT(models.VisionTransformer):
     """
     torch._assert(x.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x.shape}")
     pos_embedding = self.interpolate_pos_encoding(self.encoder.pos_embedding, x, w, h)
-    x = x + pos_embedding
-    x = self.encoder.ln(self.encoder.layers(self.encoder.dropout(x)))
+    x = x + pos_embedding # [B, ~N, D] + [1, ~N, D] -> [B, ~N, D]
+    x = self.encoder.ln(self.encoder.layers(self.encoder.dropout(x))) # [B, ~N, D] -> [B, ~N, D]
 
     # Classifier "token" as used by standard language architectures
-    x = x[:, 0]
+    x = x[:, 0] # [B, ~N, D] -> [B, D]
 
-    x = self.heads(x)
+    x = self.heads(x) # [B, D] -> [B, C]
 
     return x
 

@@ -3,7 +3,8 @@ import argparse
 from pathlib import Path
 from mmengine.config import Config
 from slimai.runner import Runner
-from slimai.helper import help_utils
+from slimai.helper import Distributed
+from slimai.helper.help_utils import print_log
 
 
 def parse_args():
@@ -19,10 +20,14 @@ def parse_args():
                       help="If specify checkpoint path, resume from it, while if not "
                       "specify, try to auto resume from the latest checkpoint "
                       "in the work directory.")
+  parser.add_argument("--ddp", type=str, default="auto", choices=["ddp", "fsdp", "auto"],
+                      help="the distributed environment to use, ddp or fsdp")
+  parser.add_argument("--mix-precision", type=str, default="bf16", 
+                      choices=["fp16", "bf16", "fp32"],
+                      help="the mix precision to use, fp16, bf16, or fp32")
+  parser.add_argument("--device", type=str, default="cuda", help="the device to use")
   parser.add_argument("--timeout", type=int, default=3600, 
                       help="the timeout of the distributed environment")
-  parser.add_argument("--ddp", type=str, default=None, choices=["ddp", "fsdp"],
-                      help="the distributed environment to use, ddp or fsdp")
   # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
   # will pass the `--local-rank` parameter instead of `--local_rank`.
   parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
@@ -60,17 +65,21 @@ def main():
   cfg = parse_config(args)
 
   # Initialize distributed environment
-  help_utils.print_log("Waiting for other processes to start...")
-  help_utils.dist_env.init_dist(timeout=args.timeout, ddp=args.ddp)
-  help_utils.print_log("All processes started")
+  print_log("Waiting for other processes to start...")
+  dist = Distributed.create(
+    parallel_mode=args.ddp,
+    mix_precision=args.mix_precision
+  )
+  dist.env.init_dist(device=args.device, timeout=args.timeout)
+  print_log("All processes started")
   
   # Create and run the runner
   runner = Runner(cfg)
   runner.run(action=args.action)
 
   # Close distributed environment
-  help_utils.dist_env.close_dist()
-  help_utils.print_log("All processes finished")
+  dist.env.close_dist()
+  print_log("All processes finished")
   return
 
 if __name__ == "__main__":

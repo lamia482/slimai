@@ -7,10 +7,8 @@ logger.remove()
 logger_format = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <level>{message}</level>"
 logger.add(sys.stderr, format=logger_format)
 
-from .utils.dist_env import dist_env
-from .utils.network import PytorchNetworkUtils
-from .utils.vis import put_gt_on_image, put_pred_on_image, hstack_imgs, vstack_imgs
-from .utils.split_dataset import split_dataset
+from . import utils
+from .utils import dist_env
 
 
 _CACHE_ROOT_DIR_ = "/.slimai/cache"

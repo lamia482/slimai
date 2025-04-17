@@ -106,8 +106,8 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
   if dist_env.is_dist_initialized():
     assert (
       "sampler" not in cfg
-    ), "Sampler is not allowed in dataloader when DDP is enabled"
-    print_log("use torch.utils.data.DistributedSampler for DDP")
+    ), "Sampler is not allowed in dataloader when Distributed is enabled"
+    print_log("use torch.utils.data.DistributedSampler for Distributed Mode")
     cfg["sampler"] = DistributedSampler(dataset, 
                                         shuffle=cfg.pop("shuffle", False),
                                         seed=dist_env.global_rank, 

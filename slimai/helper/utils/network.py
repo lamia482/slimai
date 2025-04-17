@@ -5,6 +5,15 @@ class PytorchNetworkUtils(object):
   """A collection of utility functions for PyTorch networks."""
   
   @classmethod
+  def desc(cls, module):
+    all_param_size = cls.get_params_size(module, grad_mode="all")
+    trainable_param_size = cls.get_params_size(module, grad_mode="trainable")
+    all_param_num = cls.get_params_size(module, grad_mode="all", magnitude="digit")
+    trainable_param_num = cls.get_params_size(module, grad_mode="trainable", magnitude="digit")
+    return (f"Total {all_param_size} parameters, in which "
+            f"{trainable_param_size} parameters are trainable({100*trainable_param_num/all_param_num:.2f}%)")
+
+  @classmethod
   def get_module(cls, module):
     """Get module from module dict or module."""
     def _get_module(_module):

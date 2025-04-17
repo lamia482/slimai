@@ -2,24 +2,8 @@ import os
 import itertools
 import datetime
 import torch
-import functools
 from typing import Dict
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    MixedPrecision,
-    BackwardPrefetch,
-    ShardingStrategy,
-    FullStateDictConfig,
-    StateDictType,
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    enable_wrap,
-    wrap, size_based_auto_wrap_policy
-)
-from .network import PytorchNetworkUtils
 
 
 class DistEnv(object):
@@ -40,93 +24,81 @@ class DistEnv(object):
     ] if k in os.environ}
   
   def __init__(self) -> None:
+    self.device_type = "cpu"
     self.timeout = 60
-    self.use_fsdp = False
+    device_type_candidates = ["cpu", "cuda", "mps", "mkldnn", "xla", "npu"]
+    self.supported_devices = []
+    for device_type in device_type_candidates:
+      self.try_register_device(device_type)
     return
 
-  def is_main_process(self):
-    # Check if the current process is the main process
-    return self.local_rank == 0
+  def is_main_process(self, local=True):
+    # Check if the current process is the main process (local or global)
+    rank = self.local_rank if local else self.global_rank
+    return rank == 0
 
   def is_dist_initialized(self):
     # Check if the distributed environment is initialized
     return dist.is_initialized()
   
-  def init_dist(self, *, module=None, backend="nccl", timeout=None, ddp=None):
+  @property
+  def device(self):
+    return torch.device(self.device_type)
+  
+  @property
+  def device_module(self):
+    return getattr(torch, self.device_type)
+
+  def try_register_device(self, device_type, rebase=False):
+    if device_type is None:
+      return
+    if device_type not in self.supported_devices:
+      device = getattr(torch, device_type, None)
+      if device is not None and device.is_available():
+        self.supported_devices.append(device_type)
+    if rebase:
+      if device_type in self.supported_devices:
+        self.device_type = device_type
+      else:
+        raise ValueError(f"Device type {device_type} is not supported")
+    return
+
+  def init_dist(self, *, device=None, timeout=None):
     """Initialize distributed environment."""
 
-    # initialize distributed environment when not initialized and WORLD_SIZE is set
-    if (not dist.is_initialized()) and (self.env.get("WORLD_SIZE", None) is not None):
-      if timeout is not None:
-        self.timeout = datetime.timedelta(seconds=timeout)
-      dist.init_process_group(backend=backend, 
-                              timeout=self.timeout, 
-                              )
-      torch.cuda.set_device(self.local_rank)
-      torch.backends.cudnn.benchmark = True
-      if ddp is not None:
-        assert ddp in ["ddp", "fsdp"], "ddp must be 'ddp' or 'fsdp'"
-        self.use_fsdp = (ddp == "fsdp")
+    # check if device is supported and rebase the device as default device
+    self.try_register_device(device, rebase=True)
 
-    if module is not None:
-      assert isinstance(
-        module, (torch.nn.ModuleDict, torch.nn.Module)
-      ), "module must be a torch.nn.Module, but got {}".format(type(module))
+    backend = dict(
+      cpu="gloo",
+      cuda="nccl",
+      mps="gloo",
+      mkldnn="gloo",
+      xla="gloo",
+      npu="gloo",
+    ).get(self.device_type, None)
 
-      def update_module(q):
-        """move to cuda and wrap with DDP if needed"""
-        q = q.cuda().to(self.local_rank)
-        if self.is_dist_initialized():
-          q = self.update2ddp(q) if (
-            PytorchNetworkUtils.get_params_size(q, grad_mode="trainable", magnitude="digit") > 0
-          ) else q
-        return q
+    if timeout is not None:
+      self.timeout = datetime.timedelta(seconds=timeout)
 
-      if isinstance(module, torch.nn.ModuleDict):
-        module = torch.nn.ModuleDict({
-          k: update_module(m)
-          for (k, m) in module.items()
-        })
-      else:
-        module = update_module(module)
-    return module
-
-  def update2ddp(self, module):
-    """Update module to be DDP"""
-    if self.use_fsdp:
-      my_auto_wrap_policy = functools.partial(
-        size_based_auto_wrap_policy, min_num_params=20000
+    # initialize distributed environment
+    if not dist.is_initialized():
+      if self.env.get("WORLD_SIZE", None) is None: # in non ddp mode, MASTER_ADDR and MASTER_PORT are not set, mannually set them to use distributed training
+        self.env["MASTER_ADDR"] = os.environ["MASTER_ADDR"] = "localhost"
+        self.env["MASTER_PORT"] = os.environ["MASTER_PORT"] = "12345"
+      
+      dist.init_process_group(
+        backend=backend, 
+        rank=self.global_rank, 
+        world_size=self.global_world_size,
+        timeout=self.timeout
       )
-      module = FSDP(module, 
-                    auto_wrap_policy=my_auto_wrap_policy, 
-                    mixed_precision=self.fsdp_bf16, 
-                    device_id=torch.cuda.current_device(), 
-                    sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,
-                    backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-                    )
-    else:
-      module = DDP(module, static_graph=True)
-    return module
-  
-  def fsdp_cpu_weight(self, module):
-    with FSDP.state_dict_type(module, StateDictType.FULL_STATE_DICT, FullStateDictConfig(offload_to_cpu=True, rank0_only=True)):
-      cpu_state = module.state_dict()
-    return cpu_state
+      self.device_module.set_device(self.local_rank)
 
-  @property
-  def fsdp_fp16(self):
-    return self.wrap_fsdp_mix_precision(torch.float16)
+      if self.device_type == "cuda":
+        torch.backends.cudnn.benchmark = True
 
-  @property
-  def fsdp_bf16(self):
-    return self.wrap_fsdp_mix_precision(torch.bfloat16)
-
-  @property
-  def fsdp_fp32(self):
-    return self.wrap_fsdp_mix_precision(torch.float32)
-
-  def wrap_fsdp_mix_precision(self, dtype):
-    return MixedPrecision(param_dtype=dtype, reduce_dtype=dtype, buffer_dtype=dtype)
+    return
   
   def broadcast(self, data):
     """Broadcast data to all processes."""
@@ -185,7 +157,7 @@ class DistEnv(object):
   @property
   def desc(self):
     """Describe the distributed environment."""
-    return "DDP {}, LOCAL RANK: {} of {}-th NODE, GLOBAL RANK: {} in all {} NODES".format(
+    return "Distributed {}, LOCAL RANK: {} of {}-th NODE, GLOBAL RANK: {} in all {} NODES".format(
       "enabled" if self.is_dist_initialized() else "disabled",
       self.local_rank, self.local_world_size, self.global_rank, self.global_world_size
     )
