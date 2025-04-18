@@ -6,10 +6,6 @@ from .base_arch import BaseArch
 
 @MODELS.register_module()
 class ClassificationArch(BaseArch):
-  def export_model(self) -> torch.nn.Module:
-    # Export model for inference and export to onnx
-    return self.model
-  
   def postprocess(self, 
                   batch_data: torch.Tensor, 
                   batch_info: DataSample) -> DataSample:

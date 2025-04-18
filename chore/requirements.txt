@@ -1,0 +1,57 @@
+# Utility packages
+dill
+pika
+paramiko
+parse
+openpyxl
+loguru
+pandas
+
+# Image processing and ML packages
+opencv-python
+lightgbm
+future
+nvitop
+clearml
+scikit-learn
+scikit-image
+tidecv
+ipywidgets
+albumentations
+mmcv
+mmengine
+
+# PyTorch ecosystem
+torch
+torchvision
+torchaudio
+xformers
+
+# Model optimization and deployment tools
+tensorrt
+onnx
+onnxscript
+onnxruntime-gpu
+onnxsim
+omegaconf
+fvcore
+submitit
+tensorboard
+kornia
+
+# Hugging Face and transformer models
+huggingface_hub
+transformers
+datasets
+diffusers[torch]
+tokenizers
+evaluate
+timm
+accelerate
+optimum
+deepspeed
+
+# Visualization and metrics tools
+torchcam
+umap-learn[plot]
+torchmetrics

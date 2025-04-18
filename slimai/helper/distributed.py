@@ -149,7 +149,7 @@ class Distributed(object):
     """
     def _to_uncurated_module(module):
       if self.parallel_mode == "ddp":
-        return module.module
+        return getattr(module, "module", module)
       elif self.parallel_mode == "fsdp":
         with module.summon_full_params():
           return module.module

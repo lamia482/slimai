@@ -4,7 +4,7 @@ import sys
 import torch
 from functools import partial
 from typing import Optional, Union, Dict
-from slimai.helper import help_build, DataSample
+from slimai.helper import help_build, DataSample, Distributed
 from slimai.helper.help_utils import print_log
 from slimai.helper.utils import PytorchNetworkUtils
 from ..component.pipeline import Pipeline
@@ -28,6 +28,8 @@ class BaseArch(object):
     """
     super().__init__()
 
+    self.dist = Distributed.create()
+
     # Initialize model layers
     model = self.init_layers(encoder, decoder)
     self.model = model.apply(PytorchNetworkUtils.init_weights)
@@ -38,9 +40,6 @@ class BaseArch(object):
 
     # Initialize loss
     self.loss = self.init_loss(loss)
-
-    # Initialize model cache for inference
-    self.infer_model_cache = None
     return
 
   @abstractmethod
@@ -202,13 +201,13 @@ class BaseArch(object):
               batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
               batch_info: DataSample) -> DataSample:
     # Predict method using postprocess
-    if self.infer_model_cache is None:
-      try:
-        print_log("Try exporting model for inference", level="INFO", warn_once=True)
-        self.infer_model_cache = self.export_model()
-      except Exception as e:
-        print_log("Failed to export model for inference, using default forward pass", level="WARNING", warn_once=True)
-        self.infer_model_cache = partial(self._forward_tensor, return_flow=False)
-    output = self.infer_model_cache(batch_data)
+    infer_model = None
+    try:
+      print_log("Try exporting model for inference", level="INFO", warn_once=True)
+      infer_model = self.export_model()
+    except Exception as e:
+      print_log("Failed to export model for inference, using default forward pass", level="WARNING", warn_once=True)
+      infer_model = partial(self._forward_tensor, return_flow=False)
+    output = infer_model(batch_data)
     return self.postprocess(output, batch_info)
   

@@ -61,14 +61,14 @@ class Runner(object):
     self.dump_cfg()
 
     # Build components like dataloaders, model, solver, and metric
-    self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
-      self.arch, self.model, self.solver, self.loss, self.metric = self.build_components(self.cfg)
+    train_dataloader, valid_dataloader, test_dataloader, \
+      arch, model, solver, loss, metric = self.build_components(self.cfg)
     
     # Initialize epoch and load checkpoint if needed
     resume = cfg.RUNNER.resume
-    self.model, self.solver, ckpt = self.checkpoint.load(
-      model=self.model,
-      solver=self.solver,
+    model, solver, ckpt = self.checkpoint.load(
+      model=model,
+      solver=solver,
       resume=resume.enable,
       resume_from=resume.resume_from,
       load_from=resume.load_from
@@ -76,8 +76,10 @@ class Runner(object):
     self.epoch = ckpt.get("epoch", 0)
 
     # prepare model and solver for distributed training
-    self.model, self.solver, self.loss = self.dist.prepare_for_distributed(
-      self.model, self.solver, self.loss)
+    self.train_dataloader, self.valid_dataloader, self.test_dataloader, self.arch, \
+      self.model, self.solver, self.loss, self.metric = self.dist.prepare_for_distributed(
+        train_dataloader, valid_dataloader, test_dataloader, arch, \
+          model, solver, loss, metric)
     return
   
   def build_components(self, cfg):
@@ -246,10 +248,12 @@ class Runner(object):
 
     if self.dist.env.is_main_process():
       batch_info = results["batch_info"]
-      # for better performance, move to gpu first
+      # for better performance, move to arch device first
       logits = torch.stack([result.output for result in batch_info]).to(self.arch.device)
       targets = torch.stack([result.label for result in batch_info]).to(self.arch.device)
       metrics = self.metric(logits, targets)
+
+      # split figure and metric
       msg_list = []
       for key, fig in metrics.items():
         if isinstance(fig, matplotlib.figure.Figure):

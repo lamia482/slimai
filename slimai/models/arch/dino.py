@@ -107,7 +107,7 @@ class DINO(BaseArch):
   
   def export_model(self) -> torch.nn.Module:
     # Export model for inference and export to onnx
-    teacher_without_ddp = PytorchNetworkUtils.get_module(self.model.teacher)
+    teacher_without_ddp = self.dist.get_summon_module(self.model.teacher)
     backbone = teacher_without_ddp.backbone
     return backbone
   
