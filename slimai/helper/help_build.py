@@ -80,6 +80,7 @@ def build_loader(cfg) -> Callable:
   """Build loader from configuration."""
   if cfg is None:
     return mmcv.imread
+  cfg = cfg.copy()
   return compose_components(cfg, source=LOADERS)
 
 def build_source(cfg) -> Callable:
@@ -100,6 +101,7 @@ def build_dataset(cfg) -> torch.utils.data.Dataset:
   return dataset
 
 def build_dataloader(cfg) -> torch.utils.data.DataLoader:
+  cfg = cfg.copy()
   dataset = build_dataset(cfg.pop("dataset", None))
   if dataset is None:
     return None
@@ -146,15 +148,14 @@ def build_solver(cfg, params: List[torch.nn.Parameter]):
 
   if cfg.get("scheduler", None) is None:
     cfg["scheduler"] = dict(type="torch.optim.lr_scheduler.LambdaLR", lr_lambda=lambda epoch: 1)
-  scheduler = cfg.pop("scheduler")
+  scheduler = cfg.pop("scheduler").copy()
   
   cfg.params = params
   solver = compose_components(cfg, source=OPTIMIZERS)
 
   scheduler.optimizer = solver
   scheduler = compose_components(scheduler, source=OPTIMIZERS, recursive_key="schedulers")
-  solver.scheduler = scheduler
-  return solver
+  return solver, scheduler
 
 def build_metric(cfg):
   return compose_components(cfg, source=MODELS)

@@ -35,8 +35,8 @@ class BaseArch(object):
     self.model = model.apply(PytorchNetworkUtils.init_weights)
     print_log(model)
 
-    # Initialize solver
-    self.solver = self.init_solver(solver, self.model)
+    # Initialize solver and scheduler
+    self.solver, self.scheduler = self.init_solver(solver, self.model)
 
     # Initialize loss
     self.loss = self.init_loss(loss)

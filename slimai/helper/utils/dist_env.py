@@ -72,10 +72,10 @@ class DistEnv(object):
     backend = dict(
       cpu="gloo",
       cuda="nccl",
+      npu="hccl",
       mps="gloo",
       mkldnn="gloo",
       xla="gloo",
-      npu="gloo",
     ).get(self.device_type, None)
 
     if timeout is not None:
@@ -87,26 +87,26 @@ class DistEnv(object):
         self.env["MASTER_ADDR"] = os.environ["MASTER_ADDR"] = "localhost"
         self.env["MASTER_PORT"] = os.environ["MASTER_PORT"] = "12345"
       
+      self.device_module.set_device(self.local_rank)
       dist.init_process_group(
         backend=backend, 
         rank=self.global_rank, 
         world_size=self.global_world_size,
-        timeout=self.timeout
+        timeout=self.timeout, 
       )
-      self.device_module.set_device(self.local_rank)
 
       if self.device_type == "cuda":
         torch.backends.cudnn.benchmark = True
 
     return
   
-  def broadcast(self, data):
+  def broadcast(self, data, from_rank=0):
     """Broadcast data to all processes."""
     if not self.is_dist_initialized():
       return data
     
     output = [data] # wrap to list to use broadcast_object_list
-    dist.broadcast_object_list(output, src=0) # auto barrier across all processes
+    dist.broadcast_object_list(output, src=from_rank) # auto barrier across all processes
     data = output[0]
     return data
   

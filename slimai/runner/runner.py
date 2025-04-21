@@ -57,29 +57,30 @@ class Runner(object):
 
     self.eval_every_n_epochs = ckpt.get("eval_every_n_epochs", 1)
 
-    # Dump config to work_dir
-    self.dump_cfg()
-
     # Build components like dataloaders, model, solver, and metric
     train_dataloader, valid_dataloader, test_dataloader, \
-      arch, model, solver, loss, metric = self.build_components(self.cfg)
+      arch, model, solver, scheduler, loss, metric = self.build_components(self.cfg)
     
     # Initialize epoch and load checkpoint if needed
     resume = cfg.RUNNER.resume
-    model, solver, ckpt = self.checkpoint.load(
+    model, solver, scheduler, ckpt = self.checkpoint.load(
       model=model,
       solver=solver,
+      scheduler=scheduler,
       resume=resume.enable,
       resume_from=resume.resume_from,
       load_from=resume.load_from
     )
     self.epoch = ckpt.get("epoch", 0)
 
+    # Dump config to work_dir
+    self.dump_cfg()
+
     # prepare model and solver for distributed training
     self.train_dataloader, self.valid_dataloader, self.test_dataloader, self.arch, \
-      self.model, self.solver, self.loss, self.metric = self.dist.prepare_for_distributed(
+      self.model, self.solver, self.scheduler, self.loss, self.metric = self.dist.prepare_for_distributed(
         train_dataloader, valid_dataloader, test_dataloader, arch, \
-          model, solver, loss, metric)
+          model, solver, scheduler, loss, metric)
     return
   
   def build_components(self, cfg):
@@ -95,6 +96,7 @@ class Runner(object):
     arch = help_build.build_model(cfg.MODEL)
     model = arch.model
     solver = arch.solver
+    scheduler = arch.scheduler
     loss = arch.loss
 
     # Log model parameter size
@@ -105,7 +107,8 @@ class Runner(object):
 
     self.dist.env.sync()
     help_utils.print_log("Created runner, desc: {}".format(self.dist.env.desc), main_process_only=False)
-    return train_loader, valid_loader, test_loader, arch, model, solver, loss, metric
+    return train_loader, valid_loader, test_loader, \
+           arch, model, solver, scheduler, loss, metric
   
   @record
   def run(self, *, action):
@@ -134,6 +137,7 @@ class Runner(object):
       self.gradient.step(
         model=self.model,
         solver=self.solver,
+        scheduler=self.scheduler,
         loss=total_loss,
         i_step=i_step,
         total_steps=total_steps,
@@ -175,7 +179,7 @@ class Runner(object):
         avg_loss = (avg_loss * self.step + total_loss.detach().cpu().item()) / (self.step + 1)
 
         msg += ", " + ", ".join([
-          f"lr: {self.solver.scheduler.get_last_lr()[0]:.6f}", 
+          f"lr: {self.scheduler.get_last_lr()[0]:.6f}", 
           f"avg loss: {avg_loss:.6f}", 
           *[f"{key}: {loss:.6f}" for key, loss in loss_dict.items()],
         ])
@@ -199,6 +203,7 @@ class Runner(object):
       self.checkpoint.save(
         self.model, 
         self.solver, 
+        self.scheduler,
         self.epoch, 
         avg_loss, 
         cfg=self.cfg.MODEL)

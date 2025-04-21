@@ -66,7 +66,8 @@ class Checkpoint(object):
   def save(
     self,
     model: torch.nn.Module,
-    solver: torch.optim.Optimizer,
+    solver: torch.optim.Optimizer, 
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
     epoch: int,
     loss: float,
     export: bool = False, 
@@ -77,6 +78,7 @@ class Checkpoint(object):
     Args:
       model: PyTorch model to save
       solver: Optimizer to save
+      scheduler: Learning rate scheduler to save
       epoch: Current epoch number
       loss: Current loss value
       export: Whether to export model (default: False)
@@ -100,6 +102,7 @@ class Checkpoint(object):
         summon_module = self.dist.get_summon_module(model)
         torch.save(dict(weight=self.dist.copy_cpu_offload_state_dict(summon_module),
                         solver=self.dist.copy_cpu_offload_state_dict(solver),
+                        scheduler=self.dist.copy_cpu_offload_state_dict(scheduler),
                         epoch=epoch, loss=loss, min_loss=self.min_loss, 
                         **kwargs), ckpt)
         
@@ -139,6 +142,7 @@ class Checkpoint(object):
     self,
     model: Optional[torch.nn.Module] = None,
     solver: Optional[torch.optim.Optimizer] = None,
+    scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
     *,
     resume: bool = True,
     resume_from: Optional[Union[str, int, Path]] = None,
@@ -150,6 +154,7 @@ class Checkpoint(object):
     Args:
       model: PyTorch model to load weights into (optional)
       solver: Optimizer to load state into (optional)
+      scheduler: Learning rate scheduler to load state into (optional)
       resume: Whether to resume training (default: True)
       resume_from: Checkpoint to resume from, can be "best", "latest", epoch number, or path
       load_from: Direct path to checkpoint to load from
@@ -185,18 +190,21 @@ class Checkpoint(object):
       ckpt = torch.load(load_from, map_location="cpu", weights_only=False)
 
       if model is None:
-        if solver is not None:
-          raise ValueError("model must be provided when solver is not provided")
+        if None in [solver, scheduler]:
+          raise ValueError("model must be provided when solver or scheduler is not provided")
         from .help_build import build_model
         arch = build_model(ckpt["cfg"]) # build pure model in no ddp mode
         model = arch.model
         solver = arch.solver
+        scheduler = arch.scheduler
         
       # model is expected to be in non distributed style and load weights
       model.load_state_dict(ckpt["weight"], strict=(resume or strict))
       
-      if solver is not None:
-        solver.load_state_dict(ckpt["solver"])
+      if solver and (solver_state := ckpt.get("solver", None)):
+        solver.load_state_dict(solver_state)
+      if scheduler and (scheduler_state := ckpt.get("scheduler", None)):
+        scheduler.load_state_dict(scheduler_state)
 
       if resume:
         self.min_loss = ckpt.get("min_loss", float("inf"))
@@ -204,4 +212,4 @@ class Checkpoint(object):
         ckpt.pop("epoch")
         ckpt.pop("min_loss")
         
-    return model, solver, ckpt
+    return model, solver, scheduler, ckpt

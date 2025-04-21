@@ -58,6 +58,7 @@ class Gradient(object):
     self,
     model: torch.nn.Module,
     solver: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
     loss: torch.Tensor,
     i_step: int,
     total_steps: int,
@@ -68,6 +69,7 @@ class Gradient(object):
     Args:
       model: PyTorch model
       solver: Optimizer
+      scheduler: Learning rate scheduler
       loss: Loss tensor
       i_step: Current step index
       total_steps: Total number of steps
@@ -92,8 +94,7 @@ class Gradient(object):
       self.scaler.step(solver)
       self.scaler.update()
       solver.zero_grad()
-      if scheduler := getattr(solver, "scheduler", None):
-        scheduler.step()
+      scheduler.step()
       
     else:
       self.scaler.scale(loss / self.accumulation_every_n_steps).backward()

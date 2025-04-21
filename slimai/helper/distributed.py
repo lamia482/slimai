@@ -94,7 +94,13 @@ class Distributed(object):
     Returns:
       The prepared component.
     """
-    if isinstance(component, torch.nn.ModuleDict):
+    if isinstance(component, torch.optim.Optimizer):
+      component.load_state_dict(component.state_dict()) # cast optimizer to proper device
+      return component
+    elif isinstance(component, torch.optim.lr_scheduler.LRScheduler):
+      component.load_state_dict(component.state_dict()) # cast scheduler to proper device
+      return component
+    elif isinstance(component, torch.nn.ModuleDict):
       component = torch.nn.ModuleDict({
         k: self._wrap_module(m)
         for (k, m) in component.items()
