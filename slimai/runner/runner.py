@@ -125,7 +125,6 @@ class Runner(object):
   def step_train(self, i_step, total_steps, 
                  batch_data, batch_info):
     """Train the model for one step."""
-    torch.cuda.empty_cache()
     accumulation_i_step = i_step % self.gradient.accumulation_every_n_steps
 
     train_forward_func = partial(self.arch, mode="loss")
