@@ -201,9 +201,6 @@ METRIC = dict(
   class_names=["ASC-US", "LSIL", "ASC-H", "HSIL", "AGC-N", 
                "TRI", "FUNGI", "WS", "CC", "ACTINO", 
                "GEC", "NILM", "Glycogen", "Repair", "Debris"], 
-  classifier=dict(
-    type="CosineSimilarityClassifier"
-  ),
   umap=dict(
     type="UMAP", 
     color_map = {
@@ -224,6 +221,12 @@ METRIC = dict(
       "Debris": '#808080'     # Gray
     }
   ), 
+  classifier=dict(
+    type="KNNClassifier", 
+    k="auto", 
+    metric="cosine",
+    reverse_max=True, 
+  ),
   acc=dict(
     type="torchmetrics.Accuracy",
     task="multiclass"
