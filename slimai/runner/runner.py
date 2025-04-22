@@ -57,6 +57,9 @@ class Runner(object):
 
     self.eval_every_n_epochs = ckpt.get("eval_every_n_epochs", 1)
 
+    # Dump config to work_dir
+    self.dump_cfg()
+
     # Build components like dataloaders, model, solver, and metric
     train_dataloader, valid_dataloader, test_dataloader, \
       arch, model, solver, scheduler, loss, metric = self.build_components(self.cfg)
@@ -72,9 +75,6 @@ class Runner(object):
       load_from=resume.load_from
     )
     self.epoch = ckpt.get("epoch", 0)
-
-    # Dump config to work_dir
-    self.dump_cfg()
 
     # prepare model and solver for distributed training
     self.train_dataloader, self.valid_dataloader, self.test_dataloader, self.arch, \
@@ -125,6 +125,7 @@ class Runner(object):
   def step_train(self, i_step, total_steps, 
                  batch_data, batch_info):
     """Train the model for one step."""
+    torch.cuda.empty_cache()
     accumulation_i_step = i_step % self.gradient.accumulation_every_n_steps
 
     train_forward_func = partial(self.arch, mode="loss")
