@@ -58,7 +58,7 @@ class Distributed(object):
     )[self.mix_precision]
   
   def __repr__(self):
-    return f"Distributed(parallel_mode={self.parallel_mode}, mix_precision={self.mix_precision})\n{self.env.desc}"
+    return f"Distributed(parallel_mode={self.parallel_mode}, mix_precision={self.mix_precision})"
   __str__ = __repr__
 
   @classmethod

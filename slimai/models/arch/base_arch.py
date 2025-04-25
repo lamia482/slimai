@@ -40,6 +40,9 @@ class BaseArch(object):
 
     # Initialize loss
     self.loss = self.init_loss(loss)
+
+    # try to compile model forward
+    self._forward_tensor = torch.compile(self._forward_tensor)
     return
 
   @abstractmethod
@@ -121,7 +124,6 @@ class BaseArch(object):
     )
     return
   
-  # TODO: add torch.compile
   def __call__(self, 
                batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                batch_info: Optional[Union[Dict, DataSample]] = None,

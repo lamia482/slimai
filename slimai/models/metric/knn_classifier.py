@@ -3,7 +3,7 @@ from slimai.helper.help_build import MODELS
 
 
 @MODELS.register_module()
-class KNNClassifier:
+class KNNClassifier(object):
   def __init__(self, k, num_classes, metric="cosine", reverse_max=False):
     """
     Args:
@@ -91,6 +91,7 @@ class KNNClassifier:
       logits.append(col_logits) 
     # N * [chunk_size, X2] -> [X1, X2]
     logits = torch.cat(logits, dim=0) # [X1, X2]
+    
     # apply topk weights to Y to obtain scores
     logits_topk, indices_topk = torch.topk(logits, k=k, dim=-1) # [X1, k]
     weights_topk = logits_topk.softmax(dim=-1) # [X1, k]

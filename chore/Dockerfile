@@ -58,6 +58,9 @@ RUN pip install huggingface_hub \
 # Install visualization and metrics tools
 RUN pip install torchcam umap-learn[plot] torchmetrics
 
+# Install triton
+RUN pip install triton
+
 # Prevent albumentations from auto-updating
 ENV NO_ALBUMENTATIONS_UPDATE=true
 

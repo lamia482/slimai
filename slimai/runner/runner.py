@@ -106,7 +106,9 @@ class Runner(object):
     metric = help_build.build_metric(cfg.get("METRIC", dict()))
 
     self.dist.env.sync()
-    help_utils.print_log("Created runner, desc: {}".format(self.dist.env.desc), main_process_only=False)
+    help_utils.print_log("Created runner, desc: {}, {}".format(
+      self.dist, self.dist.env.desc), main_process_only=False)
+      
     return train_loader, valid_loader, test_loader, \
            arch, model, solver, scheduler, loss, metric
   
