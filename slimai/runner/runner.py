@@ -94,6 +94,9 @@ class Runner(object):
     ]))
 
     arch = help_build.build_model(cfg.MODEL)
+    arch.compile(cfg.RUNNER.get("compile", False))
+    arch.checkpointing(cfg.RUNNER.get("checkpointing", True))
+    
     model = arch.model
     solver = arch.solver
     scheduler = arch.scheduler

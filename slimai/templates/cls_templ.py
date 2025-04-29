@@ -168,6 +168,8 @@ MODEL = dict(
 
 RUNNER = dict(
   max_epoch=12,
+  compile=False, 
+  checkpointing=True, 
 
   gradient=dict(
     amp=True, 

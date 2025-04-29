@@ -164,6 +164,8 @@ MODEL = dict(
 
 RUNNER = dict(
   max_epoch=500,
+  compile=False, 
+  checkpointing=True, 
 
   gradient=dict(
     amp=True, 

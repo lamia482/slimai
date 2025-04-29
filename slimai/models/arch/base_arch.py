@@ -3,6 +3,7 @@ import math
 import sys
 import torch
 from functools import partial
+from torch.utils.checkpoint import checkpoint as gradient_checkpoint
 from typing import Optional, Union, Dict
 from slimai.helper import help_build, DataSample, Distributed
 from slimai.helper.help_utils import print_log
@@ -40,9 +41,18 @@ class BaseArch(object):
 
     # Initialize loss
     self.loss = self.init_loss(loss)
+    return
 
-    # try to compile model forward
-    self._forward_tensor = torch.compile(self._forward_tensor)
+  def compile(self, compile: bool = False):
+    if compile:
+      self._forward_tensor = torch.compile(self._forward_tensor)
+    return
+
+  def checkpointing(self, checkpointing: bool = False, use_reentrant: bool = False):
+    if checkpointing:
+      self.gradient_checkpoint = partial(gradient_checkpoint, use_reentrant=use_reentrant)
+    else:
+      self.gradient_checkpoint = lambda func, *args, **kwargs: func(*args, **kwargs)
     return
 
   @abstractmethod
@@ -143,7 +153,9 @@ class BaseArch(object):
       output = self._forward_tensor(batch_data)
 
     elif mode == "loss":
-      embedding_dict = self._forward_tensor(batch_data, return_flow=True)        
+      embedding_dict = self.gradient_checkpoint(
+        self._forward_tensor, batch_data, return_flow=True
+      )
       loss_dict = self._forward_loss(embedding_dict, batch_info)
       assert (
         isinstance(loss_dict, dict) and len(loss_dict) > 0
