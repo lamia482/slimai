@@ -1,4 +1,4 @@
-import os
+import cv2
 import hashlib
 import mmengine
 import numpy as np
@@ -16,6 +16,7 @@ class RegionTileLoader():
                magnification: int, 
                region: Dict, 
                cache: bool=True, 
+               cache_mode: str="raw", 
                num_threads: int=None, 
                padding_value: int=255,
                ):
@@ -27,6 +28,10 @@ class RegionTileLoader():
       )
     ), "Region must be None or a dictionary with keys: 'xmin', 'ymin', 'xmax', 'ymax'"
     self.cache = cache
+    assert (
+      cache_mode in ["raw", "compressed"]
+    ), "cache_mode is expected to be one of ['raw', 'compressed'], but got: {}".format(cache_mode)
+    self.compressed = False if cache_mode == "raw" else True
     self.num_threads = num_threads
     self.padding_value = padding_value
     return
@@ -35,12 +40,27 @@ class RegionTileLoader():
     cache_file = Path(_CACHE_ROOT_DIR_, "loader", self.__class__.__name__, "{}-{}.pkl".format(
       hashlib.md5("+".join(map(str, [self.magnification, self.region, self.padding_value])
       ).encode(encoding="UTF-8")).hexdigest(), 
-      hashlib.md5(file.encode(encoding="UTF-8")).hexdigest()
+      hashlib.md5(file.encode(encoding="UTF-8")).hexdigest() + ("" if self.compressed == "raw" else "-compressed")
     ))
+
     if self.cache and cache_file.exists():
       try:
-        return mmengine.load(cache_file)
+        data = mmengine.load(cache_file)
+        if self.compressed:
+          data = cv2.imdecode(np.frombuffer(data, "uint8"), cv2.IMREAD_COLOR)
+        return data
       except Exception as e:
+        pass
+
+    raw_cache_file = Path(str(cache_file).replace("-compressed", ""))
+    if self.cache and raw_cache_file.exists():
+      try:
+        tile = mmengine.load(raw_cache_file)
+        if self.compressed:
+          data = cv2.imencode(".jpg", tile)[1].tobytes()
+          mmengine.dump(data, cache_file)
+        return tile
+      except:
         pass
     
     wsi_file_path = file
@@ -69,6 +89,8 @@ class RegionTileLoader():
       tile = reader.ReadRoi(xmin, ymin, xmax-xmin, ymax-ymin, scale=reader.getReadScale())
 
     if self.cache:
+      if self.compressed:
+        tile = cv2.imencode(".jpg", tile)[1].tobytes()
       mmengine.dump(tile, cache_file)
     
     return tile
