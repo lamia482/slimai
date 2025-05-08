@@ -3,8 +3,74 @@ from slimai.helper.help_build import MODELS
 
 
 __all__ = [
-  "QMIL", 
+  "RABMIL", "QMIL", 
 ]
+
+@MODELS.register_module()
+class RABMIL(torch.nn.Module):
+  """
+  Recursive Attention Based MIL
+  compute attention(weight) for each patch, then recursively 
+  re-compute attention for the topk-percent patches applied with attention weight 
+  untill the final one embedding vector.
+  """
+
+  MLP = MODELS.get("MLP")
+
+  def __init__(self, *, input_dim, num_heads, num_layers, dropout=0.1, topk_percent=0.5, 
+               act="gelu", norm="batch_norm", **kwargs):
+    super().__init__()
+    self.input_dim = input_dim
+    self.ln = torch.nn.LayerNorm(input_dim)
+    self.atten_weight = self.MLP(input_dim=input_dim, output_dim=1, 
+                                 hidden_dim=input_dim // num_heads, 
+                                 bottleneck_dim=input_dim // num_heads, 
+                                 n_layer=num_layers, act=act, norm=norm, dropout=dropout)
+    self.proj = self.MLP(input_dim=input_dim, output_dim=input_dim, 
+                        hidden_dim=input_dim, bottleneck_dim=input_dim, 
+                        n_layer=num_layers, act=act, norm=norm, dropout=dropout)
+    self.atten_topk = torch.nn.ModuleList([
+      torch.nn.MultiheadAttention(input_dim, num_heads, dropout=dropout, batch_first=True)
+      for _ in range(num_layers)
+    ])
+    self.dropout = torch.nn.Dropout(dropout)
+    self.topk_percent = topk_percent
+    return
+  
+  def forward(self, x):
+    batch_embedding = []
+
+    for _x in x:
+      _embedding = self.get_recursive_atten(_x)
+      batch_embedding.append(_embedding)
+
+    batch_embedding = torch.stack(batch_embedding) # [B, D]
+    projection = self.proj(batch_embedding) # [B, D]
+    return projection
+
+  def get_recursive_atten(self, ND):
+    # ND: [N, D]
+    while len(ND) > 1:
+      weight = self.get_atten_weight(ND) # [N]
+      n_topk = max(1, int(len(ND) * self.topk_percent))
+      topk_weight, topk_indices = torch.topk(weight, n_topk, dim=0)
+      ND = ND[topk_indices] * topk_weight.unsqueeze(-1) # [topk, D]
+
+    ND = ND.squeeze(0) # [D]
+    return ND
+    
+  def get_atten_weight(self, ND):
+    embeddings = ND.unsqueeze(0) # [1, N, D]
+    _z = self.ln(embeddings)
+    _atten = _z
+    for atten_layer in self.atten_topk:
+      _atten, _ = atten_layer(_atten, _atten, _atten, need_weights=False)
+      _atten = self.ln(_z + _atten)
+    _atten = self.dropout(_atten) # [1, N, D]
+
+    weight = self.atten_weight(_atten).squeeze() # [N]
+    return weight
+
 
 @MODELS.register_module()
 class QMIL(torch.nn.Module):

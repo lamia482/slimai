@@ -173,8 +173,8 @@ RUNNER = dict(
 
   gradient=dict(
     amp=True, 
-    accumulation_every_n_steps=1,
-    clip=None
+    clip=3, 
+    accumulation_every_n_steps=1, 
   ), 
 
   logger=dict(
@@ -230,3 +230,7 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
 
 ############################## CLEAR FOR DUMP
 del datetime, hashlib
+
+_COMMENT_ = """
+
+"""
