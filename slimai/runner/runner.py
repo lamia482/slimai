@@ -225,12 +225,15 @@ class Runner(object):
     self.model.eval()
 
     pbar = help_utils.ProgressBar(len(dataloader), desc="Infer")
+    infer_forward_func = partial(self.arch, mode="predict")
 
     results = []
     for step, batch_info in enumerate(dataloader):
       batch_info = DataSample(**batch_info).to(self.arch.device)
       batch_data = batch_info.pop("image")
-      batch_info = self.arch(batch_data, batch_info, mode="predict").cpu()
+      with torch.autocast(device_type=self.arch.device.type, 
+                          enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
+        batch_info = infer_forward_func(batch_data, batch_info).cpu()
       results.extend(batch_info.split_as_list())
       pbar.update(sep="\r\t")
     pbar.close()

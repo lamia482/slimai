@@ -6,7 +6,7 @@ from torch.distributed.fsdp import (
   FullyShardedDataParallel as FSDP, 
   MixedPrecision, ShardingStrategy, StateDictType, FullStateDictConfig
 )
-from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
 from .utils import dist_env, PytorchNetworkUtils
 
 
@@ -37,9 +37,16 @@ class Distributed(object):
       return
 
     assert (
-      parallel_mode in ["auto", "ddp"]
-    ), "parallel_mode must be 'auto' or 'ddp', but got {}".format(parallel_mode)
-    self.parallel_mode = "ddp"
+      parallel_mode in ["auto", "ddp", "fsdp"]
+    ), "parallel_mode must be 'auto' or 'ddp' or 'fsdp', but got {}".format(parallel_mode)
+    if parallel_mode == "auto":
+      parallel_mode = "fsdp"
+    if self.env.global_world_size == 1:
+      parallel_mode = "ddp"
+
+    # TODO: currently, fsdp is not supported, use ddp instead
+    parallel_mode = "ddp"
+    self.parallel_mode = parallel_mode
 
     assert (
       mix_precision in ["fp16", "bf16", "fp32"]
@@ -134,6 +141,14 @@ class Distributed(object):
       my_auto_wrap_policy = functools.partial(
         size_based_auto_wrap_policy, min_num_params=20000
       )
+      import torchvision.models as models
+      my_auto_wrap_policy = functools.partial(
+        transformer_auto_wrap_policy, transformer_layer_cls={
+          models.VisionTransformer, 
+          torch.nn.Sequential, 
+          models.__class__
+        }
+      )
       mixed_precision_policy = MixedPrecision(
         param_dtype=self.mix_dtype,
         reduce_dtype=self.mix_dtype,
@@ -142,10 +157,10 @@ class Distributed(object):
       
       return FSDP(
         module,
-        device_id=self.env.local_rank,
+        device_id=torch.cuda.current_device(),
         auto_wrap_policy=my_auto_wrap_policy,
         mixed_precision=mixed_precision_policy,
-        sharding_strategy=ShardingStrategy.FULL_SHARD,
+        sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,
       )
     return module
 

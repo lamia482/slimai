@@ -20,6 +20,6 @@ class TorchTransform(BaseTransform):
   def compose(self, transforms):
     return T.Compose(self._compose(
                           transforms=transforms, 
-                          source=[T], 
+                          source=[T, TRANSFORMS], 
                           recursive_key="transforms"))
 

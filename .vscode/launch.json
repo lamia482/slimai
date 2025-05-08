@@ -24,6 +24,27 @@
       "justMyCode": false
     }, 
     {
+      "name": "TORCHRUN",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai",
+      "env": {
+        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
+        "CUDA_VISIBLE_DEVICES": "5,6",
+        "PYDEVD_WARN_SLOW_RESOLVE": "0",
+      },
+      "module": "torch.distributed.launch",
+      "console": "integratedTerminal",
+      "args": [
+        "--nproc_per_node=2", "--standalone",
+        "/hzztai/slimai/tools/run.py", 
+        "--config=/hzztai/slimai/_debug_/debug.py",
+        "--work-dir=/hzztai/experiments/debug",
+        "--action=train"
+      ],
+      "justMyCode": false
+    },
+    {
       "name": "EXPORT",
       "type": "debugpy",
       "request": "launch",

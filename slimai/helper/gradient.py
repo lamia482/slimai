@@ -46,7 +46,13 @@ class Gradient(object):
     self.clip = clip
     
     # Initialize gradient scaler for mixed precision
-    self.scaler = torch.amp.GradScaler("cuda", enabled=self.amp)
+    if self.dist.parallel_mode == "fsdp":
+      from torch.distributed.fsdp import sharded_grad_scaler
+      GradScaler = sharded_grad_scaler.ShardedGradScaler
+    else:
+      GradScaler = torch.amp.GradScaler
+    
+    self.scaler = GradScaler(self.dist.env.device_type, enabled=self.amp)
     
     # Handle distributed training
     if (not self.dist.env.is_dist_initialized()) and (self.accumulation_every_n_steps > 1):
