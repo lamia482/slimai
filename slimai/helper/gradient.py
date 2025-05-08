@@ -87,22 +87,20 @@ class Gradient(object):
     # Scale loss with AMP mode and backward
     self.scaler.scale(loss / self.accumulation_every_n_steps).backward()
     
-    # Handle gradient clipping
-    if self.clip is not None and self.scaler.is_enabled():
-      self.scaler.unscale_(solver)
-    PytorchNetworkUtils.clip_gradients(model, self.clip)
-
     # Step optimizer and update learning rate after gradient accumulation
     if (self.accumulation_every_n_steps == 1  # no grad accumulation mode
         ) or (i_step == total_steps - 1  # last step to accumulate grad
         ) or (accumulation_i_step == self.accumulation_every_n_steps - 1  # meet accumulation steps
         ):
+      
+        # Handle gradient clipping
+      if self.clip is not None and self.scaler.is_enabled():
+        self.scaler.unscale_(solver)
+      PytorchNetworkUtils.clip_gradients(model, self.clip)
+      
       self.scaler.step(solver)
       self.scaler.update()
       solver.zero_grad()
       scheduler.step()
-      
-    else:
-      self.scaler.scale(loss / self.accumulation_every_n_steps).backward()
-
+    
     return
