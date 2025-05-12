@@ -26,7 +26,6 @@ class BasicDataset(torch.utils.data.Dataset):
                desc=None, 
                max_sample_num=None, 
                repeat=1,
-               shuffle=False, 
                cache=False, 
                **kwargs):
     self.dataset_file = "Not file"
@@ -74,8 +73,6 @@ class BasicDataset(torch.utils.data.Dataset):
 
     self.files = files
     self.indices = list(range(len(files)))
-    if shuffle:
-      np.random.shuffle(self.indices)
 
     self.transform = build_transform(transform)
     
@@ -85,13 +82,7 @@ class BasicDataset(torch.utils.data.Dataset):
 
     self.desc = desc or "No specific description."
 
-    if max_sample_num is None:
-      self.max_sample_num = None
-      self.length = len(files)
-    else:
-      self.max_sample_num = max_sample_num
-      self.length = min(max_sample_num, len(files))
-    
+    self.max_sample_num = max_sample_num
     self.repeat = repeat
     return
 
@@ -130,6 +121,13 @@ class BasicDataset(torch.utils.data.Dataset):
   
   def load_extra_keys(self, data, index):
     return data
+
+  @property
+  def length(self):
+    size = len(self.indices)
+    if self.max_sample_num is not None:
+      size = min(self.max_sample_num, size)
+    return size
 
   def __str__(self):
     repr_str = f"Total {len(self)} samples(selected from {len(self.files)} samples with max_sample_num: '{self.max_sample_num}' with repeat: '{self.repeat}')\n"

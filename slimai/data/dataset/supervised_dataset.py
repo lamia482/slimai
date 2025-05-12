@@ -6,6 +6,7 @@ from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import DATASETS, TRANSFORMS, build_transform, compose_components
 from .dataset_checker import DatasetChecker
 from .basic_dataset import BasicDataset
+from .sample_strategy import SampleStrategy
 
 
 __all__ = ["SupervisedDataset"]
@@ -34,6 +35,7 @@ class SupervisedDataset(BasicDataset):
   def __init__(self, *args, 
                class_names=None, 
                ann_keys=["label", "mask", "instance", "text"], 
+               sample_strategy=None, 
                **kwargs):
     super().__init__(*args, **kwargs)
     dataset = self.dataset
@@ -58,6 +60,11 @@ class SupervisedDataset(BasicDataset):
     self.annotations = annotations.copy()
     self.ann_keys = ann_keys
 
+    self.sample_strategy = sample_strategy
+    if sample_strategy is not None:
+      # update indices by sample strategy, change indices from list to dict[sampled id -> file id]
+      self.indices = SampleStrategy.update_indices(annotations, ann_keys, 
+                                                   sample_strategy, self.indices)
     return
 
   def load_extra_keys(self, data, index):
@@ -69,6 +76,7 @@ class SupervisedDataset(BasicDataset):
     repr_str = super().__str__()
     repr_str += f"\tCLASS NAMES: {self.class_names}\n"
     repr_str += f"\tHas Ann keys: {self.ann_keys}\n"
+    repr_str += f"\tSample strategy: {self.sample_strategy}\n"
     return repr_str
   __repr__=__str__
   
