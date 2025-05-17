@@ -4,6 +4,9 @@ from .mlp import MLP
 from .plugin import Plugin
 from .abmil import ABMIL
 from .qmil import QMIL, RABMIL
+from .detr_query import DETRQuery
+from .det_head import DetectionHead
+
 
 __all__ = [
   "Pipeline",
@@ -13,4 +16,5 @@ __all__ = [
   "ABMIL",
   "QMIL",
   "RABMIL",
+  "DETRQuery",
 ]

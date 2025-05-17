@@ -137,7 +137,16 @@ class Runner(object):
     with torch.autocast(device_type=self.arch.device.type, 
                         enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
       loss_dict = train_forward_func(batch_data, batch_info)
-      total_loss = sum(loss_dict.values())
+
+      total_loss = None
+      for loss_name, loss_value in loss_dict.items():
+        if "loss" in loss_name:
+          if total_loss is None:
+            total_loss = torch.tensor(0.0, device=self.arch.device)
+          total_loss += loss_value
+      assert (
+        total_loss is not None
+      ), "total_loss must be provided"
       
       self.gradient.step(
         model=self.model,
@@ -170,6 +179,7 @@ class Runner(object):
       avg_loss = 0.0
       for self.step, batch_info in enumerate(self.train_dataloader):
         msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
+        batch_info = self.dist.prepare_for_distributed(batch_info)
         batch_info = DataSample(**batch_info).to(self.arch.device)
         batch_data = batch_info.pop("image")
 
@@ -229,6 +239,7 @@ class Runner(object):
 
     results = []
     for step, batch_info in enumerate(dataloader):
+      batch_info = self.dist.prepare_for_distributed(batch_info)
       batch_info = DataSample(**batch_info).to(self.arch.device)
       batch_data = batch_info.pop("image")
       with torch.autocast(device_type=self.arch.device.type, 
@@ -262,17 +273,17 @@ class Runner(object):
     if self.dist.env.is_main_process():
       batch_info = results["batch_info"]
       # for better performance, move to arch device first
-      logits = torch.stack([result.output for result in batch_info]).to(self.arch.device)
-      targets = torch.stack([result.label for result in batch_info]).to(self.arch.device)
-      metrics = self.metric(logits, targets)
+      merge_result = DataSample.merge_from_list(batch_info).to(self.arch.device)
+      output = merge_result.output
+      targets = {key: getattr(merge_result, key) for key in dataloader.dataset.ann_keys}
+      metrics = self.metric(output, targets)
 
       # split figure and metric
       msg_list = []
       for key, fig in metrics.items():
         if isinstance(fig, matplotlib.figure.Figure):
           fig.savefig(str(result_file).replace(".pkl", f"_{key}.png"))
-        else:
-          msg_list.append(f"{key}: {fig:.6f}")
+
 
       help_utils.print_log(f"Metrics: {', '.join(msg_list)}")
       results["metrics"] = DataSample(**metrics).to("cpu").to_dict() # move to cpu to dump

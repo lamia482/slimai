@@ -21,10 +21,11 @@ class BasicClassificationMetric(torch.nn.Module):
 
   @torch.no_grad()
   def forward(self, 
-              logits: torch.Tensor, 
-              targets: torch.Tensor) -> Dict[str, torch.Tensor]:
-    scores = torch.softmax(logits, dim=1)
+              output: Dict[str, torch.Tensor], 
+              targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    softmax = output["softmax"]
+    targets = targets["label"]
     return dict(
-      acc=self.acc(scores, targets),
-      kappa=self.kappa(scores, targets),
+      acc=self.acc(softmax, targets),
+      kappa=self.kappa(softmax, targets),
     )

@@ -1,9 +1,10 @@
+import torch
+import numpy as np
 from mmengine.structures import BaseDataElement
 
 
 class DataSample(BaseDataElement):
   def to(self, *args, **kwargs):
-    
     def _to_(value):
       if isinstance(value, list):
         return list(map(_to_, value))
@@ -11,6 +12,7 @@ class DataSample(BaseDataElement):
         return tuple(map(_to_, value))
       elif isinstance(value, dict):
         return {k: _to_(v) for k, v in value.items()}
+      
       if hasattr(value, "to"):
         return value.to(*args, **kwargs)
       return value
@@ -21,30 +23,126 @@ class DataSample(BaseDataElement):
       data = {k: v}
       new_data.set_data(data)
     return new_data
+
+  def cpu(self):
+    return self.to("cpu")
+
+  def cuda(self):
+    return self.to("cuda")
+  
+  def musa(self):
+    return self.to("musa")
+  
+  def npu(self):
+    return self.to("npu")
+  
+  def mlu(self):
+    return self.to("mlu")
   
   def split_as_list(self):
-    keys = self.keys()
-    values = self.values()
+    """
+    Split the DataSample into a list of DataSample.
+    The DataSample is a dictionary of values, and each value can be 
+    1. a number
+    2. an element in type of list, tuple, tensor or array, and have the same batch size
+    3. a dict of elements in type of list, tuple, tensor or array, and have the same batch size
+    4. element is expected to have shape dim in [B] or [B, ...]
+    This function splits the DataSample into a list of DataSample, where each DataSample
+    contains non-batched data, and each single data split from batched data.
+    """
 
-    value_lengths = [len(value) for value in values]
+    # Separate values into iterables and non-iterables
+    batch_size = []
+    non_iterable_data = {}
+    array_keys, array_values = [], []
+    dict_keys, dict_values = [], []
+    
+    for key, value in self.items():
+      if isinstance(value, (list, tuple, np.ndarray, torch.Tensor)):
+        array_keys.append(key)
+        array_values.append(value)
+        batch_size.append(len(value))
+      elif isinstance(value, dict):
+        assert (
+          all(map(lambda x: (not isinstance(x, dict)), value.values()))
+        ), "dict_values cannot be a dict"
+        dict_keys.append(key)
+        dict_values.append(value)
+        batch_size.extend([len(v) for v in value.values()])
+      else:
+        non_iterable_data[key] = value
+
     assert (
-      1 >= len(set(value_lengths))
-    ), "All values must have the same length"
+      len(set(batch_size)) == 1
+    ), "all values must have the same batch size"
+    batch_size = batch_size[0]
 
-    batch_size = 0 if len(value_lengths) == 0 else value_lengths[0]
+    result_list = []
+    for i in range(batch_size):
+      result = dict()
+      for key, value in self.items():
+        if key in array_keys:
+          result[key] = value[i]
+        elif key in dict_keys:
+          result[key] = {k: v[i] for k, v in value.items()}
+        else:
+          result[key] = value
 
-    return [
-      DataSample(metainfo=self.metainfo, **{
-        key: batch[i]
-        for key, batch in zip(keys, values)
-      })
-      for i in range(batch_size)
-    ]
+      result = DataSample(metainfo=self.metainfo, **result)
+      result_list.append(result)
+    return result_list
 
-class DataListElement(BaseDataElement):
-  def __init__(self, values=None):
-    if values is None:
-      values = []
-    wrapped_dict = {str(index): value for (index, value) in enumerate(values)}
-    super().__init__(**wrapped_dict)
-    return
+  @classmethod
+  def merge_from_list(cls, list_data):
+    """
+    Merge a list of DataSample into a single DataSample.
+    The DataSample is a dictionary of values, and each value can be 
+    1. a number in type of torch.Tensor
+    2. an element in type of torch.Tensor, and may have different sizes
+    3. a dict of elements in type of torch.Tensor, and may have different sizes
+    This function merges a list of DataSample into a single DataSample key by key.
+    """
+    result = dict()
+    if not list_data:
+      return cls()
+    
+    # Verify all elements have the same keys
+    first_data = list_data[0]
+    first_keys = set(first_data.keys())
+    for data in list_data[1:]:
+      current_keys = set(data.keys())
+      assert (
+        first_keys == current_keys
+      ), "All DataSample elements must have the same keys"
+    all_keys = first_keys
+    
+    def concat(inputs):
+      if isinstance(inputs, list):
+        assert (
+          len(inputs) > 0
+        ), "inputs must be a non-empty list"
+        if isinstance(inputs[0], dict): # merge every key in dict
+          return {k: concat([d[k] for d in inputs]) for k in inputs[0].keys()}
+
+        assert (
+        all(list(map(lambda v: isinstance(v, torch.Tensor), inputs)))
+        ), "only torch.Tensor is supported for concatenation"
+        
+        shape = list(set(list(map(lambda v: v.shape, inputs))))
+        if len(shape) == 1: # same shape
+          output = torch.stack(inputs, dim=0)
+        else: # different shape
+          output = inputs
+        return output
+
+      elif isinstance(inputs, dict):
+        return {k: concat(v) for k, v in inputs.items()}
+      
+      raise ValueError(f"Expected a list or dict, but got {type(inputs)}")
+      
+    # expect to have all values as torch.Tensor
+    for key in all_keys:
+      elem_list = [getattr(data, key) for data in list_data]
+      result[key] = concat(elem_list)
+
+    return DataSample(metainfo=first_data.metainfo, **result)

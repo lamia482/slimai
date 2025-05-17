@@ -114,6 +114,13 @@ class Distributed(object):
       })
     elif isinstance(component, torch.nn.Module):
       component = self._wrap_module(component)
+    elif isinstance(component, torch.Tensor):
+      component = component.to(self.env.device_module.current_device())
+    elif isinstance(component, dict):
+      component = {
+        k: self._prepare_component(v)
+        for (k, v) in component.items()
+      }
 
     return component
   
@@ -157,7 +164,7 @@ class Distributed(object):
       
       return FSDP(
         module,
-        device_id=torch.cuda.current_device(),
+        device_id=self.env.device_module.current_device(),
         auto_wrap_policy=my_auto_wrap_policy,
         mixed_precision=mixed_precision_policy,
         sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,

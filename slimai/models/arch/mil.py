@@ -5,7 +5,7 @@ from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import MODELS, build_model
 from slimai.helper.structure import DataSample
 from slimai.helper.utils import PytorchNetworkUtils
-from .base_arch import BaseArch
+from .cls_arch import ClassificationArch
 
 
 __all__ = [
@@ -13,7 +13,7 @@ __all__ = [
 ]
 
 @MODELS.register_module()
-class MIL(BaseArch):
+class MIL(ClassificationArch):
   """Multiple Instance Learning (MIL) architecture.
   
   This class implements a MIL architecture for processing bags of instances.
@@ -116,18 +116,3 @@ class MIL(BaseArch):
     else:
       return head
   
-  def postprocess(self, 
-                  batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
-                  batch_info: DataSample) -> DataSample:
-    """Postprocess model outputs.
-    
-    Args:
-      batch_data: Model output data.
-      batch_info: DataSample object to store results.
-      
-    Returns:
-      Updated DataSample with model outputs.
-    """
-    # Postprocess the output by assigning it to batch_info
-    batch_info.output = batch_data
-    return batch_info

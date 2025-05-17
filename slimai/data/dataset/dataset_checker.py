@@ -65,8 +65,9 @@ class DatasetChecker(object):
     ), "The length of instances must be equal to the length of files"
 
     assert (
-      all((isinstance(i, dict) and set(i.keys()) == {"bbox", "category_id", "segmentation"}) for i in instances)
-    ), "All elements in instances must be dictionaries with keys 'bbox', 'category_id', and 'segmentation'"
+      all(isinstance(i, list) for i in instances) and 
+      all(all(isinstance(item, dict) and 'bbox' in item and 'category_id' in item and 'segmentation' in item for item in i) for i in instances if len(i) > 0)
+    ), "All elements in instances must be lists containing dictionaries with keys 'bbox', 'category_id', and 'segmentation'"
     return True
 
   @classmethod

@@ -16,6 +16,7 @@ class ViT(torch.nn.Module):
                patch_size=16, 
                image_size=224, 
                drop_head=False, 
+               cls_pooling=True, 
                **kwargs):
     super().__init__()
     vit_param = FlexViT.vit_arch.get(arch, None)
@@ -29,13 +30,17 @@ class ViT(torch.nn.Module):
 
     self.embed_dim = vit_param["embed_dim"]
     self.vit = FlexViT.build_vit(**vit_param)
+    self.cls_pooling = cls_pooling
 
+    assert (
+      drop_head
+    ), "drop_head must be True"
     if drop_head:
       self.vit.heads.head = torch.nn.Identity()
     return
   
   def forward(self, x):
-    return self.vit(x)
+    return self.vit(x, cls_pooling=self.cls_pooling)
 
 
 class FlexViT(models.VisionTransformer):
@@ -81,7 +86,7 @@ class FlexViT(models.VisionTransformer):
 
     return x
 
-  def forward(self, x: torch.Tensor):
+  def forward(self, x: torch.Tensor, cls_pooling: bool = True):
     # Reshape and permute the input tensor
     B, nc, h, w = x.shape
 
@@ -99,10 +104,13 @@ class FlexViT(models.VisionTransformer):
     x = x + pos_embedding # [B, ~N, D] + [1, ~N, D] -> [B, ~N, D]
     x = self.encoder.ln(self.encoder.layers(self.encoder.dropout(x))) # [B, ~N, D] -> [B, ~N, D]
 
-    # Classifier "token" as used by standard language architectures
-    x = x[:, 0] # [B, ~N, D] -> [B, D]
+    if cls_pooling:
+      # Classifier "token" as used by standard language architectures
+      x = x[:, 0] # [B, ~N, D] -> [B, D]
+    else:
+      x = x # [B, ~N, D], keep cls_token
 
-    x = self.heads(x) # [B, D] -> [B, C]
+    x = self.heads(x) # [B, D] -> [B, C] or [B, ~N, D] -> [B, ~N, C]
 
     return x
 

@@ -4,7 +4,7 @@ from slimai.helper import help_utils
 from slimai.helper.help_build import MODELS
 from slimai.helper.structure import DataSample
 from slimai.helper.utils import PytorchNetworkUtils
-from .base_arch import BaseArch
+from .cls_arch import ClassificationArch
 from ..component.pipeline import Pipeline
 
 
@@ -13,7 +13,7 @@ __all__ = [
 ]
 
 @MODELS.register_module()
-class DINO(BaseArch):
+class DINO(ClassificationArch):
   def __init__(self, *, 
                encoder=dict(
                  backbone=None, neck=None, 
@@ -112,8 +112,10 @@ class DINO(BaseArch):
     return backbone
   
   def postprocess(self, 
-                  batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
+                  batch_data: torch.Tensor, 
                   batch_info: DataSample) -> DataSample:
-    # Postprocess the output by assigning it to batch_info
-    batch_info.output = batch_data
+    embedding = batch_data
+    batch_info.output = dict(
+      embedding=embedding, # [B, D]
+    )
     return batch_info
