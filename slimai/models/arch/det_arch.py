@@ -14,6 +14,15 @@ class DetectionArch(BaseArch):
     cls_logits, bbox_logits = embedding_dict["head"]
     targets = batch_info.instance
     cls_targets, bbox_targets = targets["labels"], targets["bboxes"]
+
+    # concat Nx2 to Nx4, replicate (width, height) to (width, height, width, height)
+    whwh = torch.cat([torch.stack([batch_info.width, batch_info.height], dim=1)] * 2, dim=-1)
+    bbox_targets = [
+      bboxes / whwh[i]
+      for i, bboxes in enumerate(bbox_targets)
+    ]
+    bbox_targets = list(map(box_ops.box_xyxy_to_cxcywh, bbox_targets))
+
     loss = self.loss(cls_logits, bbox_logits, cls_targets, bbox_targets)
     return loss
 

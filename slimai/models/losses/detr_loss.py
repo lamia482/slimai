@@ -47,8 +47,7 @@ class DETRLoss(torch.nn.Module):
               cls_logits: torch.Tensor, 
               bbox_logits: torch.Tensor, 
               cls_targets: torch.Tensor, 
-              bbox_targets: torch.Tensor) -> Dict[str, torch.Tensor]:
-    batch_size, num_queries, num_classes = cls_logits.shape # [B, Q, C]
+              bbox_targets: torch.Tensor) -> Dict[str, torch.Tensor]:    
     indices = self.matcher(cls_logits, bbox_logits, cls_targets, bbox_targets)
     num_bboxes = self.dist.prepare_for_distributed(torch.as_tensor(sum(map(len, bbox_targets)), dtype=torch.float))
     num_bboxes = self.dist.env.sync(num_bboxes).clamp_min(min=1).item()

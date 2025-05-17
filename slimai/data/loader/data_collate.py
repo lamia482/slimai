@@ -41,7 +41,7 @@ class DataCollate():
     data["width"], data["height"] = width, height
 
     labels = self.process_label(labels)
-    instances = self.process_instance(instances, whwh)
+    instances = self.process_instance(instances)
     masks = self.process_mask(masks)
     texts = self.process_text(texts)
 
@@ -66,7 +66,7 @@ class DataCollate():
     labels = labels.to(torch.int64)
     return labels
   
-  def process_instance(self, instance_list, whwh):
+  def process_instance(self, instance_list):
     if len(instance_list) == 0:
       return None
     cls_targets = [
@@ -74,12 +74,12 @@ class DataCollate():
       for tgt in instance_list
     ]
     bbox_targets = [ # scale to [0, 1]
-      torch.from_numpy(np.array([t["bbox"] for t in tgt], dtype="float32").reshape(-1, 4)) / whwh[i]
-      for i, tgt in enumerate(instance_list)
+      torch.from_numpy(np.array([t["bbox"] for t in tgt], dtype="float32").reshape(-1, 4))
+      for tgt in instance_list
     ]
     mask_targets = [
       torch.from_numpy(np.array([t["segmentation"] for t in tgt], dtype="int64").reshape(-1, 2))
-      for i, tgt in enumerate(instance_list)
+      for tgt in instance_list
     ]
 
     return dict(
