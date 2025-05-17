@@ -283,7 +283,8 @@ class Runner(object):
       for key, fig in metrics.items():
         if isinstance(fig, matplotlib.figure.Figure):
           fig.savefig(str(result_file).replace(".pkl", f"_{key}.png"))
-
+        else:
+          msg_list.append(f"{key}: {fig:.6f}")
 
       help_utils.print_log(f"Metrics: {', '.join(msg_list)}")
       results["metrics"] = DataSample(**metrics).to("cpu").to_dict() # move to cpu to dump
