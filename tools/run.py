@@ -22,6 +22,8 @@ def parse_args():
                       "in the work directory.")
   parser.add_argument("--ddp", type=str, default="auto", choices=["ddp", "fsdp", "auto"],
                       help="the distributed environment to use, ddp or fsdp")
+  parser.add_argument("--default-dtype", type=str, default="fp32", choices=["fp16", "bf16", "fp32"],
+                      help="the default dtype to use")
   parser.add_argument("--mix-precision", type=str, default="bf16", 
                       choices=["fp16", "bf16", "fp32"],
                       help="the mix precision to use, fp16, bf16, or fp32")
@@ -68,6 +70,7 @@ def main():
   print_log("Waiting for other processes to start...")
   dist = Distributed.create(
     parallel_mode=args.ddp,
+    default_dtype=args.default_dtype,
     mix_precision=args.mix_precision
   )
   dist.env.init_dist(device=args.device, timeout=args.timeout)

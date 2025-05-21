@@ -32,7 +32,11 @@ class Distributed(object):
           cls._instance._initialized = False
     return cls._instance
 
-  def __init__(self, parallel_mode="ddp", mix_precision="bf16"):
+  def __init__(self, 
+               parallel_mode="ddp", 
+               default_dtype="fp32", 
+               mix_precision="bf16", 
+    ):
     if self._initialized:
       return
 
@@ -49,6 +53,12 @@ class Distributed(object):
     self.parallel_mode = parallel_mode
 
     assert (
+      default_dtype in ["fp16", "bf16", "fp32"]
+    ), "default_dtype must be 'fp16', 'bf16', or 'fp32', but got {}".format(default_dtype)
+    self.default_dtype = default_dtype
+    torch.set_default_dtype(self.dtype)
+
+    assert (
       mix_precision in ["fp16", "bf16", "fp32"]
     ), "mix_precision must be 'fp16', 'bf16', or 'fp32', but got {}".format(mix_precision)
     self.mix_precision = mix_precision
@@ -56,6 +66,14 @@ class Distributed(object):
     self._initialized = True
     return
   
+  @property
+  def dtype(self):
+    return dict(
+      fp16=torch.float16,
+      bf16=torch.bfloat16,
+      fp32=torch.float32
+    )[self.default_dtype]
+
   @property
   def mix_dtype(self):
     return dict(

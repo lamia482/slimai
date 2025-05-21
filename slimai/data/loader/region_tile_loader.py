@@ -15,6 +15,7 @@ class RegionTileLoader():
   def __init__(self, *, 
                magnification: int, 
                region: Dict, 
+               shrink: str=None,
                cache: bool=True, 
                cache_mode: str="raw", 
                num_threads: int=None, 
@@ -27,6 +28,7 @@ class RegionTileLoader():
         isinstance(region, dict) and {"xmin", "ymin", "xmax", "ymax"}.issubset(set(region.keys()))
       )
     ), "Region must be None or a dictionary with keys: 'xmin', 'ymin', 'xmax', 'ymax'"
+    self.shrink = shrink
     self.cache = cache
     assert (
       cache_mode in ["raw", "compressed"]
@@ -50,17 +52,6 @@ class RegionTileLoader():
           data = cv2.imdecode(np.frombuffer(data, "uint8"), cv2.IMREAD_COLOR)
         return data
       except Exception as e:
-        pass
-
-    raw_cache_file = Path(str(cache_file).replace("-compressed", ""))
-    if self.cache and raw_cache_file.exists():
-      try:
-        tile = mmengine.load(raw_cache_file)
-        if self.compressed:
-          data = cv2.imencode(".jpg", tile)[1].tobytes()
-          mmengine.dump(data, cache_file)
-        return tile
-      except:
         pass
     
     wsi_file_path = file
@@ -89,9 +80,10 @@ class RegionTileLoader():
       tile = reader.ReadRoi(xmin, ymin, xmax-xmin, ymax-ymin, scale=reader.getReadScale())
 
     if self.cache:
+      data = tile
       if self.compressed:
-        tile = cv2.imencode(".jpg", tile)[1].tobytes()
-      mmengine.dump(tile, cache_file)
+        data = cv2.imencode(".jpg", data)[1].tobytes()
+      mmengine.dump(data, cache_file)
     
     return tile
 
