@@ -18,7 +18,7 @@ class BasicDetectionMetric(torch.nn.Module):
     self.ap = build_metric(ap)
     return
 
-  @torch.no_grad()
+  @torch.inference_mode()
   def forward(self, 
               output: Dict[str, torch.Tensor], 
               targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -30,11 +30,11 @@ class BasicDetectionMetric(torch.nn.Module):
       dict(boxes=boxes, scores=scores, labels=labels) 
       for boxes, scores, labels in zip(pred_bboxes, pred_scores, pred_labels)
     ]
-    target=[
+    gts=[
       dict(boxes=boxes, labels=labels) 
       for boxes, labels in zip(target_bboxes, target_labels)
     ]
     
-    self.ap.update(preds, target)
+    self.ap.update(preds, gts)
     ap = self.ap.compute()
     return ap

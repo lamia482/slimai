@@ -62,16 +62,13 @@
       ]
     },
     {
-      "name": "Python Debugger: Current File",
+      "name": "ALIGN",
       "type": "debugpy",
       "request": "launch",
-      "program": "${file}",
+      "cwd": "/hzztai/projects/tct/flu_app/jupyter",
+      "program": "wsi_align.py",
       "console": "integratedTerminal", 
-      "justMyCode": false, 
-      "env": {
-        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH", 
-        "CUDA_VISIBLE_DEVICES": "7"
-      }
+      "justMyCode": false
     }
   ]
 }

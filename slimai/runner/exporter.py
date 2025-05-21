@@ -57,7 +57,7 @@ class Exporter(torch.nn.Module):
     input_tensor = torch.randn(1, 3, 224, 224).to(self.device)
     
     help_utils.print_log("Running model inference", disable_log=self.disable_log)
-    with torch.no_grad():
+    with torch.inference_mode():
       pytorch_output = self(input_tensor)
     help_utils.print_log(f"Output shape: {pytorch_output.shape if isinstance(pytorch_output, torch.Tensor) else {k: v.shape for k,v in pytorch_output.items()}}", disable_log=self.disable_log)
 

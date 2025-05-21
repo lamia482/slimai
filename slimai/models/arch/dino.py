@@ -68,7 +68,7 @@ class DINO(ClassificationArch):
 
   def step_succeed_hooks(self, *, runner):
     # EMA update for the teacher
-    with torch.no_grad():
+    with torch.inference_mode():
       global_train_step = self.current_train_epoch * self.max_train_step + self.current_train_step
       m = self.momentum_teacher_schedule[global_train_step]  # momentum parameter
       for ps, pt in zip(PytorchNetworkUtils.get_module_params(self.model.student), 

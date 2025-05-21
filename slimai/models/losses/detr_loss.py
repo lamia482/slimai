@@ -47,14 +47,15 @@ class DETRLoss(torch.nn.Module):
               cls_logits: torch.Tensor, 
               bbox_logits: torch.Tensor, 
               cls_targets: torch.Tensor, 
-              bbox_targets: torch.Tensor) -> Dict[str, torch.Tensor]:    
-    indices = self.matcher(cls_logits, bbox_logits, cls_targets, bbox_targets)
+              bbox_targets: torch.Tensor) -> Dict[str, torch.Tensor]:
+    bbox_preds = bbox_logits.sigmoid()
+    indices = self.matcher(cls_logits, bbox_preds, cls_targets, bbox_targets)
     num_bboxes = self.dist.prepare_for_distributed(torch.as_tensor(sum(map(len, bbox_targets)), dtype=torch.float))
     num_bboxes = self.dist.env.sync(num_bboxes).clamp_min(min=1).item()
 
     loss = dict(
       **self.compute_cls_loss(cls_logits, cls_targets, indices, num_bboxes),
-      **self.compute_bbox_loss(bbox_logits, bbox_targets, indices, num_bboxes),
+      **self.compute_bbox_loss(bbox_preds, bbox_targets, indices, num_bboxes),
       **self.compute_cardinality_loss(cls_logits, cls_targets, indices, num_bboxes),
     )
     
@@ -65,20 +66,19 @@ class DETRLoss(torch.nn.Module):
     idx = self._get_pred_permutation_idx(indices)
     target_classes = torch.full(cls_logits.shape[:2], self.num_classes, dtype=torch.int64, device=cls_logits.device)
     target_classes[idx] = torch.cat([
-      t[i] for t, (_, i) in zip(cls_targets, indices)
+      t[j] for t, (_, j) in zip(cls_targets, indices)
     ], dim=0)
 
     cls_loss = F.cross_entropy(cls_logits.flatten(0, 1), 
-                               target_classes.flatten(0, 1), self.empty_weight
-    )
+                               target_classes.flatten(0, 1), self.empty_weight)
     return dict(cls_loss=cls_loss)
 
-  def compute_bbox_loss(self, bbox_logits: torch.Tensor, bbox_targets: torch.Tensor, 
+  def compute_bbox_loss(self, bbox_preds: torch.Tensor, bbox_targets: torch.Tensor, 
                        indices: List[Tuple[torch.Tensor, torch.Tensor]], num_bboxes: int):
-    idx = self._get_target_permutation_idx(indices)
-    pred_bboxes = bbox_logits[idx].sigmoid()
+    idx = self._get_pred_permutation_idx(indices)
+    pred_bboxes = bbox_preds[idx]
     target_bboxes = torch.cat([
-      t[i] for t, (_, i) in zip(bbox_targets, indices)
+      t[j] for t, (_, j) in zip(bbox_targets, indices)
     ], dim=0)
 
     bbox_loss = F.l1_loss(pred_bboxes, target_bboxes, reduction="none")
@@ -92,7 +92,7 @@ class DETRLoss(torch.nn.Module):
 
     return dict(bbox_loss=bbox_loss, giou_loss=giou_loss)
 
-  @torch.no_grad()
+  @torch.inference_mode()
   def compute_cardinality_loss(self, cls_logits: torch.Tensor, cls_targets: torch.Tensor, 
                                indices: List[Tuple[torch.Tensor, torch.Tensor]], num_bboxes: int):
     tgt_length = torch.as_tensor([len(v) for v in cls_targets], device=cls_logits.device)
@@ -132,16 +132,16 @@ class HungarianMatcher(torch.nn.Module):
     self.cost_giou = cost_giou
     return
   
-  @torch.no_grad()
+  @torch.inference_mode()
   def forward(self, 
               cls_logits: torch.Tensor, 
-              bbox_logits: torch.Tensor, 
+              bbox_preds: torch.Tensor, 
               cls_targets: torch.Tensor, 
               bbox_targets: torch.Tensor):
     batch_size, num_queries, num_classes = cls_logits.shape # [B, Q, C]
     
     output_prob = cls_logits.flatten(0, 1).softmax(dim=-1) # [B * Q, C]
-    output_bbox = bbox_logits.flatten(0, 1).sigmoid() # [B * Q, 4]
+    output_bbox = bbox_preds.flatten(0, 1) # [B * Q, 4]
 
     target_ids = torch.cat(cls_targets)
     target_bbox = torch.cat(bbox_targets)

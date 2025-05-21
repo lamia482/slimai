@@ -150,7 +150,7 @@ class BaseArch(object):
       batch_info = DataSample(**batch_info)
 
     if mode == "tensor":
-      output = self._forward_tensor(batch_data)
+      output = self._forward_tensor(batch_data, return_flow=False)
 
     elif mode == "loss":
       embedding_dict = self.gradient_checkpoint(
@@ -210,7 +210,7 @@ class BaseArch(object):
     # Postprocess method to be implemented in subclasses
     raise NotImplementedError("`postprocess` is not implemented and is necessary for `predict`")
 
-  @torch.no_grad()
+  @torch.inference_mode()
   def predict(self, 
               batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
               batch_info: DataSample) -> DataSample:

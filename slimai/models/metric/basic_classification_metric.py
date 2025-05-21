@@ -19,7 +19,7 @@ class BasicClassificationMetric(torch.nn.Module):
     self.acc = build_metric(acc)
     self.kappa = build_metric(kappa)
 
-  @torch.no_grad()
+  @torch.inference_mode()
   def forward(self, 
               output: Dict[str, torch.Tensor], 
               targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

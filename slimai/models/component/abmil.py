@@ -39,6 +39,7 @@ class ABMIL(torch.nn.Module):
     batch_embeddings = []
 
     for _x in x:
+      _x = _x.view(-1, self.input_dim) # convert [N*K] or [N, K] to [N, K]
       embeddings = _x.unsqueeze(0) # [1, N, K]
       A_V = self.attention_V(embeddings) # [1, N, H]
       if self.attention_U is not None:

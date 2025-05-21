@@ -11,15 +11,17 @@ class DetectionHead(torch.nn.Module):
                *, 
                input_dim, 
                num_classes, 
+               num_layers=3, 
+               dropout=0.1,
                ):
     super().__init__()
     self.input_dim = input_dim
     self.num_classes = num_classes + 1 # +1 for background
     self.cls_head = self.MLP(input_dim=input_dim, output_dim=self.num_classes, 
                              hidden_dim=input_dim, bottleneck_dim=input_dim, 
-                             n_layer=3, act="gelu", norm=None, dropout=0.1)
+                             n_layer=num_layers, act="relu", norm="layer_norm", dropout=dropout)
     self.bbox_head = self.MLP(input_dim=input_dim, output_dim=4, hidden_dim=input_dim, 
-                              bottleneck_dim=input_dim, n_layer=3, act="gelu", norm=None, dropout=0.1)
+                              bottleneck_dim=input_dim, n_layer=num_layers, act="relu", norm="layer_norm", dropout=dropout)
     return
   
   def forward(self, x):

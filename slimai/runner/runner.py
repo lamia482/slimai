@@ -225,7 +225,7 @@ class Runner(object):
 
     return
   
-  @torch.no_grad()
+  @torch.inference_mode()
   def infer(self, dataloader, result_file):
     """Infer on dataloader."""
     assert (
@@ -260,7 +260,7 @@ class Runner(object):
     self.dist.env.sync()
     return results
   
-  @torch.no_grad()
+  @torch.inference_mode()
   def evaluate(self, dataloader, result_file):
     """Evaluate on result_file, if not exists, infer first with dataloader."""
     if not Path(result_file).exists():

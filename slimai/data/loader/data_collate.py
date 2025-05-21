@@ -73,7 +73,7 @@ class DataCollate():
       torch.from_numpy(np.array([t["category_id"] for t in tgt], dtype="int64")).reshape(-1)
       for tgt in instance_list
     ]
-    bbox_targets = [ # scale to [0, 1]
+    bbox_targets = [
       torch.from_numpy(np.array([t["bbox"] for t in tgt], dtype="float32").reshape(-1, 4))
       for tgt in instance_list
     ]
