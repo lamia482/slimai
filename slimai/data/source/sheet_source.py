@@ -49,7 +49,7 @@ class SheetSource(object):
       raise ValueError(f"Unsupported file extension: {self.sheet_file.split('.')[-1]}")
 
     if self.sheet_name is None:
-      sheet_name = ["default"]
+      sheet_name = None
     elif isinstance(self.sheet_name, (tuple, list)):
       sheet_name = self.sheet_name
     elif isinstance(self.sheet_name, str):

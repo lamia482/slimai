@@ -46,10 +46,9 @@ class BasicDataset(torch.utils.data.Dataset):
       elif isinstance(dataset, dict):
         dataset_fn = build_source(dataset)
         dataset = dataset_fn()
-
-      if cache:
-        print_log(f"Build dataset done, save cache to: {cache_file}")
-        mmengine.dump((self.dataset_file, dataset), cache_file)
+    
+      print_log(f"Build dataset done, save cache to: {cache_file}")
+      mmengine.dump((self.dataset_file, dataset), cache_file)
       
     if std_func is not None:
       if isinstance(std_func, str):
