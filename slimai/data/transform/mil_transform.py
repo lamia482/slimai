@@ -35,8 +35,8 @@ class MILTransform(BaseTransform):
     self.use_patch_as_view = (self.random_crop_patch_size is not None)
     self.topk = topk
     assert (
-      isinstance(self.topk, int)
-    ), "topk must be an integer, but got {}".format(self.topk)
+      isinstance(self.topk, (int, float))
+    ), "topk must be an integer/float, but got {}".format(self.topk)
     self.shuffle = shuffle
     self.padding_value = padding_value
     return
@@ -80,7 +80,9 @@ class MILTransform(BaseTransform):
     if self.shuffle:
       np.random.shuffle(views)
 
-    topk = len(views) if self.topk <= 0 else self.topk
+    topk = len(views) if self.topk <= 0 else (
+      self.topk if isinstance(self.topk, int) else max(1, int(self.topk * len(views)))
+    )
     topk_views = views[:topk]
 
     # produce output images in (N, C, H, W)
