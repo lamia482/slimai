@@ -1,5 +1,7 @@
 import numpy as np
+import cv2
 import torch
+import itertools
 from slimai.helper.help_build import TRANSFORMS
 from .base_transform import BaseTransform
 
@@ -9,6 +11,7 @@ class MILTransform(BaseTransform):
   mil_keys = ["image", "label"]
 
   def __init__(self, *args, 
+               shrink=None, 
                tile_size, 
                tile_stride, 
                random_crop_patch_size=None, 
@@ -18,6 +21,10 @@ class MILTransform(BaseTransform):
                padding_value=255, 
                **kwargs):
     super().__init__(*args, **kwargs)
+    self.shrink = shrink
+    assert (
+      self.shrink in [None, "tissue"]
+    ), "shrink is expected to be one of [None, 'tissue'], but got: {}".format(self.shrink)
     self.tile_size = tile_size
     self.tile_stride = tile_stride
     self.random_crop_patch_size = random_crop_patch_size
@@ -53,14 +60,14 @@ class MILTransform(BaseTransform):
     }
 
     wsi_image = inp_data["image"]
-    wsi_height, wsi_width = wsi_image.shape[:2]
+    xy_list = self.process_shrink(wsi_image)
+
     tiles = []
-    for x in range(0, wsi_width, self.tile_stride):
-      for y in range(0, wsi_height, self.tile_stride):
-        tile = wsi_image[y:y+self.tile_size, x:x+self.tile_size]
-        if tile.shape[0] < self.tile_size or tile.shape[1] < self.tile_size:
-          tile = np.pad(tile, ((0, self.tile_size-tile.shape[0]), (0, self.tile_size-tile.shape[1]), (0, 0)), mode="constant", constant_values=self.padding_value)
-        tiles.append(tile)
+    for (x, y) in xy_list:
+      tile = wsi_image[y:y+self.tile_size, x:x+self.tile_size]
+      if tile.shape[0] < self.tile_size or tile.shape[1] < self.tile_size:
+        tile = np.pad(tile, ((0, self.tile_size-tile.shape[0]), (0, self.tile_size-tile.shape[1]), (0, 0)), mode="constant", constant_values=self.padding_value)
+      tiles.append(tile)
         
     views = tiles
     if self.use_patch_as_view:
@@ -90,6 +97,18 @@ class MILTransform(BaseTransform):
     stack_tensor = torch.stack(out_images, dim=0)
     data.update(dict(image=stack_tensor))
     return data
+
+  def process_shrink(self, image):
+    wsi_height, wsi_width = image.shape[:2]
+    if self.shrink == "tissue":
+      raise NotImplementedError("Tissue shrink is not implemented yet")
+    else:
+      xy_list = list(itertools.product(
+        range(0, wsi_width, self.tile_stride), 
+        range(0, wsi_height, self.tile_stride)
+      ))
+
+    return xy_list
   
   def compose(self, transforms):
     return self._compose(transforms=transforms, source=[TRANSFORMS])

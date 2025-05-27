@@ -11,6 +11,8 @@ def parse_args():
   parser = argparse.ArgumentParser(description="Use MMEngine to run the pipeline")
   parser.add_argument("--config", type=str, required=True, 
                       help="the yaml config file of the pipeline")
+  parser.add_argument("--tag", type=str, default=None, 
+                      help="the tag to identify the run")
   parser.add_argument("--work_dir", "--work-dir", type=str, default=None, 
                       help="the dir to save the logs and checkpoints")
   parser.add_argument("--action", choices=["train", "infer", "evaluate"], type=str, default="train", 
@@ -42,6 +44,7 @@ def parse_config(args):
   cfg = Config.fromfile(args.config)
   
   # work_dir is determined in this priority: CLI > segment in file
+  # update work_dir to "experiments/{stem}/{signature}-{tag}"
   if args.work_dir is not None:
     # update configs according to CLI args if args.work_dir is not None
     cfg.work_dir = args.work_dir
@@ -50,6 +53,9 @@ def parse_config(args):
     if signature is None:
       raise ValueError("work_dir is not specified by CLI or config file")
     cfg.work_dir = (Path("experiments") / Path(args.config).stem / signature).as_posix()
+  
+  if args.tag is not None:
+    cfg.work_dir = f"{cfg.work_dir}-{args.tag}"
   
   if args.amp is True:
     cfg.RUNNER.gradient.amp = True
