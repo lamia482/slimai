@@ -134,7 +134,7 @@ class Runner(object):
 
     train_forward_func = partial(self.arch, mode="loss")
 
-    with torch.autocast(device_type=self.arch.device.type, 
+    with torch.autocast(device_type=self.dist.env.device_type, 
                         enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
       loss_dict = train_forward_func(batch_data, batch_info)
 
@@ -142,7 +142,7 @@ class Runner(object):
       for loss_name, loss_value in loss_dict.items():
         if "loss" in loss_name:
           if total_loss is None:
-            total_loss = torch.tensor(0.0, device=self.arch.device)
+            total_loss = torch.tensor(0.0, device=self.dist.env.device)
           total_loss += loss_value
       assert (
         total_loss is not None
@@ -180,7 +180,7 @@ class Runner(object):
       for self.step, batch_info in enumerate(self.train_dataloader):
         msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
         batch_info = self.dist.prepare_for_distributed(batch_info)
-        batch_info = DataSample(**batch_info).to(self.arch.device)
+        batch_info = DataSample(**batch_info).to(self.dist.env.device)
         batch_data = batch_info.pop("image")
 
         # before forward step
@@ -240,9 +240,9 @@ class Runner(object):
     results = []
     for step, batch_info in enumerate(dataloader):
       batch_info = self.dist.prepare_for_distributed(batch_info)
-      batch_info = DataSample(**batch_info).to(self.arch.device)
+      batch_info = DataSample(**batch_info).to(self.dist.env.device)
       batch_data = batch_info.pop("image")
-      with torch.autocast(device_type=self.arch.device.type, 
+      with torch.autocast(device_type=self.dist.env.device.type, 
                           enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
         batch_info = infer_forward_func(batch_data, batch_info).cpu()
       results.extend(batch_info.split_as_list())
@@ -273,7 +273,7 @@ class Runner(object):
     if self.dist.env.is_main_process():
       batch_info = results["batch_info"]
       # for better performance, move to arch device first
-      merge_result = DataSample.merge_from_list(batch_info).to(self.arch.device)
+      merge_result = DataSample.merge_from_list(batch_info).to(self.dist.env.device)
       output = merge_result.output
       targets = {key: getattr(merge_result, key) for key in dataloader.dataset.ann_keys}
       metrics = self.metric(output, targets)

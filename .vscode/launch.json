@@ -19,10 +19,10 @@
       "args": [
         "--config=/hzztai/slimai/_debug_/debug.py",
         "--work-dir=/hzztai/experiments/debug",
-        "--action=train", 
+        "--action=train",
       ],
       "justMyCode": false
-    }, 
+    },
     {
       "name": "TORCHRUN",
       "type": "debugpy",
@@ -30,17 +30,18 @@
       "cwd": "/hzztai",
       "env": {
         "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
-        "CUDA_VISIBLE_DEVICES": "5,6",
+        "CUDA_VISIBLE_DEVICES": "7,6,5,4",
         "PYDEVD_WARN_SLOW_RESOLVE": "0",
       },
       "module": "torch.distributed.launch",
       "console": "integratedTerminal",
       "args": [
-        "--nproc_per_node=2", "--standalone",
-        "/hzztai/slimai/tools/run.py", 
+        "--nproc_per_node=4",
+        "--standalone",
+        "/hzztai/slimai/tools/run.py",
         "--config=/hzztai/slimai/_debug_/debug.py",
         "--work-dir=/hzztai/experiments/debug",
-        "--action=train"
+        "--action=train", "--ddp=fsdp"
       ],
       "justMyCode": false
     },
@@ -49,12 +50,12 @@
       "type": "debugpy",
       "request": "launch",
       "program": "/hzztai/slimai/tools/export.py",
-      "console": "integratedTerminal", 
-      "justMyCode": false, 
+      "console": "integratedTerminal",
+      "justMyCode": false,
       "env": {
-        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH", 
+        "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
         "CUDA_VISIBLE_DEVICES": "7"
-      }, 
+      },
       "args": [
         "--ckpt_path=/hzztai/experiments/debug/20250219-55229a14/ckpts/best.pth",
         "--output_dir=/hzztai/experiments/debug/20250219-55229a14/exps",
@@ -67,6 +68,15 @@
       "request": "launch",
       "cwd": "/hzztai/projects/tct/flu_app/jupyter",
       "program": "wsi_align.py",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }, 
+    {
+      "name": "Python Debugger: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${file}",
       "console": "integratedTerminal", 
       "justMyCode": false
     }

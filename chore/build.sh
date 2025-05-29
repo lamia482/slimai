@@ -4,9 +4,7 @@ set -e
 
 # # #
 
-cd "$(dirname $0)"
-
-CHORE_PATH="$(cd "$(dirname "$0")" && pwd)"
+CHORE_PATH="$(realpath $(dirname $0))"
 REAL_DOCKER_FILE="${CHORE_PATH}/Dockerfile"
 
 tag="20$(date "+%2y%2m%2d")"

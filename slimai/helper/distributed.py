@@ -6,11 +6,11 @@ from torch.distributed.fsdp import (
   FullyShardedDataParallel as FSDP, 
   MixedPrecision, ShardingStrategy, StateDictType, FullStateDictConfig
 )
-from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
+from torch.distributed.fsdp.wrap import ModuleWrapPolicy, size_based_auto_wrap_policy, transformer_auto_wrap_policy
 from .utils import dist_env, PytorchNetworkUtils
 
 
-__all__ = ["Distributed"]
+__all__ = ["Distributed", "FSDPLayerWapper"]
 
 
 class Distributed(object):
@@ -45,11 +45,12 @@ class Distributed(object):
     ), "parallel_mode must be 'auto' or 'ddp' or 'fsdp', but got {}".format(parallel_mode)
     if parallel_mode == "auto":
       parallel_mode = "fsdp"
+
     if self.env.global_world_size == 1:
       parallel_mode = "ddp"
-
     # TODO: currently, fsdp is not supported, use ddp instead
     parallel_mode = "ddp"
+    
     self.parallel_mode = parallel_mode
 
     assert (
@@ -156,37 +157,45 @@ class Distributed(object):
     if not self.env.is_dist_initialized():
       return module
     
+    module_size = PytorchNetworkUtils.get_params_size(
+      module, grad_mode="trainable", magnitude="digit")
+    
+    if module_size == 0:
+      return module
+    
     if self.parallel_mode == "ddp":
-      return module if not PytorchNetworkUtils.get_params_size(
-        module, grad_mode="trainable", magnitude="digit") else DDP(
+      # go with DDP
+      return DDP(
         module, static_graph=True
       )
     elif self.parallel_mode == "fsdp":
+      # go with FSDP
+
       # Configure FSDP with mixed precision for better performance
-      my_auto_wrap_policy = functools.partial(
-        size_based_auto_wrap_policy, min_num_params=20000
-      )
-      import torchvision.models as models
-      my_auto_wrap_policy = functools.partial(
-        transformer_auto_wrap_policy, transformer_layer_cls={
-          models.VisionTransformer, 
-          torch.nn.Sequential, 
-          models.__class__
-        }
-      )
       mixed_precision_policy = MixedPrecision(
         param_dtype=self.mix_dtype,
         reduce_dtype=self.mix_dtype,
         buffer_dtype=self.mix_dtype,
       )
-      
-      return FSDP(
-        module,
-        device_id=self.env.device_module.current_device(),
-        auto_wrap_policy=my_auto_wrap_policy,
-        mixed_precision=mixed_precision_policy,
-        sharding_strategy=ShardingStrategy.SHARD_GRAD_OP,
+
+      wrapped_module = FSDPLayerWapper(module=module)
+      wrapped_policy = ModuleWrapPolicy(
+        module_classes=[FSDPLayerWapper]
       )
+      
+      module = torch.compile(module)
+      module = FSDP(
+        wrapped_module,
+        device_id=self.env.device_module.current_device(),
+        sharding_strategy=ShardingStrategy.FULL_SHARD,
+        mixed_precision=mixed_precision_policy,
+        auto_wrap_policy=wrapped_policy,
+        sync_module_states=True,
+        use_orig_params=True,
+      )
+      return module
+    
+    # go with original module when parallel mode is not recognized
     return module
 
   def get_summon_module(self, module):
@@ -195,10 +204,9 @@ class Distributed(object):
     """
     def _to_uncurated_module(module):
       if self.parallel_mode == "ddp":
-        return getattr(module, "module", module)
+        return getattr(module, "module")
       elif self.parallel_mode == "fsdp":
-        with module.summon_full_params():
-          return module.module
+        return getattr(module, "module")
       else:
         return module
 
@@ -215,9 +223,34 @@ class Distributed(object):
   def copy_cpu_offload_state_dict(self, module):
     state_dict = module.state_dict()
 
-    if isinstance(module, torch.nn.Module):  
-      for key, value in state_dict.items():
-        state_dict[key] = value.cpu()
+    if isinstance(module, torch.optim.Optimizer):
+      kv_pairs = state_dict["state"]
+    elif isinstance(module, torch.nn.Module):
+      kv_pairs = state_dict
+    else:
+      kv_pairs = {}
+      
+    for key, value in kv_pairs.items():
+      kv_pairs[key] = value.cpu()
 
     return state_dict
-    
+
+
+##### FSDP Layer Wapper #####
+class FSDPLayerWapper(torch.nn.Module):
+  def __init__(self, *, module=None):
+    assert (
+      module is not None
+    ), "module must be provided"
+    super().__init__()
+    self.module = module
+    return
+
+  def forward(self, *args, **kwargs):
+    return self.module(*args, **kwargs)
+
+  def __repr__(self):
+    return f"{self.__class__.__name__}(module={self.module})"
+
+  def __str__(self):
+    return self.__repr__()

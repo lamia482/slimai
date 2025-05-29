@@ -81,10 +81,6 @@ class BaseArch(object):
     )
     return help_build.build_loss(loss)
   
-  @property
-  def device(self):
-    return next(self.model.parameters()).device
-  
   @abstractmethod
   def load_state_dict(self, state_dict, strict=True):
     print_log(

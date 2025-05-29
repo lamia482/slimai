@@ -43,7 +43,10 @@ RUN pip install dill pika paramiko parse openpyxl loguru pandas &&\
     pip install albumentations --no-binary qudida,albumentations mmcv mmengine
 
 # Install PyTorch ecosystem
-RUN pip install torch torchvision torchaudio xformers
+RUN pip install torch torchvision torchaudio xformers 
+
+# Install Ascent NPU
+RUN pip install torch-npu
 
 # Install model optimization and deployment tools
 RUN pip install tensorrt onnx onnxscript onnxruntime-gpu onnxsim &&\
