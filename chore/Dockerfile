@@ -43,10 +43,7 @@ RUN pip install dill pika paramiko parse openpyxl loguru pandas &&\
     pip install albumentations --no-binary qudida,albumentations mmcv mmengine
 
 # Install PyTorch ecosystem
-RUN pip install torch torchvision torchaudio xformers 
-
-# Install Ascent NPU
-RUN pip install torch-npu
+RUN pip install --upgrade torch torchvision torchaudio xformers
 
 # Install model optimization and deployment tools
 RUN pip install tensorrt onnx onnxscript onnxruntime-gpu onnxsim &&\
@@ -59,7 +56,7 @@ RUN pip install huggingface_hub \
                 deepspeed
 
 # Install visualization and metrics tools
-RUN pip install torchcam umap-learn[plot] torchmetrics
+RUN pip install torchcam umap-learn[plot] torchmetrics swanlab
 
 # Prevent albumentations from auto-updating
 ENV NO_ALBUMENTATIONS_UPDATE=true
