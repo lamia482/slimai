@@ -4,9 +4,9 @@ import mmcv
 import mmengine
 import torch
 from pathlib import Path
-from slimai.helper.help_utils import print_log, _CACHE_ROOT_DIR_
+from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import DATASETS, build_transform, build_loader, build_source
-
+from slimai.helper.common import CACHE_ROOT_DIR
 
 __all__ = ["BasicDataset"]
 
@@ -30,7 +30,7 @@ class BasicDataset(torch.utils.data.Dataset):
                **kwargs):
     self.dataset_file = "Not file"
 
-    cache_file = Path(_CACHE_ROOT_DIR_, "dataset", self.__class__.__name__, "{}.pkl".format(
+    cache_file = Path(CACHE_ROOT_DIR, "dataset", self.__class__.__name__, "{}.pkl".format(
       hashlib.md5("+".join(map(str, [dataset, desc])).encode(encoding="UTF-8")
     ).hexdigest()))
 

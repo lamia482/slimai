@@ -14,18 +14,26 @@ __all__ = [
   "data", "helper", "models", "runner"
 ]
 
-__version__ = "0.0.1"
-
 def get_version():
-  return __version__
+  from .helper.common import VERSION
+  return VERSION
+
+__version__ = get_version()
 
 def check_env():
+  import importlib
   from .helper.help_utils import print_log
+  from .helper.common import REQUIREMENTS
 
-  import torch
-  assert (
-    torch.__version__ >= "2.0.0"
-  ), "PyTorch version >= 2.0.0 is required, but got {}".format(torch.__version__)
-  print_log("Pytorch Passed, version: {}".format(torch.__version__))
-  print_log("Check environment success.")
+  print_log(">>> Checking environment for slimai(VERSION={})...".format(__version__))
+
+  for package_name, (min_version, max_version) in REQUIREMENTS.items():
+    package = importlib.import_module(package_name)
+    package_version = getattr(package, "__version__", None)
+    assert (
+      str(min_version) <= str(package_version) <= str(max_version)
+    ), "{} <= version <= {} is required, but got {}".format(package_name, min_version, max_version, package_version)
+    print_log("+++ {} version: {} passed the environment check".format(package_name, package_version))
+
+  print_log(">>> All packages depended by slimai passed the environment check.")
   return

@@ -10,9 +10,6 @@ logger.add(sys.stderr, format=logger_format)
 from . import utils
 from .utils import dist_env
 
-
-_CACHE_ROOT_DIR_ = "/.slimai/cache"
-
 def update_logger(log_file: Path, log_level: str = "INFO"):
   if not dist_env.is_main_process():
     return

@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 from sdk.reader import get_reader_by_file
 from slimai.helper.help_build import LOADERS
-from slimai.helper.help_utils import _CACHE_ROOT_DIR_
+from slimai.helper.common import CACHE_ROOT_DIR
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -33,7 +33,7 @@ class StackTileLoader():
     return
   
   def __call__(self, file):
-    cache_file = Path(_CACHE_ROOT_DIR_, "loader", self.__class__.__name__, "{}-{}.pkl".format(
+    cache_file = Path(CACHE_ROOT_DIR, "loader", self.__class__.__name__, "{}-{}.pkl".format(
       hashlib.md5("+".join(map(str, [self.magnification, self.tile_size, self.tile_stride, self.region, self.padding_value])
       ).encode(encoding="UTF-8")).hexdigest(), 
       hashlib.md5(file.encode(encoding="UTF-8")).hexdigest()
