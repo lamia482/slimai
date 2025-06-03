@@ -74,7 +74,7 @@ class FlexViT(models.VisionTransformer):
     n_w = w // p
 
     # (n, c, h, w) -> (n, hidden_dim, n_h, n_w)
-    x = self.conv_proj(x)
+    x = self.conv_proj(x) # TODO: this will be empty or flattened in FSDP mode
     # (n, hidden_dim, n_h, n_w) -> (n, hidden_dim, (n_h * n_w))
     x = x.reshape(n, self.hidden_dim, n_h * n_w)
 
