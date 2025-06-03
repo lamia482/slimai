@@ -55,6 +55,9 @@ class BaseArch(object):
       self.gradient_checkpoint = lambda func, *args, **kwargs: func(*args, **kwargs)
     return
 
+  def extract(self):
+    return self.model, self.solver, self.scheduler, self.loss
+
   @abstractmethod
   def init_layers(self, encoder, decoder) -> torch.nn.Module:
     print_log(

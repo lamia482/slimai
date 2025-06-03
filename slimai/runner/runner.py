@@ -97,10 +97,7 @@ class Runner(object):
     arch.compile(cfg.RUNNER.get("compile", False))
     arch.checkpointing(cfg.RUNNER.get("checkpointing", True))
     
-    model = arch.model
-    solver = arch.solver
-    scheduler = arch.scheduler
-    loss = arch.loss
+    model, solver, scheduler, loss = arch.extract()
 
     # Log model parameter size
     help_utils.print_log(f"Model({arch.__class__.__name__}) built successfully, "

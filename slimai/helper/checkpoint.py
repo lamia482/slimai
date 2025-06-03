@@ -194,9 +194,7 @@ class Checkpoint(object):
           raise ValueError("model must be provided when solver or scheduler is not provided")
         from .help_build import build_model
         arch = build_model(ckpt["cfg"]) # build pure model in no ddp mode
-        model = arch.model
-        solver = arch.solver
-        scheduler = arch.scheduler
+        model, solver, scheduler, _ = arch.extract()
         
       # model is expected to be in non distributed style and load weights
       model.load_state_dict(ckpt["weight"], strict=(resume or strict))
