@@ -3,7 +3,8 @@ import numpy as np
 from mmengine.structures import BaseDataElement
 
 
-class DataSample(BaseDataElement):
+class DataSample(BaseDataElement):  
+
   def to(self, *args, **kwargs):
     def _to_(value):
       if isinstance(value, list):

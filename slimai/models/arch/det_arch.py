@@ -12,11 +12,11 @@ class DetectionArch(BaseArch):
               embedding_dict: Dict[str, torch.Tensor], 
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
     cls_logits, bbox_logits = embedding_dict["head"]
-    targets = batch_info.instance
+    targets = batch_info.instance # type: ignore
     cls_targets, bbox_targets = targets["labels"], targets["bboxes"]
 
     # concat Nx2 to Nx4, replicate (width, height) to (width, height, width, height)
-    whwh = torch.cat([torch.stack([batch_info.width, batch_info.height], dim=1)] * 2, dim=-1)
+    whwh = torch.cat([torch.stack([batch_info.width, batch_info.height], dim=1)] * 2, dim=-1) # type: ignore
     bbox_targets = [
       bboxes / whwh[i]
       for i, bboxes in enumerate(bbox_targets)
@@ -42,7 +42,7 @@ class DetectionArch(BaseArch):
     pred_labels = [l[~m] for l, m in zip(pred_labels, bg_mask)]
     pred_bboxes = [ 
       box_ops.box_cxcywh_to_xyxy(b[~m].sigmoid()).clamp(min=0, max=1) * torch.stack([w, h, w, h])
-      for (b, m, w, h) in zip(bbox_logits, bg_mask, batch_info.width, batch_info.height)
+      for (b, m, w, h) in zip(bbox_logits, bg_mask, batch_info.width, batch_info.height) # type: ignore
     ]
     
     batch_info.output = dict(

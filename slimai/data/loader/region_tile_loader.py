@@ -15,10 +15,10 @@ class RegionTileLoader():
   def __init__(self, *, 
                magnification: int, 
                region: Dict, 
-               shrink: str=None,
+               shrink: str="",
                cache: bool=True, 
                cache_mode: str="raw", 
-               num_threads: int=None, 
+               num_threads: int=0, 
                padding_value: int=255,
                ):
     self.magnification = magnification
@@ -77,12 +77,12 @@ class RegionTileLoader():
     if self.num_threads:
       tile = self.read_roi_async(reader, xmin, ymin, xmax, ymax, self.num_threads)
     else:
-      tile = reader.ReadRoi(xmin, ymin, xmax-xmin, ymax-ymin, scale=reader.getReadScale())
+      tile = reader.ReadRoi(xmin, ymin, xmax-xmin, ymax-ymin, scale=reader.getReadScale()) # type: ignore
 
     if self.cache:
       data = tile
       if self.compressed:
-        data = cv2.imencode(".jpg", data)[1].tobytes()
+        data = cv2.imencode(".jpg", data)[1].tobytes() # type: ignore
       mmengine.dump(data, cache_file)
     
     return tile

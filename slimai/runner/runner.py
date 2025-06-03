@@ -3,6 +3,7 @@ import torch
 import matplotlib
 from pathlib import Path
 from functools import partial
+from typing import Dict, Any
 import mmengine
 import slimai
 from slimai.helper import (
@@ -95,9 +96,9 @@ class Runner(object):
 
     arch = help_build.build_model(cfg.MODEL)
     arch.compile(cfg.RUNNER.get("compile", False))
-    arch.checkpointing(cfg.RUNNER.get("checkpointing", True))
+    arch.checkpointing(cfg.RUNNER.get("checkpointing", True)) # type: ignore
     
-    model, solver, scheduler, loss = arch.extract()
+    model, solver, scheduler, loss = arch.extract() # type: ignore
 
     # Log model parameter size
     help_utils.print_log(f"Model({arch.__class__.__name__}) built successfully, "
@@ -258,27 +259,27 @@ class Runner(object):
     return results
   
   @torch.inference_mode()
-  def evaluate(self, dataloader, result_file):
+  def evaluate(self, dataloader, result_file) -> Dict[str, Any]:
     """Evaluate on result_file, if not exists, infer first with dataloader."""
     if not Path(result_file).exists():
       results = self.infer(dataloader, result_file)
     else:
       results = mmengine.load(result_file)
 
-    metrics = None
+    metrics = {}
 
     if self.dist.env.is_main_process():
       batch_info = results["batch_info"]
       # for better performance, move to arch device first
       merge_result = DataSample.merge_from_list(batch_info).to(self.dist.env.device)
-      output = merge_result.output
+      output = merge_result.output # type: ignore
       targets = {key: getattr(merge_result, key) for key in dataloader.dataset.ann_keys}
       metrics = self.metric(output, targets)
 
       # split figure and metric
       msg_list = []
       for key, fig in metrics.items():
-        if isinstance(fig, matplotlib.figure.Figure):
+        if isinstance(fig, matplotlib.figure.Figure): # type: ignore
           fig.savefig(str(result_file).replace(".pkl", f"_{key}.png"))
         else:
           msg_list.append(f"{key}: {fig:.6f}")

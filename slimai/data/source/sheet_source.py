@@ -1,8 +1,5 @@
 import pandas as pd
-from pathlib import Path
 from typing import Dict, List
-
-from pyparsing import col
 from slimai.helper.help_build import SOURCES
 
 
@@ -55,7 +52,7 @@ class SheetSource(object):
     elif isinstance(self.sheet_name, str):
       sheet_name = [self.sheet_name]
     
-    df_dict = read_fn(self.sheet_file, sheet_name=sheet_name)
+    df_dict = read_fn(self.sheet_file, sheet_name=sheet_name) # type: ignore
     df_list = []
     col_mapping = self.col_mapping.copy()
     if "_SHEET_NAME_" not in col_mapping:
@@ -73,4 +70,4 @@ class SheetSource(object):
     if self.applies is not None:
       for key, func in self.applies:
         df[key] = df[key].apply(eval(func))
-    return df.to_dict(orient="list")
+    return df.to_dict(orient="list") # type: ignore

@@ -5,7 +5,10 @@ from pathlib import Path
 from functools import partial
 from mmengine.model.utils import revert_sync_batchnorm
 from slimai.helper import help_build, help_utils
+from slimai.helper.utils import PytorchNetworkUtils
+from slimai.helper.distributed import Distributed
 from slimai.models.component.pipeline import Pipeline
+from slimai.models.arch.base_arch import BaseArch
 
 
 class Exporter(torch.nn.Module):
@@ -24,18 +27,20 @@ class Exporter(torch.nn.Module):
       {"model", "weight"}.issubset(set(ckpt.keys()))
     ), "Invalid checkpoint keys, expect 'model' and 'weight', but got {}".format(ckpt.keys())
 
+    dist = Distributed.create()
+
     # turn to non-ddp mode
     help_utils.print_log("Building model architecture", disable_log=self.disable_log)
-    arch = help_build.build_model(ckpt["model"])
+    arch: BaseArch = help_build.build_model(ckpt["model"]) # type: ignore
     #TODO: fit fsdp
-    arch.model = help_utils.PytorchNetworkUtils.get_module(arch.model)
+    arch.model = dist.get_summon_module(arch.model)
     arch.load_state_dict(ckpt["weight"], strict=True)
-    model = help_utils.PytorchNetworkUtils.get_module(arch.export_model())
+    model = dist.get_summon_module(arch.export_model())
     model = revert_sync_batchnorm(model)
 
     self.model = model.eval()
     help_utils.print_log("Model initialized successfully", disable_log=self.disable_log)
-    help_utils.print_log(f"Model parameters: {help_utils.PytorchNetworkUtils.get_params_size(self.model)}", disable_log=self.disable_log)
+    help_utils.print_log(f"Model parameters: {PytorchNetworkUtils.get_params_size(self.model)}", disable_log=self.disable_log)
     return
 
   @property
@@ -93,7 +98,7 @@ class Exporter(torch.nn.Module):
         "output": {0: "batch_size"}, 
       }
     )
-    torch.onnx.export(self, input_tensor, onnx_file, **export_options)
+    torch.onnx.export(self, input_tensor, onnx_file, **export_options) # type: ignore
     onnx_model = onnx.load(onnx_file)
     onnx.checker.check_model(onnx_model, full_check=True)
     onnx_model, check = simplify(onnx_model)

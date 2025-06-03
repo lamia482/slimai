@@ -15,7 +15,7 @@ class RABMIL(torch.nn.Module):
   untill the final one embedding vector.
   """
 
-  MLP = MODELS.get("MLP")
+  MLP: torch.nn.Module = MODELS.get("MLP") # type: ignore
 
   def __init__(self, *, input_dim, num_heads, num_layers, dropout=0.1, topk_percent=0.5, 
                act="gelu", norm="batch_norm", kernel=None, **kwargs):
@@ -107,7 +107,7 @@ class QMIL(torch.nn.Module):
   separately, then merges them into a single feature vector
   """
 
-  MLP = MODELS.get("MLP")
+  MLP: torch.nn.Module = MODELS.get("MLP") # type: ignore
 
   def __init__(self, *, input_dim, num_heads, num_layers, dropout=0.1, 
                act="gelu", norm="batch_norm", **kwargs):

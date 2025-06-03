@@ -47,7 +47,7 @@ class Plugin(torch.nn.Module):
       module = importlib.import_module(module_name)
     
     if method_name is None:
-      layer = module(**kwargs)
+      layer = module(**kwargs) # type: ignore
     else:
       assert (
         len(method_name) == 1

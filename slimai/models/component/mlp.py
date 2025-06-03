@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 from slimai.helper.help_build import MODELS
 
@@ -21,9 +22,9 @@ class MLP(torch.nn.Module):
 
     kwargs = dict(act=act, norm=norm, dropout=dropout)
     self.mlp = torch.nn.Sequential(
-      self.create_layer(input_dim, (bottleneck_dim if n_layer == 1 else hidden_dim), **kwargs),
-      *[self.create_layer(hidden_dim, hidden_dim, **kwargs) for _ in range(0, n_layer-2)],
-      *[self.create_layer(hidden_dim, bottleneck_dim, **kwargs) for _ in range(max(0, n_layer-2), n_layer-1)],
+      self.create_layer(input_dim, (bottleneck_dim if n_layer == 1 else hidden_dim), **kwargs), # type: ignore
+      *[self.create_layer(hidden_dim, hidden_dim, **kwargs) for _ in range(0, n_layer-2)], # type: ignore
+      *[self.create_layer(hidden_dim, bottleneck_dim, **kwargs) for _ in range(max(0, n_layer-2), n_layer-1)], # type: ignore
     )
     self.last_layer = self.create_layer(bottleneck_dim, output_dim, act=None, norm=None, dropout=dropout)
     return
@@ -34,7 +35,9 @@ class MLP(torch.nn.Module):
     x = self.last_layer(x)
     return x
   
-  def create_layer(self, in_features, out_features, act="relu", norm=None, dropout=0.0):
+  def create_layer(self, in_features, out_features, 
+                   act: Optional[str] = "relu", norm: Optional[str] = None, 
+                   dropout: float = 0.0) -> torch.nn.Sequential:
     act_dict = {
       None: torch.nn.Identity(),
       "relu": torch.nn.ReLU(),

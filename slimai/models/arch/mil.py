@@ -1,9 +1,7 @@
 import torch
-from typing import Union, Dict
-from functools import partial
+from typing import Union, Dict, List
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import MODELS, build_model
-from slimai.helper.structure import DataSample
 from slimai.helper.utils import PytorchNetworkUtils
 from .cls_arch import ClassificationArch
 
@@ -70,7 +68,7 @@ class MIL(ClassificationArch):
   
   def _forward_tensor(self, 
                 batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
-                return_flow: bool = False) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+                return_flow: bool = False) -> Union[torch.Tensor, Dict[str, Union[torch.Tensor, List[torch.Tensor]]]]:
     """Forward pass for tensor input.
     
     Processes a batch of bags through the model. Each bag contains multiple instances.
@@ -98,14 +96,14 @@ class MIL(ClassificationArch):
         group_size = len(images)
       output = []
       for i in range(0, len(images), group_size):
-        embedding = self.model.backbone(images[i:i+group_size])
+        embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
         output.append(embedding)
       return torch.cat(output, dim=0)
 
     # batch_data in shape (B, ~N, C, H, W)
     backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
-    neck = self.model.neck(backbone) # (B, D)
-    head = self.model.head(neck) # (B, C)
+    neck = self.model.neck(backbone) # type: ignore # (B, D)
+    head = self.model.head(neck) # type: ignore # (B, C)
 
     if return_flow:
       return dict(

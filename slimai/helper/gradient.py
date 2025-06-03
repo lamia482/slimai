@@ -50,7 +50,7 @@ class Gradient(object):
       from torch.distributed.fsdp import sharded_grad_scaler
       GradScaler = sharded_grad_scaler.ShardedGradScaler
     else:
-      GradScaler = torch.amp.GradScaler
+      GradScaler = torch.amp.GradScaler # type: ignore
     
     self.scaler = GradScaler(self.dist.env.device_type, enabled=self.amp)
     

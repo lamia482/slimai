@@ -33,13 +33,13 @@ class DINOMetric(torch.nn.Module):
               output: Dict[str, torch.Tensor], 
               targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     embeddings = output["embedding"]
-    targets = targets["label"]
+    labels = targets["label"]
 
-    fig = self.umap(embeddings.cpu(), targets.cpu()) # cpu for umap
-    self.classifier.fit(embeddings, targets)
+    fig = self.umap(embeddings.cpu(), labels.cpu()) # cpu for umap
+    self.classifier.fit(embeddings, labels)
     preds = self.classifier.predict(embeddings)
-    acc = self.acc(preds, targets)
-    kappa = self.kappa(preds, targets)
+    acc = self.acc(preds, labels)
+    kappa = self.kappa(preds, labels)
     return dict(
       umap=fig, 
       acc=acc, 

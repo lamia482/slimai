@@ -25,7 +25,7 @@ class DistEnv(object):
   
   def __init__(self) -> None:
     self.device_type = "cpu"
-    self.timeout = 60
+    self.timeout = datetime.timedelta(seconds=60)
     device_type_candidates = ["cpu", "cuda", "mps", "mkldnn", "xla", "npu"]
     self.supported_devices = []
     for device_type in device_type_candidates:
@@ -127,8 +127,8 @@ class DistEnv(object):
     if data is not None:
       data = _sync_all_types(data)
 
-    work = dist.barrier(async_op=True)
-    work.wait(timeout=self.timeout)
+    if work := dist.barrier(async_op=True):
+      work.wait(timeout=self.timeout)
     return data
 
   def collect(self, data):
@@ -144,7 +144,7 @@ class DistEnv(object):
 
     output = [None for _ in range(self.global_world_size)]
     dist.all_gather_object(output, data) # auto barrier across all processes
-    output = list(itertools.chain(*output))
+    output = list(itertools.chain(*output)) # type: ignore
     return output
 
   def close_dist(self):

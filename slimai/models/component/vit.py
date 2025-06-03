@@ -29,7 +29,7 @@ class ViT(torch.nn.Module):
     ))
 
     self.embed_dim = vit_param["embed_dim"]
-    self.vit = FlexViT.build_vit(**vit_param)
+    self.vit = FlexViT.build_vit(**vit_param) # type: ignore
     self.cls_pooling = cls_pooling
 
     assert (

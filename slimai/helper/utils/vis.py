@@ -15,7 +15,7 @@ def put_gt_on_image(image, gt_instance, names, color=(255, 0, 0)):
   else:
     boxes, labels = gt_instance.bboxes, gt_instance.labels
 
-  if isinstance(boxes, torch.Tensor):
+  if isinstance(boxes, torch.Tensor) and isinstance(labels, torch.Tensor):
     boxes, labels = boxes.detach().cpu().numpy(), labels.detach().cpu().numpy()
 
   boxes, labels = np.array(boxes), np.array(labels)

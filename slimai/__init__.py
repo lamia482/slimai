@@ -18,7 +18,12 @@ def get_version():
   from .helper.common import VERSION
   return VERSION
 
+def get_path():
+  import os
+  return os.path.dirname(os.path.abspath(__file__))
+
 __version__ = get_version()
+__path__ = get_path()
 
 def check_env():
   import importlib

@@ -1,4 +1,4 @@
-import functools
+from typing import Any
 import threading
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -95,7 +95,7 @@ class Distributed(object):
   def env(self):
     return dist_env
   
-  def prepare_for_distributed(self, *args):
+  def prepare_for_distributed(self, *args) -> Any:
     """
     Prepare multiple components for distributed training support.
     

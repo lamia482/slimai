@@ -6,7 +6,7 @@ and finally mmengine components.
 """
 import mmcv
 import torch
-from typing import Callable, List
+from typing import Callable, List, Any
 from torch.utils.data.distributed import DistributedSampler
 from mmengine.dataset import Compose as ComposeTransform
 from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, OPTIMIZERS
@@ -19,14 +19,14 @@ from slimai.helper.help_utils import print_log, dist_env
 def compose_components(components, 
                        *, 
                        source, 
-                       recursive_key=None):
+                       recursive_key=None) -> Any:
   """Compose components from configuration."""
   if not isinstance(source, (tuple, list)):
     source = [source]
   # convert source to callable
   source = list(map(lambda s: s if callable(s) else (
     lambda name: (getattr(s, name, None) or s.get(name))), 
-    [IMPORT] + source))
+    [IMPORT] + source)) # type: ignore
     
   def _recursive_compose(component):
     if isinstance(component, (tuple, list)):
@@ -104,7 +104,7 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
   cfg = cfg.copy()
   dataset = build_dataset(cfg.pop("dataset", None))
   if dataset is None:
-    return None
+    return None # type: ignore
   if dist_env.is_dist_initialized():
     assert (
       "sampler" not in cfg
@@ -126,7 +126,7 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
   loader = torch.utils.data.DataLoader(dataset, **cfg)
   
   if getattr(loader.sampler, "set_epoch", None) is None:
-    loader.sampler.set_epoch = lambda epoch: None
+    setattr(loader.sampler, "set_epoch", lambda epoch: None)
 
   return loader
 

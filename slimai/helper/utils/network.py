@@ -1,4 +1,5 @@
 import torch
+from typing import Union, Callable
 
 
 class PytorchNetworkUtils(object):
@@ -8,8 +9,8 @@ class PytorchNetworkUtils(object):
   def desc(cls, module):
     all_param_size = cls.get_params_size(module, grad_mode="all")
     trainable_param_size = cls.get_params_size(module, grad_mode="trainable")
-    all_param_num = cls.get_params_size(module, grad_mode="all", magnitude="digit")
-    trainable_param_num = cls.get_params_size(module, grad_mode="trainable", magnitude="digit")
+    all_param_num = int(cls.get_params_size(module, grad_mode="all", magnitude="digit"))
+    trainable_param_num = int(cls.get_params_size(module, grad_mode="trainable", magnitude="digit"))
     return (f"Total {all_param_size} parameters, in which "
             f"{trainable_param_size} parameters are trainable({100*trainable_param_num/all_param_num:.2f}%)")
 
@@ -35,9 +36,10 @@ class PytorchNetworkUtils(object):
     return module
 
   @classmethod
-  def get_module_params(cls, module, grad_mode="all"):
+  def get_module_params(cls, module, 
+                        grad_mode: Union[str, Callable] = "all"):
     assert (
-      grad_mode in ["all", "trainable", "frozen", "unused", "grad"] or isinstance(grad_mode, callable)
+      grad_mode in ["all", "trainable", "frozen", "unused", "grad"] or isinstance(grad_mode, Callable)
     ), "grad_mode must be one of ['all', 'trainable', 'frozen', 'unused', 'grad'] or a callable, but got {}".format(grad_mode)
 
     if grad_mode == "all":
@@ -50,7 +52,7 @@ class PytorchNetworkUtils(object):
       condition = lambda _, x: x.grad is None
     elif grad_mode == "grad":
       condition = lambda _, x: x.grad is not None
-    elif isinstance(grad_mode, callable):
+    elif isinstance(grad_mode, Callable):
       condition = grad_mode
 
     params = []
@@ -60,7 +62,7 @@ class PytorchNetworkUtils(object):
     return params
     
   @classmethod
-  def convert_magnitude(cls, num, magnitude="auto"):
+  def convert_magnitude(cls, num, magnitude="auto") -> Union[str, int]:
     assert magnitude in ["auto", "B", "M", "K", "digit", None], "Invalid magnitude"
     if magnitude == "auto":
       if num >= 1e9:

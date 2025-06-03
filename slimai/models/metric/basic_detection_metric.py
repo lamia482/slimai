@@ -21,7 +21,7 @@ class BasicDetectionMetric(torch.nn.Module):
   @torch.inference_mode()
   def forward(self, 
               output: Dict[str, torch.Tensor], 
-              targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+              targets: Dict[str, Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     pred_scores, pred_labels, pred_bboxes = output["scores"], output["labels"], output["bboxes"]
     instances = targets["instance"]
     target_labels, target_bboxes = instances["labels"], instances["bboxes"]

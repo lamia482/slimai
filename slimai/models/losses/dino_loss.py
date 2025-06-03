@@ -34,7 +34,7 @@ class DINOLoss(torch.nn.Module):
     student_out = torch.log_softmax(student_output / self.student_temp, dim=-1)
     student_out = student_out.chunk(teacher_n_crops + student_n_crops)
 
-    teacher_out = torch.softmax((teacher_output - self.center) / teacher_temp, dim=-1)
+    teacher_out = torch.softmax((teacher_output - self.center) / teacher_temp, dim=-1) # type: ignore
     teacher_out = teacher_out.detach().chunk(teacher_n_crops)
 
     cls_loss = 0
@@ -58,5 +58,5 @@ class DINOLoss(torch.nn.Module):
     batch_center = dist_env.sync(batch_center) # already divided by world size, no need to divide again
 
     # ema update
-    self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
+    self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum) # type: ignore
     return

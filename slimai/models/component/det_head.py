@@ -5,7 +5,7 @@ from slimai.helper.help_build import MODELS
 @MODELS.register_module()
 class DetectionHead(torch.nn.Module):
 
-  MLP = MODELS.get("MLP")
+  MLP: torch.nn.Module = MODELS.get("MLP") # type: ignore
 
   def __init__(self, 
                *, 

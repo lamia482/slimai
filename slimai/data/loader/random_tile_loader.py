@@ -22,7 +22,7 @@ class RandomTileLoader():
     if not reader.status:
       return None
     x, y, w, h = self.get_random_crop_position(reader.getReadWidth(), reader.getReadHeight(), random_crop_size)
-    image = reader.ReadRoi(x, y, w, h, scale=reader.getReadScale())
+    image = reader.ReadRoi(x, y, w, h, scale=reader.getReadScale()) # type: ignore
     return image
   
   @classmethod

@@ -1,6 +1,7 @@
 import cv2
 import mmcv
 import torch
+import numpy as np
 
 
 def to_image(image):

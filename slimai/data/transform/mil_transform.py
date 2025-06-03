@@ -33,13 +33,13 @@ class MILTransform(BaseTransform):
         isinstance(self.random_crop_patch_size, int) and (0 < self.random_crop_patch_size < self.tile_size)
       )
     ), "random_crop_patch_size must be an integer between 0 and tile_size, but got {}".format(self.random_crop_patch_size)
-    self.random_crop_patch_num = random_crop_patch_num
+    self.random_crop_patch_num = random_crop_patch_num or 0
     assert (
       self.random_crop_patch_num is None or (
         isinstance(self.random_crop_patch_num, int) and (self.random_crop_patch_num > 0)
       )
     ), "random_crop_patch_num must be an integer greater than 0, but got {}".format(self.random_crop_patch_num)
-    self.use_patch_as_view = (self.random_crop_patch_size is not None)
+    self.use_patch_as_view = (self.random_crop_patch_num > 0)
     self.topk = topk
     assert (
       isinstance(self.topk, (int, float))

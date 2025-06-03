@@ -166,6 +166,8 @@ class Checkpoint(object):
       resume_from = getattr(self, f"{resume_from}_path")
     elif isinstance(resume_from, int):
       resume_from = self.save_dir / f"epoch_{resume_from}.pth"
+
+    resume_from = Path(str(resume_from)).resolve()
     
     # Only resume when checkpoint exists
     if resume_from is None or not Path(resume_from).exists():
@@ -194,8 +196,12 @@ class Checkpoint(object):
           raise ValueError("model must be provided when solver or scheduler is not provided")
         from .help_build import build_model
         arch = build_model(ckpt["cfg"]) # build pure model in no ddp mode
-        model, solver, scheduler, _ = arch.extract()
+        model, solver, scheduler, _ = arch.extract() # type: ignore
         
+      assert (
+        model is not None
+      ), "model must be provided when no checkpoint to load"
+
       # model is expected to be in non distributed style and load weights
       model.load_state_dict(ckpt["weight"], strict=(resume or strict))
       

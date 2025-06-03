@@ -24,8 +24,8 @@ class BasicClassificationMetric(torch.nn.Module):
               output: Dict[str, torch.Tensor], 
               targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     softmax = output["softmax"]
-    targets = targets["label"]
+    labels = targets["label"]
     return dict(
-      acc=self.acc(softmax, targets),
-      kappa=self.kappa(softmax, targets),
+      acc=self.acc(softmax, labels),
+      kappa=self.kappa(softmax, labels),
     )

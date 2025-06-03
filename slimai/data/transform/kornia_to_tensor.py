@@ -14,7 +14,7 @@ class KorniaToTensor(object):
     image = np.array(image)
     if image.dtype == "uint8":
       image = image.astype(np.float32) / 255.0
-    image = kornia.image_to_tensor(image)
+    image = kornia.utils.image_to_tensor(image)
     if not self.on_cpu:
       image = image.to(f"{dist_env.device}:{dist_env.local_rank}")
     return image

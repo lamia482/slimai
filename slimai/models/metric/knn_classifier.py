@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 from slimai.helper.help_build import MODELS
 
@@ -22,9 +23,9 @@ class KNNClassifier(object):
       self.metric in ["cosine", "euclidean"]
     ), f"metric must be a string in ['cosine', 'euclidean'], but got {self.metric}"
     self.reverse_max = reverse_max
-    self.X = None
-    self.Y = None
-    self.k_value = None
+    self.X: Optional[torch.Tensor] = None
+    self.Y: Optional[torch.Tensor] = None
+    self.k_value: Optional[int] = None
     return
 
   def fit(self, X_train, y_train):
@@ -37,9 +38,9 @@ class KNNClassifier(object):
     self.Y = y_train
 
     if self.k == "auto":
-      self.k_value = min(len(self.X), max(5, int(len(self.X) ** 0.5))) # 5 <= k <= sqrt(len(X)) or len(X)
+      self.k_value = min(len(self.X), max(5, int(len(self.X) ** 0.5))) # 5 <= k <= sqrt(len(X)) or len(X) # type: ignore
     elif self.k in ["full", "all"]:
-      self.k_value = len(self.X)
+      self.k_value = len(self.X) # type: ignore
     else:
       self.k_value = self.k
     return
@@ -74,7 +75,11 @@ class KNNClassifier(object):
     Returns:
       scores: [A, B] softmax scores between X and training samples
     """
-    k = self.k_value
+    assert (
+      isinstance(X, torch.Tensor) and isinstance(self.X, torch.Tensor) and isinstance(self.Y, torch.Tensor)
+    ), f"X, self.X, self.Y must be torch.Tensor, but got {type(X)}, {type(self.X)}, {type(self.Y)}"
+    
+    k: int = self.k_value # type: ignore
     X1, X2, Y = X, self.X, self.Y
     C = self.num_classes
 

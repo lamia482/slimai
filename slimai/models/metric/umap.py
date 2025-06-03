@@ -1,4 +1,3 @@
-from typing import Dict
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
@@ -16,7 +15,7 @@ class UMAP(torch.nn.Module):
   
   def forward(self, 
               embeddings: torch.Tensor, 
-              targets: torch.Tensor) -> Dict[str, torch.Tensor]:
+              targets: torch.Tensor) -> matplotlib.figure.Figure: # type: ignore
     visualizer = umap.UMAP(n_components=2, 
                            n_neighbors=200,
                            min_dist=0.5,

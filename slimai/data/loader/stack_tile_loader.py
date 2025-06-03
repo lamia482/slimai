@@ -80,7 +80,9 @@ class StackTileLoader():
     # Calculate number of tiles needed
     y_chunks = (ymax - ymin + self.tile_size - 1) // self.tile_size
     x_chunks = (xmax - xmin + self.tile_size - 1) // self.tile_size
-    num_threads = self.num_threads or min(os.cpu_count(), x_chunks * y_chunks) // 4
+
+    num_threads = os.cpu_count() or 1
+    num_threads = self.num_threads or min(num_threads, x_chunks * y_chunks) // 4
 
     # Create readers upfront for each thread
     file_path, scale = reader.file, reader.getReadScale()

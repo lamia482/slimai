@@ -1,5 +1,5 @@
 import torch
-from typing import Union, Dict
+from typing import Union, Dict, List
 from slimai.helper import help_utils
 from slimai.helper.help_build import MODELS
 from slimai.helper.structure import DataSample
@@ -28,10 +28,10 @@ class DINO(ClassificationArch):
     super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
     
     # in DINO teacher use student weight by default
-    self.model.teacher.load_state_dict(self.model.student.state_dict())
+    self.teacher.load_state_dict(self.student.state_dict())
     
     # freeze teacher and only train student, ema student to teacher
-    PytorchNetworkUtils.freeze(self.model.teacher)
+    PytorchNetworkUtils.freeze(self.teacher)
 
     assert (
       0 < momentum_teacher < 1
@@ -40,21 +40,29 @@ class DINO(ClassificationArch):
     self.momentum_teacher_schedule = None # update in step_precede_hooks
     return
   
-  def init_layers(self, encoder, decoder) -> Union[torch.nn.Module, torch.nn.ModuleDict]:
+  def init_layers(self, encoder, decoder) -> torch.nn.ModuleDict:
     student = Pipeline(encoder.backbone, encoder.neck, decoder.head)
     teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)    
     return torch.nn.ModuleDict(dict(teacher=teacher, student=student))
   
+  @property
+  def teacher(self) -> torch.nn.Module:
+    return self.model.teacher # type: ignore
+  
+  @property
+  def student(self) -> torch.nn.Module:
+    return self.model.student # type: ignore
+  
   def epoch_precede_hooks(self, *, runner):
     super().epoch_precede_hooks(runner=runner)
-    self.model.student.train()
-    self.model.teacher.eval()
+    self.student.train()
+    self.teacher.eval()
     return
   
   def epoch_succeed_hooks(self, *, runner):
     super().epoch_succeed_hooks(runner=runner)
-    self.model.student.eval()
-    self.model.teacher.eval()
+    self.student.eval()
+    self.teacher.eval()
     return
   
   def step_precede_hooks(self, *, runner):
@@ -68,27 +76,35 @@ class DINO(ClassificationArch):
 
   def step_succeed_hooks(self, *, runner):
     # EMA update for the teacher
+    assert (
+      self.momentum_teacher_schedule is not None
+    ), "momentum_teacher_schedule must be not None"
     with torch.inference_mode():
       global_train_step = self.current_train_epoch * self.max_train_step + self.current_train_step
       m = self.momentum_teacher_schedule[global_train_step]  # momentum parameter
-      for ps, pt in zip(PytorchNetworkUtils.get_module_params(self.model.student), 
-                        PytorchNetworkUtils.get_module_params(self.model.teacher)):
+      for ps, pt in zip(PytorchNetworkUtils.get_module_params(self.student), 
+                        PytorchNetworkUtils.get_module_params(self.teacher)):
         pt.data.mul_(m).add_((1 - m) * ps.detach().data)
     return
 
   def _forward_tensor(self, 
                 batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
-                return_flow: bool = False) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
-    global_views, local_views = batch_data["global_views"], batch_data["local_views"]
-    n_global_views, n_local_views = len(global_views), len(local_views)
-    global_views, local_views = torch.cat(global_views), torch.cat(local_views)
+                return_flow: bool = False) -> Union[torch.Tensor, Dict[str, Union[int, torch.Tensor]]]:
+    assert (
+      "global_views" in batch_data and "local_views" in batch_data
+    ), "batch_data must contain 'global_views' and 'local_views'"
 
-    teacher_output = self.model.teacher(global_views)
+    global_views_list: List[torch.Tensor] = batch_data["global_views"] # type: ignore
+    local_views_list: List[torch.Tensor] = batch_data["local_views"] # type: ignore
+    n_global_views, n_local_views = len(global_views_list), len(local_views_list)
+    global_views, local_views = torch.cat(global_views_list), torch.cat(local_views_list)
+
+    teacher_output = self.teacher(global_views)
 
     if return_flow:
       student_output = torch.cat([
-        self.model.student(global_views), 
-        self.model.student(local_views)
+        self.student(global_views), 
+        self.student(local_views)
       ])
       return dict(
         student_n_crops=n_local_views, 
@@ -107,9 +123,9 @@ class DINO(ClassificationArch):
   
   def export_model(self) -> torch.nn.Module:
     # Export model for inference and export to onnx
-    teacher_without_ddp = self.dist.get_summon_module(self.model.teacher)
+    teacher_without_ddp = self.dist.get_summon_module(self.teacher)
     backbone = teacher_without_ddp.backbone
-    return backbone
+    return backbone # type: ignore
   
   def postprocess(self, 
                   batch_data: torch.Tensor, 

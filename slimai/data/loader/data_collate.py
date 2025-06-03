@@ -36,6 +36,9 @@ class DataCollate():
     data = default_collate(original_batch)
 
     images = self.process_image(images)
+    assert (
+      images is not None
+    ), "images must be not None"
     whwh = torch.stack([torch.as_tensor(image.shape[-2:] * 2) for image in images])
     width, height = whwh.unbind(dim=1)[:2]
     data["width"], data["height"] = width, height

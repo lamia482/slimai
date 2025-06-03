@@ -155,13 +155,13 @@ class BaseArch(object):
       embedding_dict = self.gradient_checkpoint(
         self._forward_tensor, batch_data, return_flow=True
       )
-      loss_dict = self._forward_loss(embedding_dict, batch_info)
+      loss_dict = self._forward_loss(embedding_dict, batch_info) # type: ignore
       assert (
         isinstance(loss_dict, dict) and len(loss_dict) > 0
       ), "`loss_dict` after `_forward_loss` must be a non-empty dictionary, but got {}".format(loss_dict)
 
       loss = sum(loss_dict.values())
-      if not math.isfinite(loss.item()):
+      if not math.isfinite(loss.item()): # type: ignore
         print_log("Loss is {}, stopping training".format(loss), level="ERROR")
         sys.exit(1)
       output = loss_dict
@@ -193,7 +193,7 @@ class BaseArch(object):
     )
     
     logits = embedding_dict["head"]
-    targets = batch_info.label
+    targets = batch_info.label # type: ignore
     loss = self.loss(logits, targets)
     return loss
   
