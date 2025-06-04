@@ -6,6 +6,7 @@
 * Email    :  wangqiang482@icloud.com
 * License  :  (C)Copyright 2024-2027, KFBIO
 """
+import os.path as osp
 from . import (
   data, helper, models, runner
 )
@@ -19,8 +20,14 @@ def get_version():
   return VERSION
 
 def get_path():
-  import os
-  return os.path.dirname(os.path.abspath(__file__))
+  return osp.abspath(__file__)
+
+def get_package_path():
+  return osp.dirname(osp.dirname(get_path()))
+
+def get_last_commit_id():
+  from .helper.help_utils import get_last_commit_id_by_path
+  return get_last_commit_id_by_path(get_package_path())
 
 __version__ = get_version()
 __path__ = get_path()

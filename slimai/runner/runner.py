@@ -1,9 +1,10 @@
 import time
 import torch
+import shutil
 import matplotlib
 from pathlib import Path
 from functools import partial
-from typing import Dict, Any, Iterable
+from typing import Dict, Any
 import mmengine
 import slimai
 from slimai.helper import (
@@ -59,7 +60,7 @@ class Runner(object):
     self.eval_every_n_epochs = ckpt.get("eval_every_n_epochs", 1)
 
     # Dump config to work_dir
-    self.dump_cfg()
+    self.archive_env_for_reproducibility()
 
     # Build components like dataloaders, model, solver, and metric
     train_dataloader, valid_dataloader, test_dataloader, \
@@ -306,15 +307,35 @@ class Runner(object):
     metrics = self.dist.env.broadcast(metrics)
     return metrics
 
-  def dump_cfg(self):
-    """Dump config and work dir."""
+  def archive_env_for_reproducibility(self):
+    """Archive config and source code under work dir for reproducibility."""
+
+    # dump config
     try:
-      mmengine.Config.dump(self.cfg, self.work_dir / "config.py")
+      dst_config_file = self.work_dir / "config.py"
+      mmengine.Config.dump(self.cfg, dst_config_file)
     except Exception as e:
       help_utils.print_log(f"Error dumping config: {e}", level="ERROR")
       help_utils.print_log(f"Please check the config file", level="ERROR")
       exit(2)
+    finally:
+      help_utils.print_log(f"Parsed Config: \n{self.cfg.dump()}")
+      help_utils.print_log(f"Dumped config to: {dst_config_file}")
 
-    help_utils.print_log(f"Config: \n{self.cfg.dump()}")
-    help_utils.print_log(f"Work dir: {self.work_dir}")
+    # archive source code
+    try:
+      source_code_dir = slimai.get_package_path()
+      dst_source_code_dir = self.work_dir / "code"
+      shutil.copytree(source_code_dir, dst_source_code_dir, 
+                      ignore=shutil.ignore_patterns(
+                        "*.pyc", ".git*", "._*", "_debug_" # ignore git and python cache
+                      ))
+    except Exception as e:
+      help_utils.print_log(f"Error archiving source code: {e}", level="ERROR")
+      exit(3)
+    finally:
+      help_utils.print_log(f"Archived source code to: {dst_source_code_dir}")
+      help_utils.print_log(f"Last git commit id: {slimai.get_last_commit_id()}")
+
+    help_utils.print_log(f"Experiment work dir: {self.work_dir}")
     return

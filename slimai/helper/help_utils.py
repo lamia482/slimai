@@ -1,4 +1,5 @@
 import sys
+import subprocess
 import numpy as np
 from pathlib import Path
 import mmengine
@@ -36,8 +37,16 @@ def print_log(msg, level="INFO", main_process_only=True, warn_once=False, disabl
   logger.log(level, msg)
   return
 
-def get_folder(file_path):
-  return Path(file_path).parent
+def get_last_commit_id_by_path(path: str):
+  try:
+    commit_id = subprocess.check_output(
+        ['git', 'rev-parse', 'HEAD'],
+        cwd=path,
+        stderr=subprocess.DEVNULL
+    ).decode('utf-8').strip()
+    return commit_id
+  except subprocess.CalledProcessError:
+    return None
 
 
 class ProgressBar(mmengine.ProgressBar):
