@@ -206,11 +206,13 @@ METRIC = dict(
   acc=dict(
     type="torchmetrics.Accuracy",
     task="multiclass",
+    sync_on_compute=False,
     num_classes=len(CLASS_NAMES)
     ), 
   kappa=dict(
     type="torchmetrics.CohenKappa",
     task="multiclass",
+    sync_on_compute=False,
     num_classes=len(CLASS_NAMES),
   ),
 )

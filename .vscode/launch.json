@@ -12,7 +12,8 @@
       "env": {
         "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
         "CUDA_VISIBLE_DEVICES": "7",
-        "PYDEVD_WARN_SLOW_RESOLVE": "0"
+        "PYDEVD_WARN_SLOW_RESOLVE": "0", 
+        "CUDA_LAUNCH_BLOCKING": "1"
       },
       "program": "/hzztai/slimai/tools/run.py",
       "console": "integratedTerminal",
@@ -30,18 +31,19 @@
       "cwd": "/hzztai",
       "env": {
         "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
-        "CUDA_VISIBLE_DEVICES": "7,6,5,4",
+        "CUDA_VISIBLE_DEVICES": "7,6,5,4,3,2,1,0",
         "PYDEVD_WARN_SLOW_RESOLVE": "0",
+        "CUDA_LAUNCH_BLOCKING": "1"
       },
       "module": "torch.distributed.launch",
       "console": "integratedTerminal",
       "args": [
-        "--nproc_per_node=4",
+        "--nproc_per_node=8",
         "--standalone",
         "/hzztai/slimai/tools/run.py",
         "--config=/hzztai/slimai/_debug_/debug.py",
         "--work-dir=/hzztai/experiments/debug",
-        "--action=train", "--ddp=fsdp"
+        "--action=train", "--ddp=ddp"
       ],
       "justMyCode": false
     },
@@ -54,7 +56,8 @@
       "justMyCode": false,
       "env": {
         "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
-        "CUDA_VISIBLE_DEVICES": "7"
+        "CUDA_VISIBLE_DEVICES": "7",
+        "CUDA_LAUNCH_BLOCKING": "1"
       },
       "args": [
         "--ckpt_path=/hzztai/experiments/debug/20250219-55229a14/ckpts/best.pth",

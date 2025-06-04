@@ -11,7 +11,8 @@ class BasicDetectionMetric(torch.nn.Module):
                 box_format="xyxy",
                 iou_type="bbox",
                 iou_thresholds=None,
-                class_metrics=True,
+                class_metrics=True, 
+                sync_on_compute=False, 
                )
               ):
     super().__init__()

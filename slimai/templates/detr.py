@@ -178,6 +178,7 @@ METRIC = dict(
     iou_type="bbox",
     iou_thresholds=[0.1],
     class_metrics=True,
+    sync_on_compute=False,
   )
 )
 

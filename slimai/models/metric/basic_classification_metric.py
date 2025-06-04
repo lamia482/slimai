@@ -9,10 +9,12 @@ class BasicClassificationMetric(torch.nn.Module):
                acc=dict(
                   type="torchmetrics.Accuracy",
                   task="multiclass",
+                  sync_on_compute=False,
                 ), 
                kappa=dict(
                   type="torchmetrics.CohenKappa",
                   task="multiclass",
+                  sync_on_compute=False,
                 )
               ):
     super().__init__()

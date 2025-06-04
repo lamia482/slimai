@@ -3,7 +3,7 @@ import torch
 import matplotlib
 from pathlib import Path
 from functools import partial
-from typing import Dict, Any
+from typing import Dict, Any, Iterable
 import mmengine
 import slimai
 from slimai.helper import (
@@ -269,7 +269,9 @@ class Runner(object):
     metrics = {}
 
     if self.dist.env.is_main_process():
+      help_utils.print_log("Evaluating...")
       batch_info = results["batch_info"]
+      batch_info = self.dist.prepare_for_distributed(batch_info)
       # for better performance, move to arch device first
       merge_result = DataSample.merge_from_list(batch_info).to(self.dist.env.device)
       output = merge_result.output # type: ignore
@@ -278,11 +280,23 @@ class Runner(object):
 
       # split figure and metric
       msg_list = []
-      for key, fig in metrics.items():
-        if isinstance(fig, matplotlib.figure.Figure): # type: ignore
+      for key, value in metrics.items():
+        if isinstance(value, matplotlib.figure.Figure): # type: ignore
+          fig = value
           fig.savefig(str(result_file).replace(".pkl", f"_{key}.png"))
+          continue
+
+        assert (
+          isinstance(value, torch.Tensor)
+        ), "value must be a tensor"
+        is_float = (not isinstance(value, torch.IntTensor))
+        if is_float:
+          value = value.round(decimals=6)
+
+        if isinstance(value, torch.Tensor) and value.ndim > 0:
+          msg_list.append(f"{key}: {'[' + ', '.join([(f'{v}') for v in value]) + ']'}")
         else:
-          msg_list.append(f"{key}: {fig:.6f}")
+          msg_list.append(f"{key}: {value}")
 
       help_utils.print_log(f"Metrics: {', '.join(msg_list)}")
       results["metrics"] = DataSample(**metrics).to("cpu").to_dict() # move to cpu to dump

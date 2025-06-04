@@ -8,6 +8,7 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy, size_based_auto_wrap_policy, transformer_auto_wrap_policy
 from .utils import dist_env, PytorchNetworkUtils
+from .structure import DataSample
 
 
 __all__ = ["Distributed", "FSDPLayerWapper"]
@@ -222,18 +223,7 @@ class Distributed(object):
 
   def copy_cpu_offload_state_dict(self, module):
     state_dict = module.state_dict()
-
-    if isinstance(module, torch.optim.Optimizer):
-      kv_pairs = state_dict["state"]
-    elif isinstance(module, torch.nn.Module):
-      kv_pairs = state_dict
-    else:
-      kv_pairs = {}
-      
-    for key, value in kv_pairs.items():
-      kv_pairs[key] = value.cpu()
-
-    return state_dict
+    return DataSample(**state_dict).cpu().to_dict()
 
 
 ##### FSDP Layer Wapper #####

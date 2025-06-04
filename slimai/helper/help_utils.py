@@ -30,6 +30,9 @@ def print_log(msg, level="INFO", main_process_only=True, warn_once=False, disabl
       return
     _warned_messages.add(msg)
     
+  if not main_process_only:
+    msg = f"[GLOBAL RANK: {dist_env.global_rank}] {msg}"
+
   logger.log(level, msg)
   return
 
