@@ -8,6 +8,7 @@ from . import (
 from .checkpoint import Checkpoint
 from .distributed import Distributed
 from .gradient import Gradient
+from .record import Record
 from .structure import DataSample
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
   "Checkpoint",
   "Distributed",
   "Gradient",
+  "Record",
   "DataSample",
 ]

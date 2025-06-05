@@ -78,7 +78,6 @@ class ProgressBar(mmengine.ProgressBar):
       msg = f"{self.desc}{msg}"
       print_log(msg, level="INFO")
       
-
     if self.task_num > 0:
       percentage = self.completed / float(self.task_num)
       eta = int(elapsed * (1 - percentage) / percentage + 0.5)
@@ -101,7 +100,8 @@ class ProgressBar(mmengine.ProgressBar):
     self.file.flush()
 
   def close(self):
-    self.file.write("\n")
+    if dist_env.is_main_process():
+      self.file.write("\n")
     self.file.flush()
     return
 

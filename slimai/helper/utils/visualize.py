@@ -3,7 +3,12 @@ import numpy as np
 import torch
 from itertools import chain
 from . import scale_image
+from ..structure import DataSample
 
+class Visualizer(object):
+  @classmethod
+  def render_batch_sample(cls, batch_info: DataSample):
+    return
 
 def put_gt_on_image(image, gt_instance, names, color=(255, 0, 0)):
   img = scale_image.to_batch_numpy_image(image)[0]

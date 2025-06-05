@@ -1,4 +1,4 @@
-import os
+import os, os.path as osp
 import argparse
 from pathlib import Path
 from mmengine.config import Config
@@ -42,6 +42,12 @@ def parse_args():
 
 def parse_config(args):
   cfg = Config.fromfile(args.config)
+
+  experiment_name = Path(args.config).stem
+  if cfg.get("_EXPERIMENT_", None) is None:
+    print_log(f"_EXPERIMENT_ is not specified in config, using {experiment_name} as default", 
+              level="WARNING")
+    cfg._EXPERIMENT_ = experiment_name
   
   # work_dir is determined in this priority: CLI > segment in file
   # update work_dir to "experiments/{stem}/{signature}-{tag}"
@@ -52,10 +58,16 @@ def parse_config(args):
     signature = cfg.get("signature", None)
     if signature is None:
       raise ValueError("work_dir is not specified by CLI or config file")
-    cfg.work_dir = (Path("experiments") / Path(args.config).stem / signature).as_posix()
+    cfg.work_dir = (Path("experiments") / experiment_name / signature).as_posix()
   
   if args.tag is not None:
     cfg.work_dir = f"{cfg.work_dir}-{args.tag}"
+    print_log(f"_EXPERIMENT_ change from {cfg._EXPERIMENT_} to {args.tag} by '--tag' CLI", 
+              level="WARNING")
+    cfg._EXPERIMENT_ = args.tag
+
+  if cfg.get("_WORK_DIR_", None) is None:
+    cfg._WORK_DIR_ = cfg.work_dir
   
   if args.amp is True:
     cfg.RUNNER.gradient.amp = True

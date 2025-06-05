@@ -8,7 +8,7 @@ from typing import Dict, Any
 import mmengine
 import slimai
 from slimai.helper import (
-  help_build, help_utils, DataSample, Distributed, Checkpoint, Gradient
+  help_build, help_utils, DataSample, Distributed, Checkpoint, Gradient, Record
 )
 from slimai.helper.utils import PytorchNetworkUtils
 from torch.distributed.elastic.multiprocessing.errors import record
@@ -17,6 +17,7 @@ from torch.distributed.elastic.multiprocessing.errors import record
 class Runner(object):
   def __init__(self, cfg: mmengine.Config):
 
+    self.record = Record.create(cfg=cfg)
     self.dist = Distributed.create()
 
     # Initialize runner with configuration
@@ -24,13 +25,12 @@ class Runner(object):
 
     # Set up working directory
     self.work_dir = Path(cfg.work_dir).resolve()
-
-    # Logger configuration
-    logger = cfg.RUNNER.logger    
-    help_utils.update_logger(
-      self.work_dir / logger.get("log_dir", "logs") / f"{int(time.time())}.txt", 
-      logger.get("log_level", "INFO"))
     
+    # Logger configuration
+    logger = cfg.RUNNER.logger
+    self.log_dir = self.work_dir / logger.get("log_dir", "logs")
+    help_utils.update_logger(self.log_dir / f"{int(time.time())}.txt", 
+                             logger.get("log_level", "INFO"))
     self.log_every_n_steps = logger.get("log_every_n_steps", 10)
 
     # Check environment
@@ -175,7 +175,7 @@ class Runner(object):
       self.arch.epoch_precede_hooks(runner=self)
       
       # walk through one epoch
-      avg_loss = 0.0
+      avg_loss_value = 0.0
       for self.step, batch_info in enumerate(self.train_dataloader):
         msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
         batch_info = self.dist.prepare_for_distributed(batch_info)
@@ -190,14 +190,20 @@ class Runner(object):
                                                 batch_data, batch_info)
         
         # update avg loss
-        avg_loss = (avg_loss * self.step + total_loss.detach().cpu().item()) / (self.step + 1)
+        total_loss_value = total_loss.detach().cpu().item()
+        avg_loss_value = (avg_loss_value * self.step + total_loss_value) / (self.step + 1)
 
-        msg += ", " + ", ".join([
-          f"lr: {self.scheduler.get_last_lr()[0]:.6f}", 
-          f"avg loss: {avg_loss:.6f}", 
-          *[f"{key}: {loss:.6f}" for key, loss in loss_dict.items()],
-        ])
+        log_data = {
+          "lr": self.scheduler.get_last_lr()[0],
+          "avg_loss": avg_loss_value,
+          "total_loss": total_loss_value, 
+          **loss_dict, 
+        }
+        msg += ", " + ", ".join(
+          [f"{key}: {value:.8f}" for key, value in log_data.items()]
+        )
 
+        self.record.log_data(log_data)
         if (self.step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
@@ -211,7 +217,12 @@ class Runner(object):
       if (self.epoch % self.eval_every_n_epochs == 0) and (self.valid_dataloader is not None):
         result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
         eval_metrics = self.evaluate(self.valid_dataloader, result_file)
-        avg_loss = eval_metrics.get("loss", avg_loss)
+        avg_loss_value = eval_metrics.get("loss", avg_loss_value)
+        log_data = {
+          "eval_avg_loss": avg_loss_value,
+          **eval_metrics,
+        }
+        self.record.log_data(log_data)
 
       # Save checkpoint with strategy
       self.checkpoint.save(
@@ -219,7 +230,7 @@ class Runner(object):
         self.solver, 
         self.scheduler,
         self.epoch, 
-        avg_loss, 
+        avg_loss_value, 
         cfg=self.cfg.MODEL)
 
     return
@@ -318,24 +329,25 @@ class Runner(object):
       help_utils.print_log(f"Error dumping config: {e}", level="ERROR")
       help_utils.print_log(f"Please check the config file", level="ERROR")
       exit(2)
-    finally:
-      help_utils.print_log(f"Parsed Config: \n{self.cfg.dump()}")
-      help_utils.print_log(f"Dumped config to: {dst_config_file}")
+
+    help_utils.print_log(f"Parsed Config: \n{self.cfg.dump()}")
+    help_utils.print_log(f"Dumped config to: {dst_config_file}")
 
     # archive source code
     try:
       source_code_dir = slimai.get_package_path()
       dst_source_code_dir = self.work_dir / "code"
       shutil.copytree(source_code_dir, dst_source_code_dir, 
+                      dirs_exist_ok=True,
                       ignore=shutil.ignore_patterns(
                         "*.pyc", ".git*", "._*", "_debug_" # ignore git and python cache
                       ))
     except Exception as e:
       help_utils.print_log(f"Error archiving source code: {e}", level="ERROR")
       exit(3)
-    finally:
-      help_utils.print_log(f"Archived source code to: {dst_source_code_dir}")
-      help_utils.print_log(f"Last git commit id: {slimai.get_last_commit_id()}")
+      
+    help_utils.print_log(f"Archived source code to: {dst_source_code_dir}")
+    help_utils.print_log(f"Last git commit id: {slimai.get_last_commit_id()}")
 
     help_utils.print_log(f"Experiment work dir: {self.work_dir}")
     return
