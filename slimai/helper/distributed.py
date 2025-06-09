@@ -184,7 +184,6 @@ class Distributed(object):
         module_classes=[FSDPLayerWapper]
       )
       
-      module = torch.compile(module)
       module = FSDP(
         wrapped_module,
         device_id=self.env.device_module.current_device(),

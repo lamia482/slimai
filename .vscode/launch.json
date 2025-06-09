@@ -11,8 +11,8 @@
       "cwd": "/hzztai",
       "env": {
         "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
-        "CUDA_VISIBLE_DEVICES": "7",
-        "PYDEVD_WARN_SLOW_RESOLVE": "0", 
+        "CUDA_VISIBLE_DEVICES": "6",
+        "PYDEVD_WARN_SLOW_RESOLVE": "0",
         "CUDA_LAUNCH_BLOCKING": "1"
       },
       "program": "/hzztai/slimai/tools/run.py",
@@ -43,7 +43,7 @@
         "/hzztai/slimai/tools/run.py",
         "--config=/hzztai/slimai/_debug_/debug.py",
         "--work-dir=/hzztai/experiments/debug",
-        "--action=train", "--ddp=ddp"
+        "--action=train",
       ],
       "justMyCode": false
     },
@@ -73,15 +73,35 @@
       "program": "wsi_align.py",
       "console": "integratedTerminal",
       "justMyCode": false
-    }, 
+    },
     {
       "name": "Python Debugger: Current File",
       "type": "debugpy",
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "program": "${file}",
-      "console": "integratedTerminal", 
+      "console": "integratedTerminal",
       "justMyCode": false
+    }, 
+    {
+      "name": "RT-DETR",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai/projects/mtb/app/rtdetrv2_pytorch",
+      "program": "tools/train.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "7",
+        "PYDEVD_WARN_SLOW_RESOLVE": "0",
+        "CUDA_LAUNCH_BLOCKING": "1"
+      },
+      "args": [
+        "-c", "configs/rtdetrv2/rtdetrv2_r50vd_6x_coco_mtb.yml",
+        "-t", "pretrained/rtdetrv2_r50vd_6x_coco_ema.pth",
+        "--use-amp",
+        "--seed=10086"
+      ]
     }
   ]
 }

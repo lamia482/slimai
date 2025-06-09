@@ -210,7 +210,7 @@ MODEL = dict(
 
 RUNNER = dict(
   max_epoch=300,
-  compile=False, 
+  compile=True, 
   checkpointing=True, 
 
   gradient=dict(
@@ -223,6 +223,7 @@ RUNNER = dict(
     log_level="INFO",
     log_dir="logs",
     log_every_n_steps=1,
+    log_precision=".8f",
   ), 
 
   ckpt=dict(

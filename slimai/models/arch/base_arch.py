@@ -45,7 +45,7 @@ class BaseArch(object):
 
   def compile(self, compile: bool = False):
     if compile:
-      self._forward_tensor = torch.compile(self._forward_tensor)
+      self.model.compile()
     return
 
   def checkpointing(self, checkpointing: bool = False, use_reentrant: bool = False):

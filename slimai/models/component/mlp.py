@@ -11,58 +11,68 @@ class MLP(torch.nn.Module):
                output_dim, 
                hidden_dim=2048, 
                bottleneck_dim=256, 
-               n_layer=1, 
+               n_layer=3, 
                act="relu", 
-               norm="batch_norm",
-               dropout=0.0):
+               norm=None, 
+               dropout=None):
     super().__init__()
     assert (
       n_layer >= 1
     ), "n_layer must be greater than or equal to 1, but got {}".format(n_layer)
 
-    kwargs = dict(act=act, norm=norm, dropout=dropout)
-    self.mlp = torch.nn.Sequential(
-      self.create_layer(input_dim, (bottleneck_dim if n_layer == 1 else hidden_dim), **kwargs), # type: ignore
-      *[self.create_layer(hidden_dim, hidden_dim, **kwargs) for _ in range(0, n_layer-2)], # type: ignore
-      *[self.create_layer(hidden_dim, bottleneck_dim, **kwargs) for _ in range(max(0, n_layer-2), n_layer-1)], # type: ignore
-    )
-    self.last_layer = self.create_layer(bottleneck_dim, output_dim, act=None, norm=None, dropout=dropout)
+    self.act = self.get_act(act)
+    self.norm = self.get_norm(norm)(bottleneck_dim)
+    self.dropout = self.get_dropout(dropout)
+    self.n_layer = n_layer
+
+    if n_layer == 1:
+      layers = [self.get_linear(input_dim, output_dim)]
+    elif n_layer == 2:
+      layers = [
+        self.get_linear(input_dim, bottleneck_dim), 
+        self.get_linear(bottleneck_dim, output_dim)
+      ]
+    else: # n_layer >= 3
+      layers = [
+        self.get_linear(input_dim, hidden_dim),
+        *[self.get_linear(hidden_dim, hidden_dim) for _ in range(n_layer - 3)],
+        self.get_linear(hidden_dim, bottleneck_dim),
+        self.get_linear(bottleneck_dim, output_dim)
+      ]
+
+    self.layers = torch.nn.ModuleList(layers)
     return
   
   def forward(self, x):
-    x = self.mlp(x)
-    x = torch.nn.functional.normalize(x, p=2, dim=-1)
-    x = self.last_layer(x)
+    for i, layer in enumerate(self.layers):
+      x = layer(x)
+      if i < self.n_layer - 1:
+        x = self.dropout(self.act(self.norm(x)))
     return x
   
-  def create_layer(self, in_features, out_features, 
-                   act: Optional[str] = "relu", norm: Optional[str] = None, 
-                   dropout: float = 0.0) -> torch.nn.Sequential:
+  def get_act(self, act: Optional[str]) -> torch.nn.Module:
     act_dict = {
       None: torch.nn.Identity(),
       "relu": torch.nn.ReLU(),
       "gelu": torch.nn.GELU(),
       "tanh": torch.nn.Tanh(),
-      "sigmoid": torch.nn.Sigmoid(),
     }
-    assert (
-      act in act_dict
-    ), "act must be one of {}, but got {}".format(act_dict.keys(), act)
-
+    return act_dict[act]
+  
+  def get_norm(self, norm: Optional[str]) -> torch.nn.Module:
     norm_dict = {
       None: lambda nfeat: torch.nn.Identity(),
       "layer_norm": lambda nfeat: torch.nn.LayerNorm(nfeat),
       "batch_norm_1d": lambda nfeat: torch.nn.BatchNorm1d(nfeat), 
       "batch_norm_2d": lambda nfeat: torch.nn.BatchNorm2d(nfeat), 
-      
     }
-    assert (
-      norm in norm_dict
-    ), "norm must be one of {}, but got {}".format(norm_dict.keys(), norm)
-
-    return torch.nn.Sequential(
-      torch.nn.Linear(in_features, out_features),
-      act_dict[act],
-      norm_dict[norm](out_features), 
-      torch.nn.Dropout(dropout),
-    )
+    return norm_dict[norm]
+  
+  def get_dropout(self, dropout: Optional[float]) -> torch.nn.Module:
+    if dropout is None:
+      return torch.nn.Identity()
+    return torch.nn.Dropout(dropout)
+  
+  def get_linear(self, in_features, out_features) -> torch.nn.Module:
+    return torch.nn.Linear(in_features, out_features)
+  

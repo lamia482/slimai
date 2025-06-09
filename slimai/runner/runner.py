@@ -32,6 +32,7 @@ class Runner(object):
     help_utils.update_logger(self.log_dir / f"{int(time.time())}.txt", 
                              logger.get("log_level", "INFO"))
     self.log_every_n_steps = logger.get("log_every_n_steps", 10)
+    self.log_precision = logger.get("log_precision", "")
 
     # Check environment
     slimai.check_env()
@@ -200,7 +201,7 @@ class Runner(object):
           **loss_dict, 
         }
         msg += ", " + ", ".join(
-          [f"{key}: {value:.8f}" for key, value in log_data.items()]
+          [f"{key}: {value:{self.log_precision}}" for key, value in log_data.items()]
         )
 
         self.record.log_data(log_data)
