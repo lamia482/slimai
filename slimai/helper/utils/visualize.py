@@ -10,7 +10,7 @@ class Visualizer(object):
   def render_batch_sample(cls, batch_info: DataSample):
     return
 
-def put_gt_on_image(image, gt_instance, names, color=(255, 0, 0)):
+def put_gt_on_image(image, gt_instance, names, color=(255, 0, 0), no_text=False):
   img = scale_image.to_batch_numpy_image(image)[0]
 
   if isinstance(gt_instance, (tuple, list)):
@@ -29,15 +29,16 @@ def put_gt_on_image(image, gt_instance, names, color=(255, 0, 0)):
     boxes.astype("int"), labels.astype("int")
   )):
     cv2.rectangle(img, (x1, y1), (x2, y2), color, 2, 1)
-    text = [
-      f"{index}th:{names[cls_label]}"
-    ]
 
-    cv2.putText(img, "+".join(text), (x1, y1-5), 1, 1, color, 2)
+    if not no_text:
+      text = [
+        f"{index}th:{names[cls_label]}"
+      ]
+      cv2.putText(img, "+".join(text), (x1, y1-5), 1, 1, color, 2)
 
   return img
 
-def put_pred_on_image(image, pred_instance, names, score_thr=0.01, color=(0, 0, 255)):
+def put_pred_on_image(image, pred_instance, names, score_thr=0.01, color=(0, 0, 255), no_text=False):
   img = scale_image.to_batch_numpy_image(image)[0]
 
   if isinstance(pred_instance, (tuple, list)):
@@ -57,11 +58,12 @@ def put_pred_on_image(image, pred_instance, names, score_thr=0.01, color=(0, 0, 
     boxes.astype("int"), labels.astype("int"), scores.tolist()
   )):
     cv2.rectangle(img, (x1, y1), (x2, y2), color, 2, 1)
-    text = [
-      f"{index}th:{names[cls_label]}:{cls_score:.3f}"
-    ]
 
-    cv2.putText(img, "+".join(text), (x1, y1-5), 2, 1, color)
+    if not no_text:
+      text = [
+        f"{index}th:{names[cls_label]}:{cls_score:.3f}"
+      ]
+      cv2.putText(img, "+".join(text), (x1, y1-5), 2, 1, color)
 
   return img
 

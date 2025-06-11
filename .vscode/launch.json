@@ -82,7 +82,7 @@
       "program": "${file}",
       "console": "integratedTerminal",
       "justMyCode": false
-    }, 
+    },
     {
       "name": "RT-DETR",
       "type": "debugpy",
@@ -97,11 +97,30 @@
         "CUDA_LAUNCH_BLOCKING": "1"
       },
       "args": [
-        "-c", "configs/rtdetrv2/rtdetrv2_r50vd_6x_coco_mtb.yml",
-        "-t", "pretrained/rtdetrv2_r50vd_6x_coco_ema.pth",
+        "-c",
+        "configs/rtdetrv2/rtdetrv2_r50vd_6x_coco_mtb.yml",
+        "-t",
+        "pretrained/rtdetrv2_r50vd_6x_coco_ema.pth",
         "--use-amp",
         "--seed=10086"
       ]
+    }, 
+    {
+      "name": "READER",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai/sdk",
+      "program": "reader/test.py",
+      "console": "integratedTerminal", 
+      "justMyCode": false
+    }, 
+    {
+      "name": "SERVE TB",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai/slimai/_debug_/alias/projects/mtb/app/serve",
+      "program": "reader/build.sh",
+      "console": "integratedTerminal",
     }
   ]
 }

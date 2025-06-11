@@ -31,7 +31,7 @@ except FileNotFoundError:
     long_description = DESCRIPTION
 
 
-def get_requirements(path: str = HERE / "chore/requirements.txt") -> Tuple[List[str], List[str]]:
+def get_requirements(path: Path = HERE / "chore/requirements.txt") -> Tuple[List[str], List[str]]:
     requirements = []
     extra_indices = []
     with open(path) as f:
