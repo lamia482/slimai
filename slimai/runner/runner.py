@@ -323,7 +323,7 @@ class Runner(object):
       mmengine.dump(results, result_file)
 
       # visualize
-      help_utils.print_log(f"Visualizing {dataloader.batch_size} samples...")
+      help_utils.print_log(f"Visualizing randomly top-{dataloader.batch_size} samples...")
       self.record.log_batch_sample(batch_info, output, targets, 
                                    class_names=dataloader.dataset.class_names,
                                    phase=phase, 
