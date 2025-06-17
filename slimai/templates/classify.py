@@ -232,7 +232,7 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
 ))
 
 ############################## CLEAR FOR DUMP
-del datetime, hashlib
+del datetime, hashlib, cv2
 
 _COMMENT_ = """
 

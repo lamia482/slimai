@@ -17,8 +17,9 @@ quality = dict(
   ], p=0.5
 )
 
+import torch
 normalize = [
-  dict(type="ToTensor"), 
+  dict(type="ToDtype", dtype=torch.float32, scale=True), 
   dict(type="Normalize", mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
 ]
 
@@ -255,7 +256,7 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
 ))
 
 ############################## CLEAR FOR DUMP
-del datetime, hashlib
+del datetime, hashlib, torch
 
 _COMMENT_ = """
 
