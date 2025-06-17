@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-from torchvision import transforms as T
+from torchvision.transforms import v2 as T
 from slimai.helper.help_build import TRANSFORMS
 from .base_transform import BaseTransform
 
@@ -8,13 +8,25 @@ from .base_transform import BaseTransform
 @TRANSFORMS.register_module()
 class TorchTransform(BaseTransform):
   image_key = "image"
+  ann_keys = ["label", "mask", "instance", "text"]
 
-  def __call__(self, data):  
-    inp_data = data[self.image_key]
-    if isinstance(inp_data, np.ndarray):
-      inp_data = Image.fromarray(inp_data)
-    out_data = self.transforms(inp_data)
-    data[self.image_key] = out_data
+  def __call__(self, data):
+    img_data = data[self.image_key]
+    ann_data = {
+      k: data[k] for k in self.ann_keys
+      if k in data.keys()
+    }
+
+    assert (
+      len(ann_data) <= 1
+    ), f"Only one annotation key is supported, but got: {list(ann_data.keys())}"
+
+    inp_data = (img_data, *ann_data.values())
+    t_img, *t_ann = self.transforms(*inp_data)
+
+    data[self.image_key] = t_img
+    for k, v in zip(ann_data.keys(), t_ann):
+      data[k] = v
     return data
   
   def compose(self, transforms):

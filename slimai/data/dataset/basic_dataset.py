@@ -3,10 +3,14 @@ import numpy as np
 import mmcv
 import mmengine
 import torch
+from PIL import Image
+from torchvision import tv_tensors
 from pathlib import Path
+from functools import partial
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import DATASETS, build_transform, build_loader, build_source
 from slimai.helper.common import CACHE_ROOT_DIR
+
 
 __all__ = ["BasicDataset"]
 
@@ -89,12 +93,6 @@ class BasicDataset(torch.utils.data.Dataset):
     item = item % self.length
     item = self.indices[item]
     data = self.select_sample(item)
-
-    # check data keys
-    assert (
-      set(self.collect_keys).issubset(set(list(data.keys())))
-    ), f"Collect key({self.collect_keys}) must all contained in data, but got: {list(data.keys())}"
-
     return data
 
   def select_sample(self, item):
@@ -105,20 +103,55 @@ class BasicDataset(torch.utils.data.Dataset):
       item = np.random.randint(0, len(self))
       return self.select_sample(item)
 
-    if self.to_rgb:
-      if isinstance(image, (list, tuple)):
-        image = list(map(mmcv.bgr2rgb, image))
-      else:
-        image = mmcv.bgr2rgb(image)
+    # convert image to PIL Image
+    to_pil_image = partial(self.to_pil_image, to_rgb=self.to_rgb)
+    image = self.apply_kernel(to_pil_image, image)
 
     data = dict(indice=item, image=image)
     data = self.load_extra_keys(data, index=item)
+
+    # wrap data tv_tensors
+    data = self.wrap_data(data)
 
     data = self.transform(data)
     
     return data
   
+  def to_pil_image(self, image, to_rgb=True):
+    """ convert image to PIL Image
+    """
+    if isinstance(image, np.ndarray):
+      if image.ndim == 3:
+        image = mmcv.bgr2rgb(image)
+      image = Image.fromarray(image)
+
+    assert (
+      isinstance(image, Image.Image)
+    ), f"Image must be a PIL Image, but got: {type(image)}"
+
+    if to_rgb:
+      image = image.convert("RGB")
+        
+    return image
+  
+  def apply_kernel(self, kernel, data):
+    if isinstance(data, (list, tuple)):
+      return list(map(kernel, data))
+    else:
+      return kernel(data)
+  
   def load_extra_keys(self, data, index):
+    data["file"] = self.files[index]
+    return data
+  
+  def wrap_data(self, data):
+    # check data keys
+    assert (
+      set(self.collect_keys).issubset(set(list(data.keys())))
+    ), f"Collect key({self.collect_keys}) must all contained in data, but got: {list(data.keys())}"
+    
+    data["indice"] = torch.tensor(data["indice"])
+    data["image"] = self.apply_kernel(tv_tensors.Image, data["image"])
     return data
 
   @property

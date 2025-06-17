@@ -118,7 +118,10 @@ class Runner(object):
   @record
   def run(self, *, action):
     """Run the runner, action can be "train", "infer", "evaluate"."""
-    assert action in ["train", "infer", "evaluate"]
+    assert (
+      action in ["train", "infer", "evaluate"]
+    ), f"Invalid action: {action}"
+
     if action == "train":
       return self.train()
     elif action == "infer":
@@ -167,6 +170,8 @@ class Runner(object):
     ), "train_dataloader must be provided"
 
     for self.epoch in range(self.epoch, self.max_epoch):
+      phase = "train"
+
       self.train_dataloader.sampler.set_epoch(self.epoch)
 
       self.epoch += 1 # Increment epoch for checkpoint saving
@@ -204,7 +209,7 @@ class Runner(object):
           [f"{key}: {value:{self.log_precision}}" for key, value in log_data.items()]
         )
 
-        self.record.log_data(log_data)
+        self.record.log_step_data(log_data, phase=phase)
         if (self.step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
@@ -216,14 +221,15 @@ class Runner(object):
       
       # Evaluate on validation dataset
       if (self.epoch % self.eval_every_n_epochs == 0) and (self.valid_dataloader is not None):
+        phase = "valid"
         result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
-        eval_metrics = self.evaluate(self.valid_dataloader, result_file)
+        eval_metrics = self.evaluate(self.valid_dataloader, result_file, phase=phase)
         avg_loss_value = eval_metrics.get("loss", avg_loss_value)
         log_data = {
           "eval_avg_loss": avg_loss_value,
           **eval_metrics,
         }
-        self.record.log_data(log_data)
+        self.record.log_step_data(log_data, phase=phase)
 
       # Save checkpoint with strategy
       self.checkpoint.save(
@@ -272,7 +278,7 @@ class Runner(object):
     return results
   
   @torch.inference_mode()
-  def evaluate(self, dataloader, result_file) -> Dict[str, Any]:
+  def evaluate(self, dataloader, result_file, phase: str = "test") -> Dict[str, Any]:
     """Evaluate on result_file, if not exists, infer first with dataloader."""
     if not Path(result_file).exists():
       results = self.infer(dataloader, result_file)
@@ -315,6 +321,14 @@ class Runner(object):
       results["metrics"] = DataSample(**metrics).to("cpu").to_dict() # move to cpu to dump
       help_utils.print_log(f"Dump metric into: {result_file}")
       mmengine.dump(results, result_file)
+
+      # visualize
+      help_utils.print_log(f"Visualizing {dataloader.batch_size} samples...")
+      self.record.log_batch_sample(batch_info, output, targets, 
+                                   class_names=dataloader.dataset.class_names,
+                                   phase=phase, 
+                                   topk=dataloader.batch_size, 
+                                   progress_bar=True)
 
     metrics = self.dist.env.broadcast(metrics)
     return metrics

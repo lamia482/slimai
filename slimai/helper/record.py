@@ -1,10 +1,12 @@
 import threading
 import swanlab
 import mmengine
-from typing import Dict, Any, Optional
+import torch
+from PIL import Image
+from typing import Dict, Any, Optional, Union, List
 from .utils.dist_env import dist_env
-from .structure import DataSample
 from .utils.visualize import Visualizer
+from .utils.select import recursive_select
 
 
 class Record(object):
@@ -91,7 +93,7 @@ class Record(object):
     self._initialized = True
     return
   
-  def log_data(self, data: Dict[str, Any]):
+  def log_step_data(self, data: Dict[str, Any], phase: Optional[str] = None):
     """
     Log metrics and other data to swanlab.
     
@@ -100,23 +102,53 @@ class Record(object):
     """
     if not self.should_record:
       return
+    if phase is not None:
+      data = {
+        f"{phase}/{key}": value
+        for key, value in data.items()
+      }
     return swanlab.log(data)
   
-  def log_sample(self, batch_info: DataSample):
+  def log_batch_sample(self, 
+                 batch_image: Union[List, torch.Tensor], 
+                 batch_output: Union[List, torch.Tensor], 
+                 batch_targets: Dict[str, List[Any]],
+                 class_names: List[str],
+                 phase: Optional[str] = None,
+                 topk: int = 1, 
+                 progress_bar: bool = False):
     """
     Log visualization of batch samples.
     
     Args:
-      batch_info: DataSample containing batch information to visualize
+      batch_image: List of images to visualize
+      batch_output: List of output to visualize
+      batch_targets: Dict of List of targets to visualize
     """
     if not self.should_record:
       return
-    vis_list = Visualizer.render_batch_sample(batch_info)
-    vis_dict = {
-      f"vis_batch_{i}": swanlab.Image(vis)
+    
+    if topk <= 0:
+      topk = len(batch_image)
+
+    topk_ids = torch.randperm(len(batch_image))[:topk].tolist()
+    
+    files = [v.file for v in batch_image] # type: ignore
+    topk_files = recursive_select(files, topk_ids)
+    topk_outputs = recursive_select(batch_output, topk_ids)
+    topk_targets: dict = recursive_select(batch_targets, topk_ids) # type: ignore
+
+    vis_list = Visualizer.render_batch_sample(
+      topk_files, topk_outputs, topk_targets, 
+      class_names, 
+      progress_bar=progress_bar,
+    )
+    
+    vis_list = [
+      swanlab.Image(Image.fromarray(vis[..., ::-1]), caption=f"{topk_files[i]}")
       for i, vis in enumerate(vis_list)
-    }
-    return swanlab.log(vis_dict)
+    ] # not support in private deploy env yet.
+    return self.log_step_data({"visualize": vis_list}, phase=phase)
   
   def finish(self):
     """

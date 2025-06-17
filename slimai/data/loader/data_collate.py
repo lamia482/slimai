@@ -73,34 +73,31 @@ class DataCollate():
     if len(instance_list) == 0:
       return None
     cls_targets = [
-      torch.from_numpy(np.array([t["category_id"] for t in tgt], dtype="int64")).reshape(-1)
-      for tgt in instance_list
+      tgt["labels"] for tgt in instance_list
     ]
     bbox_targets = [
-      torch.from_numpy(np.array([t["bbox"] for t in tgt], dtype="float32").reshape(-1, 4))
-      for tgt in instance_list
+      tgt["bboxes"] for tgt in instance_list
     ]
-    mask_targets = [
-      torch.from_numpy(np.array([t["segmentation"] for t in tgt], dtype="int64").reshape(-1, 2))
-      for tgt in instance_list
-    ]
+    # mask_targets = [
+    #   tgt["mask"] for tgt in instance_list
+    # ]
 
     return dict(
       labels=cls_targets, 
       bboxes=bbox_targets, 
-      masks=mask_targets, 
+      # masks=mask_targets, 
     )
   
   def process_mask(self, mask_list):
     if len(mask_list) == 0:
       return None
+
+    raise NotImplementedError("Mask is not supported yet")
     cls_targets = [
-      torch.from_numpy(np.array([t["category_id"] for t in tgt], dtype="int64")).reshape(-1)
-      for tgt in mask_list
+      tgt["labels"] for tgt in mask_list
     ]
     mask_targets = [
-      torch.from_numpy(np.array([t["segmentation"] for t in tgt], dtype="int64").reshape(-1, 2))
-      for tgt in mask_list
+      tgt["mask"] for tgt in mask_list
     ]
 
     return dict(
@@ -111,5 +108,7 @@ class DataCollate():
   def process_text(self, text_list):
     if len(text_list) == 0:
       return None
+    
+    raise NotImplementedError("Text is not supported yet")
     return text_list
   

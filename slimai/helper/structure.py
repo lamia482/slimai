@@ -124,6 +124,9 @@ class DataSample(BaseDataElement):
         ), "inputs must be a non-empty list"
         if isinstance(inputs[0], dict): # merge every key in dict
           return {k: concat([d[k] for d in inputs]) for k in inputs[0].keys()}
+        
+        if isinstance(inputs[0], str):
+          return inputs
 
         assert (
         all(list(map(lambda v: isinstance(v, torch.Tensor), inputs)))

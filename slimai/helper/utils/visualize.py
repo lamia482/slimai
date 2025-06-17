@@ -1,32 +1,62 @@
 import cv2
 import numpy as np
 import torch
+import mmengine
 from itertools import chain
-from . import scale_image
-from ..structure import DataSample
+from typing import Dict, Any, List
+from . import scale_image, select
 
 class Visualizer(object):
   @classmethod
-  def render_batch_sample(cls, batch_info: DataSample):
-    return
+  def render_batch_sample(cls, images, outputs, 
+                          targets: Dict[str, Any], 
+                          class_names: List[str], 
+                          progress_bar: bool = False):
+    vis_list = []
+
+    indices = list(range(len(images)))
+    if progress_bar:
+      indices = mmengine.track_iter_progress(indices)
+  
+    for index in indices:
+      image = select.recursive_select(images, index)
+      output = select.recursive_select(outputs, index)
+      target: dict = select.recursive_select(targets, index) # type: ignore
+
+      if instance := target.get("instance", None):
+        vis = cls.vis_instance(image, instance, output, class_names)
+      else:
+        raise NotImplementedError("Only instance is supported for now")
+
+      vis_list.append(vis)
+    return vis_list
+  
+  @classmethod
+  def vis_instance(cls, img_file, gt_instance, pred_instance, 
+                   names, score_thr=0.01, color=(0, 0, 255), 
+                   no_text=False):
+    image = scale_image.to_image(img_file)
+    image = put_gt_on_image(image, gt_instance, names, color=(255, 0, 0), no_text=no_text)
+    image = put_pred_on_image(image, pred_instance, names, score_thr=score_thr, color=color, no_text=no_text)
+    return image
 
 def put_gt_on_image(image, gt_instance, names, color=(255, 0, 0), no_text=False):
   img = scale_image.to_batch_numpy_image(image)[0]
 
   if isinstance(gt_instance, (tuple, list)):
-    boxes, labels = [gt["bbox"] for gt in gt_instance], [gt["bbox_label"] for gt in gt_instance]
+    bboxes, labels = [gt["bbox"] for gt in gt_instance], [gt["bbox_label"] for gt in gt_instance]
   elif isinstance(gt_instance, dict):
-    boxes, labels = gt_instance["boxes"], gt_instance["labels"]
+    bboxes, labels = gt_instance["bboxes"], gt_instance["labels"]
   else:
-    boxes, labels = gt_instance.bboxes, gt_instance.labels
+    bboxes, labels = gt_instance.bboxes, gt_instance.labels
 
-  if isinstance(boxes, torch.Tensor) and isinstance(labels, torch.Tensor):
-    boxes, labels = boxes.detach().cpu().numpy(), labels.detach().cpu().numpy()
+  if isinstance(bboxes, torch.Tensor) and isinstance(labels, torch.Tensor):
+    bboxes, labels = bboxes.detach().cpu().numpy(), labels.detach().cpu().numpy()
 
-  boxes, labels = np.array(boxes), np.array(labels)
+  bboxes, labels = np.array(bboxes), np.array(labels)
 
   for index, ((x1, y1, x2, y2), cls_label) in enumerate(zip(
-    boxes.astype("int"), labels.astype("int")
+    bboxes.astype("int"), labels.astype("int")
   )):
     cv2.rectangle(img, (x1, y1), (x2, y2), color, 2, 1)
 
@@ -42,20 +72,22 @@ def put_pred_on_image(image, pred_instance, names, score_thr=0.01, color=(0, 0, 
   img = scale_image.to_batch_numpy_image(image)[0]
 
   if isinstance(pred_instance, (tuple, list)):
-    boxes, scores, labels, *_ = pred_instance
+    bboxes, scores, labels, *_ = pred_instance
   elif isinstance(pred_instance, dict):
-    boxes, scores, labels = pred_instance["bboxes"], pred_instance["scores"], pred_instance["labels"]
+    bboxes, scores, labels = pred_instance["bboxes"], pred_instance["scores"], pred_instance["labels"]
   else:
-    boxes, scores, labels = pred_instance.bboxes, pred_instance.scores, pred_instance.labels
+    bboxes, scores, labels = pred_instance.bboxes, pred_instance.scores, pred_instance.labels
 
-  if isinstance(boxes, torch.Tensor):
-    boxes, scores, labels = boxes.detach().cpu().numpy(), scores.detach().cpu().numpy(), labels.detach().cpu().numpy()
+  if isinstance(bboxes, torch.Tensor):
+    bboxes = np.array(bboxes.detach().cpu().tolist())
+    scores = np.array(scores.detach().cpu().tolist())
+    labels = np.array(labels.detach().cpu().tolist())
 
   indices = (scores >= score_thr)
-  boxes, scores, labels = boxes[indices], scores[indices], labels[indices]
+  bboxes, scores, labels = bboxes[indices], scores[indices], labels[indices]
 
   for index, ((x1, y1, x2, y2), cls_label, cls_score) in enumerate(zip(
-    boxes.astype("int"), labels.astype("int"), scores.tolist()
+    bboxes.astype("int"), labels.astype("int"), scores.tolist()
   )):
     cv2.rectangle(img, (x1, y1), (x2, y2), color, 2, 1)
 

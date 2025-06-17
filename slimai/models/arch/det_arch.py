@@ -30,14 +30,12 @@ class DetectionArch(BaseArch):
                   batch_data: torch.Tensor, 
                   batch_info: DataSample) -> DataSample:
     cls_logits, bbox_logits = batch_data
-    num_classes = cls_logits.shape[-1] - 1
 
-    softmax = cls_logits.softmax(-1) # [B, Q, C]
-    pred_scores = softmax.max(-1).values # [B, Q]
-    pred_labels = softmax.argmax(-1) # [B, Q]
-    
-    # remove prediction of background
-    bg_mask = pred_labels == num_classes
+    cls_dist, pred_scores, pred_labels, bg_mask \
+      = self.loss.parse_cls_logits(cls_logits) # type: ignore
+
+    bg_mask = torch.as_tensor(bg_mask, device=cls_logits.device) # [B, Q]
+    pred_logits = [l[~m] for l, m in zip(cls_logits, bg_mask)]
     pred_scores = [s[~m] for s, m in zip(pred_scores, bg_mask)]
     pred_labels = [l[~m] for l, m in zip(pred_labels, bg_mask)]
     pred_bboxes = [ 
@@ -46,9 +44,7 @@ class DetectionArch(BaseArch):
     ]
     
     batch_info.output = dict(
-      logits=cls_logits, # [B, Q, C]
-      softmax=softmax, # [B, Q, C]
-      bg_mask=bg_mask, # [B, Q] -> True for background
+      cls_logits=pred_logits, # [B, ~Q, C] or [B, ~Q, C+1]
       scores=pred_scores, # [B, ~Q]
       labels=pred_labels, # [B, ~Q]
       bboxes=pred_bboxes, # [B, ~Q, 4], where 4 indicates [xmin, ymin, xmax, ymax]

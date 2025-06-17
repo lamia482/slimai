@@ -1,4 +1,6 @@
 import mmengine
+import torch
+from torchvision import tv_tensors
 from slimai.helper.help_build import DATASETS
 from .dataset_checker import DatasetChecker
 from .basic_dataset import BasicDataset
@@ -87,8 +89,6 @@ class SupervisedDataset(BasicDataset):
     if filter_empty:
       files = [files[i] for i in non_empty_indices]
       annotations = {key: [annotations[key][i] for i in non_empty_indices] for key in ann_keys}
-
-    self.collect_keys = sorted(self.collect_keys + ann_keys)
     
     self.files = files
     self.indices = list(range(len(files)))
@@ -103,8 +103,60 @@ class SupervisedDataset(BasicDataset):
     return
     
   def load_extra_keys(self, data, index):
+    super().load_extra_keys(data, index)
     for key in self.ann_keys:
       data[key] = self.annotations[key][index]
+    return data
+  
+  def wrap_data(self, data):
+    data = super().wrap_data(data)
+
+    assert (
+      set(self.ann_keys).issubset(set(list(data.keys())))
+    ), f"Ann keys({self.ann_keys}) must all contained in data, but got: {list(data.keys())}"
+    
+    def wrap_label(label):
+      return torch.tensor(label)
+    
+    def wrap_instance(instance, canvas_size):
+      bboxes = [v["bbox"] for v in instance]
+      labels = [v["category_id"] for v in instance]
+      segments = [v["segmentation"] for v in instance]
+
+      bboxes = tv_tensors.BoundingBoxes(bboxes, format="XYXY", canvas_size=canvas_size) # type: ignore
+      bboxes = tv_tensors.wrap(bboxes.reshape([-1, 4]), like=bboxes) # type: ignore
+
+      labels = torch.tensor(labels, dtype=torch.int64)
+      mask = torch.zeros(canvas_size, dtype=torch.int64)
+      
+      for xys, label in zip(segments, labels):
+        xys = torch.tensor(xys, dtype=torch.int64).reshape(-1, 2)
+        assert (
+          len(xys) == 0 or len(xys) >= 3
+        ), f"Segmentation must have at least 3 points or be empty, but got: {len(xys)}"
+        mask[xys[:, 1], xys[:, 0]] = label
+
+      return dict(
+        bboxes=bboxes,
+        labels=labels,
+        # mask=tv_tensors.Mask(mask), #TODO: mask is not supported yet
+      )
+    
+    image = data["image"]
+    canvas_size = image.size()[-2:]
+
+    for key in self.ann_keys:
+      if key == "label":
+        data[key] = wrap_label(data[key])
+      if key == "mask":
+        raise NotImplementedError("Mask annotation is not supported yet")
+      elif key == "instance":
+        data[key] = wrap_instance(data[key], canvas_size)
+      elif key == "text":
+        raise NotImplementedError("Text annotation is not supported yet")
+      else:
+        raise ValueError(f"Unsupported annotation key: {key}")
+      
     return data
 
   def __str__(self):

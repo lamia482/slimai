@@ -4,8 +4,8 @@ Build components from configuration.
 This function prioritizes customized components, followed by torch components,
 and finally mmengine components.
 """
-import mmcv
 import torch
+from PIL import Image
 from typing import Callable, List, Any
 from torch.utils.data.distributed import DistributedSampler
 from mmengine.dataset import Compose as ComposeTransform
@@ -79,7 +79,7 @@ def compose_components(components,
 def build_loader(cfg) -> Callable:
   """Build loader from configuration."""
   if cfg is None:
-    return mmcv.imread
+    return Image.open
   cfg = cfg.copy()
   return compose_components(cfg, source=LOADERS)
 

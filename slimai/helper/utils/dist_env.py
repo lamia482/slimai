@@ -97,6 +97,7 @@ class DistEnv(object):
 
       if self.device_type == "cuda":
         torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = True
 
     return
   
