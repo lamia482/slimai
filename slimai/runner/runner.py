@@ -59,6 +59,7 @@ class Runner(object):
     )
 
     self.eval_every_n_epochs = ckpt.get("eval_every_n_epochs", 1)
+    self.n_vis_on_eval = ckpt.get("n_vis_on_eval", 8)
 
     # Dump config to work_dir
     self.archive_env_for_reproducibility()
@@ -323,11 +324,11 @@ class Runner(object):
       mmengine.dump(results, result_file)
 
       # visualize
-      help_utils.print_log(f"Visualizing randomly top-{dataloader.batch_size} samples...")
+      help_utils.print_log(f"Visualizing randomly top-{self.n_vis_on_eval} samples...")
       self.record.log_batch_sample(batch_info, output, targets, 
                                    class_names=dataloader.dataset.class_names,
                                    phase=phase, 
-                                   topk=dataloader.batch_size, 
+                                   topk=self.n_vis_on_eval, 
                                    progress_bar=True)
 
     metrics = self.dist.env.broadcast(metrics)

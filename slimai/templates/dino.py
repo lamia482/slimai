@@ -188,6 +188,7 @@ RUNNER = dict(
     keep_best=True, # keep ckpt with minimum loss on VALID dataset
     keep_latest=True, # keep ckpt link to latest epoch
     eval_every_n_epochs=1, 
+    n_vis_on_eval=8, # random render n images on eval
   ),
 
   resume=dict(
