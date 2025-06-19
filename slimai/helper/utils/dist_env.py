@@ -2,6 +2,8 @@ import os
 import itertools
 import datetime
 import torch
+import numpy as np
+import random
 from typing import Dict
 import torch.distributed as dist
 
@@ -30,6 +32,28 @@ class DistEnv(object):
     self.supported_devices = []
     for device_type in device_type_candidates:
       self.try_register_device(device_type)
+    return
+  
+  def set_seed(self, *, seed=10482):
+    deterministic = False if seed is None else True
+
+    torch.use_deterministic_algorithms(deterministic, warn_only=False)
+
+    if deterministic:
+      torch.manual_seed(seed)
+      torch.cuda.manual_seed_all(seed)
+      np.random.seed(seed)
+      random.seed(seed)
+    
+    if self.device_type == "cuda":
+      torch.backends.cudnn.benchmark = (not deterministic)
+      torch.backends.cudnn.deterministic = deterministic
+
+      if deterministic:
+        os.putenv("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+      else:
+        os.unsetenv("CUBLAS_WORKSPACE_CONFIG")
+    
     return
 
   def is_main_process(self, local=True):
@@ -63,7 +87,7 @@ class DistEnv(object):
         raise ValueError(f"Device type {device_type} is not supported")
     return
 
-  def init_dist(self, *, device=None, timeout=None):
+  def init_dist(self, *, device=None, timeout=None, seed=10482):
     """Initialize distributed environment."""
 
     # check if device is supported and rebase the device as default device
@@ -81,6 +105,8 @@ class DistEnv(object):
     if timeout is not None:
       self.timeout = datetime.timedelta(seconds=timeout)
 
+    self.set_seed(seed=seed)
+
     # initialize distributed environment
     if not dist.is_initialized():
       if self.env.get("WORLD_SIZE", None) is None: # in non ddp mode, MASTER_ADDR and MASTER_PORT are not set, mannually set them to use distributed training
@@ -94,10 +120,6 @@ class DistEnv(object):
         world_size=self.global_world_size,
         timeout=self.timeout, 
       )
-
-      if self.device_type == "cuda":
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = True
 
     return
   

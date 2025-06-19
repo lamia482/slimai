@@ -146,8 +146,8 @@ class DETRLoss(torch.nn.Module):
   def compute_cardinality_loss(self, cls_logits: torch.Tensor, cls_targets: List[torch.Tensor], 
                                indices: List[Tuple[torch.Tensor, torch.Tensor]], num_bboxes: int):
     tgt_length = torch.as_tensor([len(v) for v in cls_targets], device=cls_logits.device)
-    _, _, _, bg_mask = self.parse_cls_logits(cls_logits)
-    card_pred = bg_mask.sum(dim=-1) # [B, Q] -> [B]
+    _, _, _, fg_mask = self.parse_cls_logits(cls_logits)
+    card_pred = fg_mask.sum(dim=-1) # [B, Q] -> [B]
     card_err = F.l1_loss(card_pred.float(), tgt_length.float())
     return dict(cardinality_error=card_err)
 
@@ -162,7 +162,9 @@ class DETRLoss(torch.nn.Module):
       pred_scores = cls_dist.max(-1).values # [B, Q]
       pred_labels = cls_dist.argmax(-1) # [B, Q]
       bg_mask = (pred_labels == self.num_classes) | (pred_scores < self.score_thresh) # consider the last class as background in non-focal loss # type: ignore
-    return cls_dist, pred_scores, pred_labels, bg_mask
+
+    fg_mask = ~bg_mask
+    return cls_dist, pred_scores, pred_labels, fg_mask
 
   def _unpack_indices(self, indices, dim):
     batch_idx, data_idx = [], []

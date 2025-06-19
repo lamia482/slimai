@@ -121,6 +121,9 @@ class Distributed(object):
     Returns:
       The prepared component.
     """
+
+    # TODO: convert component to default dtype
+    
     if isinstance(component, torch.optim.Optimizer):
       component.load_state_dict(component.state_dict()) # cast optimizer to proper device
       return component

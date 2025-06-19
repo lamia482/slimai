@@ -23,7 +23,7 @@ class DETRQuery(torch.nn.Module):
     return
   
   def forward(self, x):
-    query = self.query.repeat(x.size(0), 1, 1)
     x = x.view(x.size(0), -1, self.input_dim)
-    x = self.decoder(query, x)
-    return x
+    query = self.query.repeat(x.size(0), 1, 1)
+    query = self.decoder(query, x)
+    return query

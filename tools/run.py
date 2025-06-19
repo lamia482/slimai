@@ -32,6 +32,8 @@ def parse_args():
   parser.add_argument("--device", type=str, default="cuda", help="the device to use")
   parser.add_argument("--timeout", type=int, default=3600, 
                       help="the timeout of the distributed environment")
+  parser.add_argument("--seed", type=int, default=None, 
+                      help="the seed to use")
   # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
   # will pass the `--local-rank` parameter instead of `--local_rank`.
   parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
@@ -89,9 +91,9 @@ def main():
   dist = Distributed.create(
     parallel_mode=args.ddp,
     default_dtype=args.default_dtype,
-    mix_precision=args.mix_precision
+    mix_precision=args.mix_precision,
   )
-  dist.env.init_dist(device=args.device, timeout=args.timeout)
+  dist.env.init_dist(device=args.device, timeout=args.timeout, seed=args.seed)
   print_log("All processes started")
   
   # Create and run the runner

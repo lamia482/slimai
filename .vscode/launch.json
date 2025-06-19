@@ -78,7 +78,7 @@
       "name": "Python Debugger: Current File",
       "type": "debugpy",
       "request": "launch",
-      "cwd": "${workspaceFolder}",
+      "cwd": "${fileDirname}",
       "program": "${file}",
       "console": "integratedTerminal",
       "justMyCode": false
