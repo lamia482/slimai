@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, Union, List
 from .utils.dist_env import dist_env
 from .utils.visualize import Visualizer
 from .utils.select import recursive_select
+from .help_utils import print_log
 
 
 class Record(object):
@@ -109,7 +110,7 @@ class Record(object):
                  batch_targets: Dict[str, List[Any]],
                  class_names: List[str],
                  phase: Optional[str] = None,
-                 topk: int = 1, 
+                 topk: Optional[int] = None, 
                  progress_bar: bool = False):
     """
     Log visualization of batch samples.
@@ -122,8 +123,11 @@ class Record(object):
     if not self.should_record:
       return
     
-    if topk <= 0:
+    if topk is None:
       topk = len(batch_image)
+
+    if topk <= 0:
+      topk = 0
 
     topk_ids = torch.randperm(len(batch_image))[:topk].tolist()
     
@@ -132,11 +136,15 @@ class Record(object):
     topk_outputs = recursive_select(batch_output, topk_ids)
     topk_targets: dict = recursive_select(batch_targets, topk_ids) # type: ignore
 
-    vis_list = Visualizer.render_batch_sample(
-      topk_files, topk_outputs, topk_targets, 
-      class_names, 
-      progress_bar=progress_bar,
-    )
+    try:
+      vis_list = Visualizer.render_batch_sample(
+        topk_files, topk_outputs, topk_targets, 
+        class_names, 
+        progress_bar=progress_bar,
+      )
+    except Exception as e:
+      print_log(f"Error in rendering batch sample\n{e}", level="WARNING", warn_once=True)
+      return
     
     vis_list = [
       swanlab.Image(Image.fromarray(vis[..., ::-1]), caption=f"{topk_files[i]}")
