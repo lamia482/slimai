@@ -21,12 +21,18 @@ class TorchTransform(BaseTransform):
       len(ann_data) <= 1
     ), f"Only one annotation key is supported, but got: {list(ann_data.keys())}"
 
-    inp_data = (img_data, *ann_data.values())
-    t_img, *t_ann = self.transforms(*inp_data)
+    has_ann = (len(ann_data) > 0)
+
+    if has_ann:
+      inp_data = (img_data, *ann_data.values())
+      t_img, *t_ann = self.transforms(*inp_data)
+      for k, v in zip(ann_data.keys(), t_ann):
+        data[k] = v
+    else:
+      t_img = self.transforms(img_data)
 
     data[self.image_key] = t_img
-    for k, v in zip(ann_data.keys(), t_ann):
-      data[k] = v
+    
     return data
   
   def compose(self, transforms):

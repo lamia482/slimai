@@ -206,6 +206,12 @@ class Distributed(object):
     Get the fully unwrapped module for the given Module or ModuleDict.
     """
     def _to_uncurated_module(module):
+      module_size = PytorchNetworkUtils.get_params_size(
+        module, grad_mode="trainable", magnitude="digit")
+    
+      if module_size == 0:
+        return module
+        
       if self.parallel_mode == "ddp":
         return getattr(module, "module")
       elif self.parallel_mode == "fsdp":

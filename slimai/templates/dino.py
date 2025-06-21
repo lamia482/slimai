@@ -259,6 +259,8 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
 ############################## CLEAR FOR DUMP
 del datetime, hashlib, torch
 
+_PROJECT_ = "dino"
+
 _COMMENT_ = """
 
 """

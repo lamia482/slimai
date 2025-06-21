@@ -78,15 +78,9 @@ class Record(object):
       experiment_name is not None
     ), "experiment name is not specified in config, please specify '_EXPERIMENT_' in the config file or set 'config' in CLI"
 
-    description = config.get("_COMMENT_", None)
-    assert (
-      description is not None
-    ), "description/comment is not specified in config, please specify '_COMMENT_' in the config file"
-
     swanlab.init(
       project=project_name, 
       experiment_name=experiment_name,
-      description=description,
       config=config,
     )
 

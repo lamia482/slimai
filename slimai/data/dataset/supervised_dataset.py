@@ -148,7 +148,7 @@ class SupervisedDataset(BasicDataset):
     for key in self.ann_keys:
       if key == "label":
         data[key] = wrap_label(data[key])
-      if key == "mask":
+      elif key == "mask":
         raise NotImplementedError("Mask annotation is not supported yet")
       elif key == "instance":
         data[key] = wrap_instance(data[key], canvas_size)

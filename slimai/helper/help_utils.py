@@ -46,7 +46,7 @@ def get_last_commit_id_by_path(path: str):
     ).decode('utf-8').strip()
     return commit_id
   except subprocess.CalledProcessError:
-    return None
+    return ""
 
 
 class ProgressBar(mmengine.ProgressBar):

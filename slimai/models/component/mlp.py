@@ -21,7 +21,10 @@ class MLP(torch.nn.Module):
     ), "n_layer must be greater than or equal to 1, but got {}".format(n_layer)
 
     self.act = self.get_act(act)
-    self.norm = self.get_norm(norm)(bottleneck_dim)
+    self.norm = torch.nn.ModuleDict({
+      str(hidden_dim): self.get_norm(norm)(hidden_dim),
+      str(bottleneck_dim): self.get_norm(norm)(bottleneck_dim),
+    })
     self.dropout = self.get_dropout(dropout)
     self.n_layer = n_layer
 
@@ -46,8 +49,11 @@ class MLP(torch.nn.Module):
   def forward(self, x):
     for i, layer in enumerate(self.layers):
       x = layer(x)
+      
       if i < self.n_layer - 1:
-        x = self.dropout(self.act(self.norm(x)))
+        norm = self.norm[str(x.size(-1))]
+        x = self.dropout(self.act(norm(x)))
+
     return x
   
   def get_act(self, act: Optional[str]) -> torch.nn.Module:

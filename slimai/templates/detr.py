@@ -236,8 +236,8 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
 ############################## CLEAR FOR DUMP
 del datetime, hashlib, torch
 
-_PROJECT_ = "debug"
+_PROJECT_ = "detr"
 
 _COMMENT_ = """
-1. use no augmentation to train
+
 """

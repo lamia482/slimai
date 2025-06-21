@@ -15,19 +15,21 @@ __all__ = [
   "data", "helper", "models", "runner"
 ]
 
-def get_version():
-  from .helper.common import VERSION
-  return VERSION
-
 def get_path():
   return osp.abspath(__file__)
 
 def get_package_path():
   return osp.dirname(osp.dirname(get_path()))
 
-def get_last_commit_id():
+def get_last_commit_id() -> str:
   from .helper.help_utils import get_last_commit_id_by_path
   return get_last_commit_id_by_path(get_package_path())
+
+def get_version():
+  from .helper.common import VERSION
+  commit = get_last_commit_id()[:8]
+  version = f"{VERSION}-{commit}"
+  return version
 
 __version__ = get_version()
 __path__ = get_path()

@@ -236,6 +236,8 @@ signature = datetime.now().strftime("%Y%m%d-{:s}".format(
 ############################## CLEAR FOR DUMP
 del datetime, hashlib, cv2
 
+_PROJECT_ = "classify"
+
 _COMMENT_ = """
 
 """

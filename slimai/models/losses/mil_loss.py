@@ -11,8 +11,8 @@ __all__ = [
 class MILLoss(torch.nn.Module):
   def __init__(self, 
                cls_loss=dict(
-                  type="torch.nn.CrossEntropyLoss",
-                  label_smoothing=0.1,
+                 type="torch.nn.CrossEntropyLoss",
+                 label_smoothing=0.1,
                )):
     super().__init__()
     # Initialize classification loss

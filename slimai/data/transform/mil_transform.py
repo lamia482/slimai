@@ -1,7 +1,8 @@
 import numpy as np
-import cv2
 import torch
 import itertools
+import torch.nn.functional as F
+from torchvision import tv_tensors
 from slimai.helper.help_build import TRANSFORMS
 from .base_transform import BaseTransform
 
@@ -36,7 +37,7 @@ class MILTransform(BaseTransform):
     self.random_crop_patch_num = random_crop_patch_num or 0
     assert (
       self.random_crop_patch_num is None or (
-        isinstance(self.random_crop_patch_num, int) and (self.random_crop_patch_num > 0)
+        isinstance(self.random_crop_patch_num, int) and (self.random_crop_patch_num >= 0)
       )
     ), "random_crop_patch_num must be an integer greater than 0, but got {}".format(self.random_crop_patch_num)
     self.use_patch_as_view = (self.random_crop_patch_num > 0)
@@ -59,14 +60,18 @@ class MILTransform(BaseTransform):
       if k in data
     }
 
-    wsi_image = inp_data["image"]
+    wsi_image = inp_data["image"] # [C, H, W]
+    assert (
+      isinstance(wsi_image, tv_tensors.Image)
+    ), f"wsi image is expected to be tv_tensors.Image, but got: {type(wsi_image)}"
+
     xy_list = self.process_shrink(wsi_image)
 
     tiles = []
     for (x, y) in xy_list:
-      tile = wsi_image[y:y+self.tile_size, x:x+self.tile_size]
-      if tile.shape[0] < self.tile_size or tile.shape[1] < self.tile_size:
-        tile = np.pad(tile, ((0, self.tile_size-tile.shape[0]), (0, self.tile_size-tile.shape[1]), (0, 0)), mode="constant", constant_values=self.padding_value)
+      tile = wsi_image[..., y:y+self.tile_size, x:x+self.tile_size]
+      tile = F.pad(tile, [0, self.tile_size-tile.shape[-1], 0, self.tile_size-tile.shape[-2]], 
+                   mode="constant", value=255)
       tiles.append(tile)
         
     views = tiles
@@ -80,7 +85,7 @@ class MILTransform(BaseTransform):
           x_start = np.random.randint(0, self.tile_size - self.random_crop_patch_size + 1)
           y_start = np.random.randint(0, self.tile_size - self.random_crop_patch_size + 1)
           # Extract the patch
-          patch = tile[y_start:y_start+self.random_crop_patch_size, x_start:x_start+self.random_crop_patch_size]
+          patch = tile[..., y_start:y_start+self.random_crop_patch_size, x_start:x_start+self.random_crop_patch_size]
           views.append(patch)
 
     # we want MIL not sensitive to the order of tiles
@@ -91,11 +96,12 @@ class MILTransform(BaseTransform):
       self.topk if isinstance(self.topk, int) else max(1, int(self.topk * len(views)))
     )
     topk_views = views[:topk]
+    topk_views = torch.stack(topk_views, dim=0) # (N, C, H, W)
+    patches = tv_tensors.Image(topk_views) # (N, C, H, W)
 
     # produce output images in (N, C, H, W)
-    out_images = list(map(lambda x: self.transforms(dict(image=x))["image"], topk_views))
-    stack_tensor = torch.stack(out_images, dim=0)
-    data.update(dict(image=stack_tensor))
+    out_patches = self.transforms(dict(image=patches))["image"]
+    data.update(dict(image=out_patches))
     return data
 
   def process_shrink(self, image):
