@@ -79,6 +79,6 @@ class MLP(torch.nn.Module):
       return torch.nn.Identity()
     return torch.nn.Dropout(dropout)
   
-  def get_linear(self, in_features, out_features) -> torch.nn.Module:
-    return torch.nn.Linear(in_features, out_features)
+  def get_linear(self, in_features, out_features, **kwargs) -> torch.nn.Module:
+    return torch.nn.Linear(in_features, out_features, **kwargs)
   

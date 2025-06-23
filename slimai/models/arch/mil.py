@@ -3,6 +3,7 @@ from typing import Union, Dict, List
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import MODELS, build_model
 from slimai.helper.utils import PytorchNetworkUtils
+from slimai.helper import DataSample
 from .cls_arch import ClassificationArch
 
 
@@ -103,14 +104,31 @@ class MIL(ClassificationArch):
     # batch_data in shape (B, ~N, C, H, W)
     backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
     neck = self.model.neck(backbone) # type: ignore # (B, D)
+    if isinstance(neck, tuple):
+      neck, atten_logits = neck
+    else:
+      atten_logits = None
     head = self.model.head(neck) # type: ignore # (B, C)
+
+    # TODO: add loss from backbone similarity to mil attention
 
     if return_flow:
       return dict(
         backbone=backbone,
+        atten_logits=atten_logits,
         neck=neck,
         head=head,
       )
     else:
       return head
+
+  def _forward_loss(self, 
+              embedding_dict: Dict[str, torch.Tensor], 
+              batch_info: DataSample) -> Dict[str, torch.Tensor]:
+    backbone = embedding_dict["backbone"]
+    atten_logits = embedding_dict["atten_logits"]
+    cls_logits = embedding_dict["head"]
+    cls_targets = batch_info.label # type: ignore
+    loss = self.loss(backbone, atten_logits, cls_logits, cls_targets)
+    return loss
   

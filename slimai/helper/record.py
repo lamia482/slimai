@@ -127,7 +127,7 @@ class Record(object):
       topk = len(batch_image)
 
     if topk <= 0:
-      topk = 0
+      return
 
     topk_ids = torch.randperm(len(batch_image))[:topk].tolist()
     
