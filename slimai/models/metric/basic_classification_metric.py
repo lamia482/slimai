@@ -11,6 +11,11 @@ class BasicClassificationMetric(torch.nn.Module):
                   task="multiclass",
                   sync_on_compute=False,
                 ), 
+                auc=dict(
+                  type="torchmetrics.AUROC",
+                  task="multiclass",
+                  sync_on_compute=False,
+                ), 
                kappa=dict(
                   type="torchmetrics.CohenKappa",
                   task="multiclass",
@@ -19,7 +24,9 @@ class BasicClassificationMetric(torch.nn.Module):
               ):
     super().__init__()
     self.acc = build_metric(acc)
+    self.auc = build_metric(auc)
     self.kappa = build_metric(kappa)
+    return
 
   @torch.inference_mode()
   def forward(self, 
@@ -29,5 +36,6 @@ class BasicClassificationMetric(torch.nn.Module):
     labels = targets["label"]
     return dict(
       acc=self.acc(softmax, labels),
+      auc=self.auc(softmax, labels),
       kappa=self.kappa(softmax, labels),
     )
