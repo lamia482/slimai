@@ -85,7 +85,7 @@ Dependencies:
 
 Key Conventions:
 
-1. Follow PEP 8 style guide for Python code, but prefer use 2 space instead of a tab, but prefer 'return' line at the end of method.
+1. Follow PEP 8 style guide for Python code, but prefer to use 2 space instead of a tab, but prefer to use a 'return' line at the end of method function.
 2. Use meaningful and descriptive names for variables, functions, and classes.
 3. Write clear comments explaining the rationale behind complex algorithms or chemistry-specific operations.
 4. Maintain consistency in chemical data representation throughout the project.
