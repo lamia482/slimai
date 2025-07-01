@@ -142,7 +142,7 @@ class Runner(object):
 
     train_forward_func = partial(self.arch, mode="loss")
 
-    with torch.autocast(device_type=self.dist.env.device_type, 
+    with torch.autocast(device_type=self.dist.env.accelerator, 
                         enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
 
       forward_start_time = time.time()
@@ -283,7 +283,7 @@ class Runner(object):
       batch_info = self.dist.prepare_for_distributed(batch_info)
       batch_info = DataSample(**batch_info).to(self.dist.env.device)
       batch_data = batch_info.pop("image")
-      with torch.autocast(device_type=self.dist.env.device.type, 
+      with torch.autocast(device_type=self.dist.env.accelerator, 
                           enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
         batch_info = infer_forward_func(batch_data, batch_info).cpu()
       results.extend(batch_info.split_as_list())

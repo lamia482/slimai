@@ -157,7 +157,7 @@ class Distributed(object):
     Returns:
       Wrapped module with DDP or FSDP based on parallel_mode
     """
-    module = module.to(f"{self.env.device_type}:{self.env.local_rank}")
+    module = module.to(f"{self.env.accelerator}:{self.env.local_rank}")
     if not self.env.is_dist_initialized():
       return module
     

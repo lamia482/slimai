@@ -10,6 +10,7 @@ fi
 
 # export NCCL_SOCKET_IFNAME=eth0
 export NCCL_DEBUG=INFO
+export OMP_NUM_THREADS=1
 
 ##### define nodes number for jobs
 NNODES=${NNODES:-1}

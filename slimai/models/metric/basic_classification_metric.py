@@ -8,17 +8,20 @@ class BasicClassificationMetric(torch.nn.Module):
   def __init__(self, 
                acc=dict(
                   type="torchmetrics.Accuracy",
-                  task="multiclass",
+                  task="multiclass", 
+                  num_classes=None,
                   sync_on_compute=False,
                 ), 
                 auc=dict(
                   type="torchmetrics.AUROC",
                   task="multiclass",
+                  num_classes=None,
                   sync_on_compute=False,
                 ), 
                kappa=dict(
                   type="torchmetrics.CohenKappa",
                   task="multiclass",
+                  num_classes=None,
                   sync_on_compute=False,
                 )
               ):

@@ -52,7 +52,7 @@ class Gradient(object):
     else:
       GradScaler = torch.amp.GradScaler # type: ignore
     
-    self.scaler = GradScaler(self.dist.env.device_type, enabled=self.amp)
+    self.scaler = GradScaler(self.dist.env.accelerator, enabled=self.amp)
     
     # Handle distributed training
     if (not self.dist.env.is_dist_initialized()) and (self.accumulation_every_n_steps > 1):

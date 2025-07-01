@@ -45,6 +45,8 @@ class BaseArch(object):
 
   def compile(self, compile: bool = False):
     if compile:
+      if self.dist.env.accelerator not in ["cuda"]:
+        print_log(f"`compile` is not stable on non-CUDA accelerator, but currently is compiling on Accelerator:{self.dist.env.accelerator}", level="WARNING", warn_once=True)
       self.model.compile()
     return
 

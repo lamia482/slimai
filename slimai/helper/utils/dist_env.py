@@ -26,12 +26,12 @@ class DistEnv(object):
     ] if k in os.environ}
   
   def __init__(self) -> None:
-    self.device_type = "cpu"
+    self.accelerator = "cpu"
     self.timeout = datetime.timedelta(seconds=60)
-    device_type_candidates = ["cpu", "cuda", "mps", "mkldnn", "xla", "npu"]
-    self.supported_devices = []
-    for device_type in device_type_candidates:
-      self.try_register_device(device_type)
+    accelerator_candidates = ["cpu", "cuda", "mps", "mkldnn", "xla", "npu"]
+    self.supported_accelerators = []
+    for accelerator in accelerator_candidates:
+      self.try_register_accelerator(accelerator)
     return
   
   def set_seed(self, *, seed=10482):
@@ -45,7 +45,7 @@ class DistEnv(object):
       np.random.seed(seed)
       random.seed(seed)
     
-    if self.device_type == "cuda":
+    if self.accelerator == "cuda":
       torch.backends.cudnn.benchmark = (not deterministic)
       torch.backends.cudnn.deterministic = deterministic
 
@@ -67,31 +67,31 @@ class DistEnv(object):
   
   @property
   def device(self):
-    return torch.device(self.device_type)
+    return torch.device(self.accelerator)
   
   @property
   def device_module(self):
-    return getattr(torch, self.device_type)
+    return getattr(torch, self.accelerator)
 
-  def try_register_device(self, device_type, rebase=False):
-    if device_type is None:
+  def try_register_accelerator(self, accelerator, rebase=False):
+    if accelerator is None:
       return
-    if device_type not in self.supported_devices:
-      device = getattr(torch, device_type, None)
+    if accelerator not in self.supported_accelerators:
+      device = getattr(torch, accelerator, None)
       if device is not None and device.is_available():
-        self.supported_devices.append(device_type)
+        self.supported_accelerators.append(accelerator)
     if rebase:
-      if device_type in self.supported_devices:
-        self.device_type = device_type
+      if accelerator in self.supported_accelerators:
+        self.accelerator = accelerator
       else:
-        raise ValueError(f"Device type {device_type} is not supported")
+        raise ValueError(f"Accelerator {accelerator} is not supported")
     return
 
   def init_dist(self, *, device=None, timeout=None, seed=10482):
     """Initialize distributed environment."""
 
     # check if device is supported and rebase the device as default device
-    self.try_register_device(device, rebase=True)
+    self.try_register_accelerator(device, rebase=True)
 
     backend = dict(
       cpu="gloo",
@@ -100,7 +100,7 @@ class DistEnv(object):
       mps="gloo",
       mkldnn="gloo",
       xla="gloo",
-    ).get(self.device_type, None)
+    ).get(self.accelerator, None)
 
     if timeout is not None:
       self.timeout = datetime.timedelta(seconds=timeout)

@@ -4,10 +4,10 @@ import mmengine
 import torch
 import time
 import cv2
+import functools
 from PIL import Image
 from torchvision import tv_tensors
 from pathlib import Path
-from functools import partial
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import DATASETS, build_transform, build_loader, build_source
 from slimai.helper.common import CACHE_ROOT_DIR
@@ -32,6 +32,7 @@ class BasicDataset(torch.utils.data.Dataset):
                max_sample_num=None, 
                repeat=1,
                cache=False, 
+               max_loader_cache_size=0,
                **kwargs):
     self.dataset_file = "Not file"
 
@@ -82,7 +83,8 @@ class BasicDataset(torch.utils.data.Dataset):
     
     self.to_rgb = to_rgb
 
-    self.loader = build_loader(loader)
+    loader = build_loader(loader)
+    self.loader = functools.lru_cache(maxsize=max_loader_cache_size)(loader)
 
     self.desc = desc or "No specific description."
 
@@ -112,7 +114,7 @@ class BasicDataset(torch.utils.data.Dataset):
 
     # convert image to PIL Image
     data_to_pil_start_time = time.time()
-    to_pil_image = partial(self.to_pil_image, to_rgb=self.to_rgb)
+    to_pil_image = functools.partial(self.to_pil_image, to_rgb=self.to_rgb)
     image = self.apply_kernel(to_pil_image, image)
     data_to_pil_latency = time.time() - data_to_pil_start_time
 
