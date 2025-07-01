@@ -10,7 +10,7 @@ import slimai
 from slimai.helper import (
   help_build, help_utils, DataSample, Distributed, Checkpoint, Gradient, Record
 )
-from slimai.helper.utils import PytorchNetworkUtils
+from slimai.helper.utils import PytorchNetworkUtils, recursive_apply
 from torch.distributed.elastic.multiprocessing.errors import record
 
 
@@ -32,7 +32,9 @@ class Runner(object):
     help_utils.update_logger(self.log_dir / f"{int(time.time())}.txt", 
                              logger.get("log_level", "INFO"))
     self.log_every_n_steps = logger.get("log_every_n_steps", 10)
-    self.log_precision = logger.get("log_precision", "")
+    self.log_precision = logger.get("log_precision", ".8f")
+    self.log_loss_precision = logger.get("log_loss_precision", self.log_precision)
+    self.log_latency_precision = logger.get("log_latency_precision", self.log_precision)
 
     # Check environment
     slimai.check_env()
@@ -134,13 +136,18 @@ class Runner(object):
   def step_train(self, i_step, total_steps, 
                  batch_data, batch_info):
     """Train the model for one step."""
+
+    step_train_start_time = time.time()
     accumulation_i_step = i_step % self.gradient.accumulation_every_n_steps
 
     train_forward_func = partial(self.arch, mode="loss")
 
     with torch.autocast(device_type=self.dist.env.device_type, 
                         enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
+
+      forward_start_time = time.time()
       loss_dict = train_forward_func(batch_data, batch_info)
+      forward_latency = time.time() - forward_start_time
 
       total_loss = None
       for loss_name, loss_value in loss_dict.items():
@@ -152,6 +159,7 @@ class Runner(object):
         total_loss is not None
       ), "total_loss must be provided"
       
+      backward_start_time = time.time()
       self.gradient.step(
         model=self.model,
         solver=self.solver,
@@ -161,8 +169,15 @@ class Runner(object):
         total_steps=total_steps,
         accumulation_i_step=accumulation_i_step
       )
+      backward_latency = time.time() - backward_start_time
 
-    return total_loss, loss_dict
+    step_train_latency = time.time() - step_train_start_time
+    latency_dict = dict(
+      step_train_latency=step_train_latency,
+      forward_latency=forward_latency,
+      backward_latency=backward_latency,
+    )
+    return total_loss, loss_dict, latency_dict
   
   def train(self):
     """Train the model."""
@@ -188,13 +203,14 @@ class Runner(object):
         batch_info = self.dist.prepare_for_distributed(batch_info)
         batch_info = DataSample(**batch_info).to(self.dist.env.device)
         batch_data = batch_info.pop("image")
+        batch_latency = batch_info.pop("latency")
 
         # before forward step
         self.arch.step_precede_hooks(runner=self)
 
         # forward step
-        total_loss, loss_dict = self.step_train(self.step, len(self.train_dataloader), 
-                                                batch_data, batch_info)
+        total_loss, loss_dict, latency_dict = self.step_train(self.step, len(self.train_dataloader), 
+                                                              batch_data, batch_info)
         
         # update avg loss
         total_loss_value = total_loss.detach().cpu().item()
@@ -205,10 +221,17 @@ class Runner(object):
           "avg_loss": avg_loss_value,
           "total_loss": total_loss_value, 
           **loss_dict, 
+          **latency_dict,
+          **recursive_apply(lambda x: x.detach().mean().cpu().item(), batch_latency) # type: ignore
         }
-        msg += ", " + ", ".join(
-          [f"{key}: {value:{self.log_precision}}" for key, value in log_data.items()]
-        )
+
+        for key, value in log_data.items():
+          if "loss" in key:
+            msg += f", {key}: {value:{self.log_loss_precision}}"
+          elif "latency" in key:
+            msg += f", {key}: {value:{self.log_latency_precision}}"
+          else:
+            msg += f", {key}: {value:{self.log_precision}}"
 
         self.record.log_step_data(log_data, phase=phase)
         if (self.step + 1) % self.log_every_n_steps == 0:

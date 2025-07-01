@@ -1,7 +1,8 @@
-from typing import Union, List, Dict, Any
+from typing import Union, List, Dict, Any, Callable
 
 __all__ = [
   "recursive_select",
+  "recursive_apply",
 ]
 
 def recursive_select(
@@ -28,3 +29,13 @@ def recursive_select(
   elif isinstance(inputs, dict):
     return {k: recursive_select(v, ids) for k, v in inputs.items()}
   return inputs
+
+def recursive_apply(
+  func: Callable,
+  inputs: Union[List, Dict, Any],
+) -> Union[List, Dict, Any]:
+  if isinstance(inputs, (list, tuple)):
+    return [recursive_apply(func, item) for item in inputs]
+  elif isinstance(inputs, dict):
+    return {k: recursive_apply(func, v) for k, v in inputs.items()}
+  return func(inputs)

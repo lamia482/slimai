@@ -1,14 +1,11 @@
 import cv2
-import mmcv
 import torch
 import numpy as np
 
 
 def to_image(image):
-  try:
-    image = mmcv.imread(image)
-  except:
-    pass
+  if isinstance(image, str):
+    image = cv2.imread(image)
   return image
     
 def to_batch_tensor_image(image, device=None):

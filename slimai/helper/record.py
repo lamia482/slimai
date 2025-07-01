@@ -42,7 +42,10 @@ class Record(object):
     Determines if the current process should record data.
     Only the main process across all nodes should record.
     """
-    return dist_env.is_main_process(local=False)
+    return (
+      dist_env.is_main_process(local=False) and 
+      self._swanlab_ok
+    )
   
   def __init__(self, *, cfg: Optional[mmengine.Config] = None):
     """
@@ -54,10 +57,12 @@ class Record(object):
     if self._initialized:
       return
 
+    self._swanlab_ok = True
+
     # only one process across all nodes&ranks should record
     if not self.should_record:
       return
-    
+
     assert (
       cfg is not None
     ), "cfg is not specified in Record, this may caused by the wrong initialization order"
@@ -79,11 +84,16 @@ class Record(object):
       experiment_name is not None
     ), "experiment name is not specified in config, please specify '_EXPERIMENT_' in the config file or set 'config' in CLI"
 
-    swanlab.init(
-      project=project_name, 
-      experiment_name=experiment_name,
-      config=config,
-    )
+    try:
+      swanlab.init(
+        project=project_name, 
+        experiment_name=experiment_name,
+        config=config,
+      )
+    except Exception as ex:
+      print_log(f"Error in initializing swanlab, skip recording\n{ex}", level="WARNING", warn_once=True)
+      self._swanlab_ok = False
+      return
 
     self._initialized = True
     return
@@ -127,7 +137,7 @@ class Record(object):
       topk = len(batch_image)
 
     if topk <= 0:
-      return
+      topk = 0
 
     topk_ids = torch.randperm(len(batch_image))[:topk].tolist()
     

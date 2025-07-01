@@ -41,7 +41,7 @@ class Gradient(object):
     ), "accumulation_every_n_steps must be greater than or equal to 1"
     
     # Set up gradient configuration
-    self.amp = amp and torch.cuda.is_bf16_supported()
+    self.amp = amp and getattr(self.dist.env.device_module, "is_bf16_supported", lambda: False)()
     self.accumulation_every_n_steps = accumulation_every_n_steps
     self.clip = clip
     

@@ -186,6 +186,8 @@ RUNNER = dict(
     log_dir="logs",
     log_every_n_steps=1,
     log_precision=".8f",
+    log_loss_precision=".8f",
+    log_latency_precision=".3f",
   ), 
 
   ckpt=dict(

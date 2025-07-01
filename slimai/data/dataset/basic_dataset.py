@@ -1,8 +1,9 @@
 import hashlib
 import numpy as np
-import mmcv
 import mmengine
 import torch
+import time
+import cv2
 from PIL import Image
 from torchvision import tv_tensors
 from pathlib import Path
@@ -96,25 +97,47 @@ class BasicDataset(torch.utils.data.Dataset):
     return data
 
   def select_sample(self, item):
+    data_select_start_time = time.time()
+
     file = self.files[item]
+
+    data_loader_start_time = time.time()
     image = self.loader(file)
+    data_loader_latency = time.time() - data_loader_start_time
+    
     if image is None:
       print_log(f"Image '{file}' is None, select another sample randomly", level="WARNING")
       item = np.random.randint(0, len(self))
       return self.select_sample(item)
 
     # convert image to PIL Image
+    data_to_pil_start_time = time.time()
     to_pil_image = partial(self.to_pil_image, to_rgb=self.to_rgb)
     image = self.apply_kernel(to_pil_image, image)
+    data_to_pil_latency = time.time() - data_to_pil_start_time
 
     data = dict(indice=item, image=image)
     data = self.load_extra_keys(data, index=item)
 
     # wrap data tv_tensors
+    data_wrap_start_time = time.time()
     data = self.wrap_data(data)
+    data_wrap_latency = time.time() - data_wrap_start_time
 
+    data_transform_start_time = time.time()
     data = self.transform(data)
-    
+    data_transform_latency = time.time() - data_transform_start_time
+
+    data_select_latency = time.time() - data_select_start_time
+
+    # wrap data latency
+    data["latency"] = dict(
+      data_select_latency=data_select_latency,
+      data_loader_latency=data_loader_latency,
+      data_to_pil_latency=data_to_pil_latency,
+      data_wrap_latency=data_wrap_latency,
+      data_transform_latency=data_transform_latency,
+    )
     return data
   
   def to_pil_image(self, image, to_rgb=True):
@@ -122,17 +145,19 @@ class BasicDataset(torch.utils.data.Dataset):
     """
     if isinstance(image, np.ndarray):
       if image.ndim == 3:
-        image = mmcv.bgr2rgb(image)
-      image = Image.fromarray(image)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+      pil_image = Image.fromarray(np.ascontiguousarray(image))
+    else:
+      pil_image = image
 
     assert (
-      isinstance(image, Image.Image)
-    ), f"Image must be a PIL Image, but got: {type(image)}"
+      isinstance(pil_image, Image.Image)
+    ), f"Image must be a PIL Image, but got: {type(pil_image)}"
 
     if to_rgb:
-      image = image.convert("RGB")
+      pil_image = pil_image.convert("RGB")
         
-    return image
+    return pil_image
   
   def apply_kernel(self, kernel, data):
     if isinstance(data, (list, tuple)):

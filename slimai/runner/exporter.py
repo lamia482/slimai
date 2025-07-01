@@ -1,5 +1,8 @@
 import onnx
-from onnxsim import simplify
+try:
+  from onnxsim import simplify
+except:
+  simplify = lambda _: (_, True)
 import torch
 from pathlib import Path
 from functools import partial
