@@ -4,7 +4,7 @@ import sys
 import torch
 from functools import partial
 from torch.utils.checkpoint import checkpoint as gradient_checkpoint
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, Tuple
 from slimai.helper import help_build, DataSample, Distributed
 from slimai.helper.help_utils import print_log
 from slimai.helper.utils import PytorchNetworkUtils
@@ -139,7 +139,7 @@ class BaseArch(object):
                batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
                batch_info: Optional[Union[Dict, DataSample]] = None,
                mode="tensor"
-               ) -> Union[Dict, torch.Tensor, DataSample]:
+               ) -> Union[Tuple, Dict, torch.Tensor, DataSample]:
     # Forward pass with different modes: tensor, loss, predict
     expected_modes = ["tensor", "loss", "predict"]
     if mode not in expected_modes:
@@ -157,6 +157,7 @@ class BaseArch(object):
       embedding_dict = self.gradient_checkpoint(
         self._forward_tensor, batch_data, return_flow=True
       )
+      output = embedding_dict.get("head", None) # type: ignore
       loss_dict = self._forward_loss(embedding_dict, batch_info) # type: ignore
       assert (
         isinstance(loss_dict, dict) and len(loss_dict) > 0
@@ -166,7 +167,7 @@ class BaseArch(object):
       if not math.isfinite(loss.item()): # type: ignore
         print_log("Loss is {}, stopping training".format(loss), level="ERROR")
         sys.exit(1)
-      output = loss_dict
+      output = (output, loss_dict)
 
     elif mode == "predict":
       output = self.predict(batch_data, batch_info)

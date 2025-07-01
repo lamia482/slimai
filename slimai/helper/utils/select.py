@@ -24,8 +24,10 @@ def recursive_select(
       return [_get_item_by_ids(_inputs, _id) for _id in _ids]
     return _inputs[_ids]
   
-  if isinstance(inputs, (list, tuple)):
+  if isinstance(inputs, list):
     return _get_item_by_ids(inputs, ids)
+  elif isinstance(inputs, tuple):
+    return tuple(map(lambda x: recursive_select(x, ids), inputs))
   elif isinstance(inputs, dict):
     return {k: recursive_select(v, ids) for k, v in inputs.items()}
   return inputs
@@ -34,8 +36,10 @@ def recursive_apply(
   func: Callable,
   inputs: Union[List, Dict, Any],
 ) -> Union[List, Dict, Any]:
-  if isinstance(inputs, (list, tuple)):
+  if isinstance(inputs, list):
     return [recursive_apply(func, item) for item in inputs]
+  elif isinstance(inputs, tuple):
+    return tuple(map(lambda x: recursive_apply(func, x), inputs))
   elif isinstance(inputs, dict):
     return {k: recursive_apply(func, v) for k, v in inputs.items()}
   return func(inputs)

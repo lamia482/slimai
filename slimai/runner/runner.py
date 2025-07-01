@@ -61,7 +61,8 @@ class Runner(object):
     )
 
     self.eval_every_n_epochs = ckpt.get("eval_every_n_epochs", 1)
-    self.n_vis_on_eval = ckpt.get("n_vis_on_eval", 8)
+    self.n_vis_on_train = ckpt.get("n_vis_on_train", 0) # default no vis on train
+    self.n_vis_on_eval = ckpt.get("n_vis_on_eval", 8) # default 8 images on eval
 
     # Dump config to work_dir
     self.archive_env_for_reproducibility()
@@ -146,7 +147,7 @@ class Runner(object):
                         enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
 
       forward_start_time = time.time()
-      loss_dict = train_forward_func(batch_data, batch_info)
+      output, loss_dict = train_forward_func(batch_data, batch_info)
       forward_latency = time.time() - forward_start_time
 
       total_loss = None
@@ -177,7 +178,7 @@ class Runner(object):
       forward_latency=forward_latency,
       backward_latency=backward_latency,
     )
-    return total_loss, loss_dict, latency_dict
+    return output, total_loss, loss_dict, latency_dict
   
   def train(self):
     """Train the model."""
@@ -209,8 +210,18 @@ class Runner(object):
         self.arch.step_precede_hooks(runner=self)
 
         # forward step
-        total_loss, loss_dict, latency_dict = self.step_train(self.step, len(self.train_dataloader), 
-                                                              batch_data, batch_info)
+        output, total_loss, loss_dict, latency_dict = self.step_train(
+          self.step, len(self.train_dataloader), batch_data, batch_info)
+
+        # log batch sample in training duration
+        if (output is not None) and (self.n_vis_on_train > 0):
+          help_utils.print_log(f"Visualizing top-{self.n_vis_on_train}(random on truncated) samples...", warn_once=True)
+          with torch.inference_mode():
+            output = getattr(self.arch, "postprocess")(output, batch_info).output
+            targets = {key: getattr(batch_info, key) for key in self.train_dataloader.dataset.ann_keys}
+          self.record.log_batch_sample(batch_data, output, targets, 
+                                       class_names=self.train_dataloader.dataset.class_names,
+                                       phase=phase, topk=self.n_vis_on_train, progress_bar=False)
         
         # update avg loss
         total_loss_value = total_loss.detach().cpu().item()
@@ -347,7 +358,7 @@ class Runner(object):
       mmengine.dump(results, result_file)
 
       # visualize
-      help_utils.print_log(f"Visualizing randomly top-{self.n_vis_on_eval} samples...")
+      help_utils.print_log(f"Visualizing top-{self.n_vis_on_eval}(random on truncated) samples...")
       self.record.log_batch_sample(batch_info, output, targets, 
                                    class_names=dataloader.dataset.class_names,
                                    phase=phase, 

@@ -139,16 +139,23 @@ class Record(object):
     if topk <= 0:
       topk = 0
 
-    topk_ids = torch.randperm(len(batch_image))[:topk].tolist()
+    if 0 < topk < len(batch_image):
+      topk_ids = torch.randperm(len(batch_image))[:topk].tolist()
+    else:
+      topk_ids = list(range(len(batch_image)))
     
-    files = [v.file for v in batch_image] # type: ignore
-    topk_files = recursive_select(files, topk_ids)
+    if isinstance(batch_image, torch.Tensor):
+      topk_images = [batch_image[i] for i in topk_ids]
+    else:
+      files = [v.file for v in batch_image] # type: ignore
+      topk_images = recursive_select(files, topk_ids)
+
     topk_outputs = recursive_select(batch_output, topk_ids)
     topk_targets: dict = recursive_select(batch_targets, topk_ids) # type: ignore
 
     try:
       vis_list = Visualizer.render_batch_sample(
-        topk_files, topk_outputs, topk_targets, 
+        topk_images, topk_outputs, topk_targets, 
         class_names, 
         progress_bar=progress_bar,
       )
@@ -157,8 +164,9 @@ class Record(object):
       return
     
     vis_list = [
-      swanlab.Image(Image.fromarray(vis[..., ::-1]), caption=f"{topk_files[i]}")
-      for i, vis in enumerate(vis_list)
+      swanlab.Image(Image.fromarray(vis[..., ::-1]), 
+                    caption=(name if isinstance(name, str) else str(i)))
+      for i, (vis, name) in enumerate(zip(vis_list, topk_images))
     ] # not support in private deploy env yet.
     return self.log_step_data({"visualize": vis_list}, phase=phase)
   

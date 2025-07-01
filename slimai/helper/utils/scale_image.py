@@ -48,6 +48,10 @@ def to_batch_numpy_image(image):
 
   if 0 <= image.min() <= image.max() <= 1:
     image = image * 255
+  elif image.min() < 0 < image.max() < 255:
+    std = (0.229, 0.224, 0.225)
+    mean = (0.485, 0.456, 0.406)
+    image = (image * std + mean) * 255
 
   image = cv2.convertScaleAbs(image)
   return image

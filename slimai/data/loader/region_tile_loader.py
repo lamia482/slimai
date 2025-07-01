@@ -51,7 +51,7 @@ class RegionTileLoader():
         if self.compressed:
           data = cv2.imdecode(np.frombuffer(data, "uint8"), cv2.IMREAD_COLOR)
         return data
-      except Exception as e:
+      except Exception as ex:
         pass
     
     wsi_file_path = file
@@ -82,7 +82,10 @@ class RegionTileLoader():
     if self.cache:
       data = tile
       if self.compressed:
-        data = cv2.imencode(".jpg", data)[1].tobytes() # type: ignore
+        status, data = cv2.imencode(".jpg", data) # type: ignore
+        if not status:
+          return None
+        data = data.tobytes()
       mmengine.dump(data, cache_file)
     
     return tile
