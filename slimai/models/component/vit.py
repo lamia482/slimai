@@ -45,15 +45,24 @@ class ViT(torch.nn.Module):
 
 class FlexViT(models.VisionTransformer):
   vit_arch = {
-    "atomic": dict(image_size=224, patch_size=16, embed_dim=96, depth=3, num_heads=3, mlp_ratio=4.0), 
-    "nano":   dict(image_size=224, patch_size=16, embed_dim=128, depth=4, num_heads=4, mlp_ratio=4.0), 
-    "micro":  dict(image_size=224, patch_size=16, embed_dim=144, depth=6, num_heads=3, mlp_ratio=4.0), 
-    "tiny":   dict(image_size=224, patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4.0), 
-    "small":  dict(image_size=224, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4.0), 
-    "base":   dict(image_size=224, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0), 
-    "large":  dict(image_size=224, patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4.0), 
-    "huge":   dict(image_size=224, patch_size=16, embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4.0), 
-    "giant":  dict(image_size=224, patch_size=16, embed_dim=1536, depth=40, num_heads=24, mlp_ratio=4.0), 
+    "atomic": dict(image_size=224, patch_size=16, # 428K
+                   embed_dim=96, depth=3, num_heads=3, mlp_ratio=4.0), 
+    "nano":   dict(image_size=224, patch_size=16, # 1.3M
+                   embed_dim=128, depth=6, num_heads=4, mlp_ratio=4.0), 
+    "micro":  dict(image_size=224, patch_size=16, # 3.7M
+                   embed_dim=192, depth=8, num_heads=6, mlp_ratio=4.0), 
+    "tiny":   dict(image_size=224, patch_size=16, # 7.3M
+                   embed_dim=256, depth=9, num_heads=8, mlp_ratio=4.0), 
+    "small":  dict(image_size=224, patch_size=16, # 21.6M
+                   embed_dim=384, depth=12, num_heads=8, mlp_ratio=4.0), 
+    "base":   dict(image_size=224, patch_size=16, # 85.8M
+                   embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0), 
+    "large":  dict(image_size=224, patch_size=16, # 303M
+                   embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4.0), 
+    "huge":   dict(image_size=224, patch_size=16, # 630M
+                   embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4.0), 
+    "giant":  dict(image_size=224, patch_size=16, # 1.13B
+                   embed_dim=1536, depth=40, num_heads=24, mlp_ratio=4.0), 
   }
 
   @classmethod
