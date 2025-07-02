@@ -29,7 +29,8 @@ class DETRLoss(torch.nn.Module):
                box_weight=5, 
                giou_weight=2, 
                use_focal_loss=True, 
-               score_thresh=0.01, 
+               score_thresh=0.1, # thresh to filter out low-confidence predictions for computing loss and prediction
+               bbox_thresh=None, # thresh to filter out small bboxes for computing loss and prediction
                ):
     super().__init__()
     matcher.pop("use_focal_loss", None)
@@ -45,11 +46,12 @@ class DETRLoss(torch.nn.Module):
 
     self.use_focal_loss = use_focal_loss
     self.score_thresh = score_thresh
+    self.bbox_thresh = bbox_thresh
     
     if use_focal_loss:
       class_weight = torch.as_tensor(class_weight)
     else:
-      class_weight = torch.ones(self.num_classes+1) # +1 for background
+      class_weight = torch.ones(num_classes+1) # +1 for background
       class_weight[-1] = eos_coef
 
     self.register_buffer("class_weight", class_weight)
@@ -62,12 +64,7 @@ class DETRLoss(torch.nn.Module):
               bbox_logits: torch.Tensor, 
               cls_targets: List[torch.Tensor], 
               bbox_targets: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
-    # actual_num_classes = cls_logits.shape[-1]
-    # assert (
-    #   (self.use_focal_loss and (self.num_classes == actual_num_classes)) or
-    #   ((not self.use_focal_loss) and (self.num_classes == actual_num_classes - 1))
-    # ), "Class error, in focal loss mode, num_classes should not include extra background class"
-
+    cls_logits = self.fix_cls_logits(cls_logits) # truncate [B, Q, C+1] to [B, Q, C]
     bbox_preds = bbox_logits.sigmoid()
     indices = self.matcher(cls_logits, bbox_preds, cls_targets, bbox_targets)
     num_bboxes = self.dist.prepare_for_distributed(torch.as_tensor(sum(map(len, bbox_targets)), dtype=torch.float))
@@ -76,7 +73,7 @@ class DETRLoss(torch.nn.Module):
     loss = dict(
       **self.compute_cls_loss(cls_logits, cls_targets, indices, num_bboxes),
       **self.compute_bbox_loss(bbox_preds, bbox_targets, indices, num_bboxes),
-      **self.compute_cardinality_loss(cls_logits, cls_targets, indices, num_bboxes),
+      **self.compute_cardinality_loss(cls_logits, bbox_preds, cls_targets),
     )
     
     return loss
@@ -97,11 +94,13 @@ class DETRLoss(torch.nn.Module):
 
     loss = dict()
 
+    # all prediction scores are used to compute loss
+
     if self.use_focal_loss:
       target_classes_one_hot = F.one_hot(flatten_target_classes, 
                                          num_classes=self.num_classes+1
                                          ).type_as(flatten_cls_logits)[..., :-1] # [B * Q, C]
-      focal_loss = torchvision.ops.sigmoid_focal_loss(flatten_cls_logits[..., :self.num_classes], 
+      focal_loss = torchvision.ops.sigmoid_focal_loss(flatten_cls_logits, 
                                                       target_classes_one_hot, 
                                                       reduction="none") # [B * Q, C]
       focal_loss = (focal_loss * self.class_weight).sum() / num_bboxes # type: ignore
@@ -118,23 +117,52 @@ class DETRLoss(torch.nn.Module):
   def compute_bbox_loss(self, bbox_preds: torch.Tensor, bbox_targets: List[torch.Tensor], 
                        indices: List[Tuple[torch.Tensor, torch.Tensor]], num_bboxes: int):
     src_idx, tgt_idx = self._get_pred_permutation_idx(indices), self._get_target_permutation_idx(indices)
-    pred_bboxes = bbox_preds[src_idx]
+    matched_mask = torch.zeros(bbox_preds.shape[:2], dtype=torch.bool, device=bbox_preds.device)
+    matched_mask[src_idx] = True
+    
+    matched_pred_bboxes = bbox_preds[matched_mask]
     matched_targets = [
       bbox_targets[bi][ci] for bi, ci in zip(*tgt_idx)
     ]
     if len(matched_targets) > 0:
-      target_bboxes = torch.stack(matched_targets, dim=0)
+      matched_target_bboxes = torch.stack(matched_targets, dim=0)
     else:
-      target_bboxes = torch.empty(0, 4, device=bbox_preds.device)
+      matched_target_bboxes = torch.empty(0, 4, device=bbox_preds.device)    
 
-    bbox_loss = F.l1_loss(pred_bboxes, target_bboxes, reduction="none")
-    bbox_loss = bbox_loss.sum() / num_bboxes
+    # matched bboxes are used to compute loss with targets
+    matched_bbox_loss = F.l1_loss(matched_pred_bboxes, matched_target_bboxes, reduction="none")
+    matched_bbox_loss = matched_bbox_loss.sum() / num_bboxes
 
-    giou_loss = 1 - torch.diag(box_ops.generalized_box_iou(
-      box_ops.box_cxcywh_to_xyxy(pred_bboxes),
-      box_ops.box_cxcywh_to_xyxy(target_bboxes)
+    # matched bboxes are used to compute giou loss with targets
+    matched_giou_loss = 1 - torch.diag(box_ops.generalized_box_iou(
+      box_ops.box_cxcywh_to_xyxy(matched_pred_bboxes),
+      box_ops.box_cxcywh_to_xyxy(matched_target_bboxes)
     ))
-    giou_loss = giou_loss.sum() / num_bboxes
+    matched_giou_loss = matched_giou_loss.sum() / num_bboxes
+
+    if self.bbox_thresh is not None:
+      # handle with unmatched bboxes
+      unmatched_mask = (~matched_mask) & (bbox_preds[..., 2:] > self.bbox_thresh).all(dim=-1)
+      unmatched_pred_bboxes = bbox_preds[unmatched_mask]
+      unmatched_target_bboxes = unmatched_pred_bboxes.detach().clone()
+      unmatched_target_bboxes[:, 2:] = 0 # set target width and height to 0 to be background bboxes
+      unmacthed_num_bboxes = unmatched_mask.sum()
+
+      # unmatched bboxes are used to compute loss with no target
+      unmatched_bbox_loss = F.l1_loss(unmatched_pred_bboxes, unmatched_target_bboxes, reduction="none")
+      unmatched_bbox_loss = unmatched_bbox_loss.sum() / unmacthed_num_bboxes
+      
+      # unmatched bboxes are used to compute giou loss with no target
+      unmatched_giou_loss = 1 - torch.diag(box_ops.generalized_box_iou(
+        box_ops.box_cxcywh_to_xyxy(unmatched_pred_bboxes),
+        box_ops.box_cxcywh_to_xyxy(unmatched_target_bboxes)
+      ))
+      unmatched_giou_loss = unmatched_giou_loss.sum() / unmacthed_num_bboxes
+    else:
+      unmatched_bbox_loss, unmatched_giou_loss = 0, 0
+
+    bbox_loss = matched_bbox_loss + unmatched_bbox_loss
+    giou_loss = matched_giou_loss + unmatched_giou_loss
 
     loss = dict(
       bbox_loss=self.box_weight * bbox_loss, 
@@ -143,17 +171,19 @@ class DETRLoss(torch.nn.Module):
     return loss
 
   @torch.inference_mode()
-  def compute_cardinality_loss(self, cls_logits: torch.Tensor, cls_targets: List[torch.Tensor], 
-                               indices: List[Tuple[torch.Tensor, torch.Tensor]], num_bboxes: int):
+  def compute_cardinality_loss(self, cls_logits: torch.Tensor, 
+                               bbox_preds: torch.Tensor, 
+                               cls_targets: List[torch.Tensor]):
     tgt_length = torch.as_tensor([len(v) for v in cls_targets], device=cls_logits.device)
-    _, _, _, fg_mask = self.parse_cls_logits(cls_logits)
+    _, _, _, fg_mask = self.parse_logits(cls_logits, bbox_preds)
     card_pred = fg_mask.sum(dim=-1) # [B, Q] -> [B]
     card_err = F.l1_loss(card_pred.float(), tgt_length.float())
     return dict(cardinality_error=card_err)
 
-  def parse_cls_logits(self, cls_logits: torch.Tensor):
+  def parse_logits(self, cls_logits: torch.Tensor, bbox_preds: torch.Tensor):
+    cls_logits = self.fix_cls_logits(cls_logits)
     if self.use_focal_loss:
-      cls_dist = cls_logits.sigmoid()[:, :, :self.num_classes] # [B, Q, C]
+      cls_dist = cls_logits.sigmoid() # [B, Q, C]
       pred_scores = cls_dist.max(-1).values # [B, Q]
       pred_labels = cls_dist.argmax(-1) # [B, Q]
       bg_mask = (pred_scores < self.score_thresh) # consider low-confidence predictions as background in focal loss # type: ignore
@@ -163,10 +193,21 @@ class DETRLoss(torch.nn.Module):
       pred_labels = cls_dist.argmax(-1) # [B, Q]
       bg_mask = (pred_labels == self.num_classes) | (pred_scores < self.score_thresh) # consider the last class as background in non-focal loss # type: ignore
 
+    if self.bbox_thresh is not None:
+      bg_mask = bg_mask | (bbox_preds[..., 2:] < self.bbox_thresh).any(dim=-1)
+
     fg_mask = ~bg_mask
     return cls_dist, pred_scores, pred_labels, fg_mask
 
-  def _unpack_indices(self, indices, dim):
+  def fix_cls_logits(self, cls_logits: torch.Tensor):
+    if self.use_focal_loss:
+      cls_logits = cls_logits[..., :self.num_classes] # truncate [B, Q, C+1] to [B, Q, C] for focal loss
+    else:
+      cls_logits = cls_logits # keep [B, Q, C+1] for cross entropy loss, last channel is used as background
+    return cls_logits
+
+  @classmethod
+  def _unpack_indices(cls, indices, dim):
     batch_idx, data_idx = [], []
     for i, data in enumerate(indices):
       if len(data) == 0:
@@ -182,13 +223,15 @@ class DETRLoss(torch.nn.Module):
       data_idx = torch.cat(data_idx)
     return batch_idx, data_idx
 
-  def _get_pred_permutation_idx(self, indices):
+  @classmethod
+  def _get_pred_permutation_idx(cls, indices):
     # permute predictions following indices
-    return self._unpack_indices(indices, 0)
+    return cls._unpack_indices(indices, 0)
 
-  def _get_target_permutation_idx(self, indices):
+  @classmethod
+  def _get_target_permutation_idx(cls, indices):
     # permute targets following indices
-    return self._unpack_indices(indices, 1)
+    return cls._unpack_indices(indices, 1)
 
 
 class HungarianMatcher(torch.nn.Module):
@@ -212,6 +255,7 @@ class HungarianMatcher(torch.nn.Module):
     self.use_focal_loss = use_focal_loss
     self.focal_alpha = focal_alpha
     self.focal_gamma = focal_gamma
+    self.eps = torch.finfo(torch.get_default_dtype()).eps
     return
   
   @torch.inference_mode()
@@ -220,9 +264,9 @@ class HungarianMatcher(torch.nn.Module):
               bbox_preds: torch.Tensor, 
               cls_targets: List[torch.Tensor], 
               bbox_targets: List[torch.Tensor]):
-    batch_size, num_queries, num_classes = cls_logits.shape # [B, Q, C]
+    batch_size, num_queries, _ = cls_logits.shape # [B, Q, ~C] # C for focal loss, C+1 for cross entropy loss
     
-    output_prob = cls_logits.flatten(0, 1) # [B * Q, C]
+    output_prob = cls_logits.flatten(0, 1) # [B * Q, ~C]
     if self.use_focal_loss:
       output_prob = output_prob.sigmoid()
     else:
@@ -245,8 +289,8 @@ class HungarianMatcher(torch.nn.Module):
 
     if self.use_focal_loss:
       output_prob = output_prob[:, target_ids] # [B * Q, T]
-      neg_cost_class = (1 - self.focal_alpha) * (output_prob ** self.focal_gamma) * (-(1 - output_prob + 1e-8).log())
-      pos_cost_class = self.focal_alpha * ((1 - output_prob) ** self.focal_gamma) * (-(output_prob + 1e-8).log())
+      neg_cost_class = (1 - self.focal_alpha) * (output_prob ** self.focal_gamma) * (-(1 - output_prob + self.eps).log())
+      pos_cost_class = self.focal_alpha * ((1 - output_prob) ** self.focal_gamma) * (-(output_prob + self.eps).log())
       cost_class = pos_cost_class - neg_cost_class
     else:
       cost_class = -output_prob[:, target_ids] # [B * Q, T]

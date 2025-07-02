@@ -30,6 +30,7 @@ def print_log(msg, level="INFO", main_process_only=True, warn_once=False, disabl
     if msg in _warned_messages:
       return
     _warned_messages.add(msg)
+    msg += " << This message will be printed only once. >>"
     
   if not main_process_only:
     msg = f"[GLOBAL RANK: {dist_env.global_rank}] {msg}"

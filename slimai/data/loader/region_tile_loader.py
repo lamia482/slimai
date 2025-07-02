@@ -83,10 +83,9 @@ class RegionTileLoader():
       data = tile
       if self.compressed:
         status, data = cv2.imencode(".jpg", data) # type: ignore
-        if not status:
-          return None
-        data = data.tobytes()
-      mmengine.dump(data, cache_file)
+        if status:
+          data = data.tobytes()
+          mmengine.dump(data, cache_file)
     
     return tile
 

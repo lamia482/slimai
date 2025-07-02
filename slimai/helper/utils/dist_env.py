@@ -64,6 +64,15 @@ class DistEnv(object):
   def is_dist_initialized(self):
     # Check if the distributed environment is initialized
     return dist.is_initialized()
+
+  @classmethod
+  def get_free_port(cls):
+    import socket
+    sock = socket.socket()
+    sock.bind(('', 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
   
   @property
   def device(self):

@@ -30,6 +30,11 @@ class DetectionHead(torch.nn.Module):
     return
   
   def forward(self, x):
+    """ total channel is C+1, last channel is used as background
+    in focal loss mode, first C channels are used to compute loss and prediction, the last channel is not used
+    in cross entropy mode, the last channel is used as background, and C+1 channels are used to compute loss and prediction
+    this behavior is designed to be compatible with both focal loss and cross entropy loss by using the same head
+    """
     cls_logits = self.cls_head(x) # [B, Q, C+1] # C+1 for background, not used in focal loss
     bbox_logits = self.bbox_head(x) # [B, Q, 4] where 4 indicates [cx, cy, w, h]
     return cls_logits, bbox_logits

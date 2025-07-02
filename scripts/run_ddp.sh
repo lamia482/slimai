@@ -3,6 +3,12 @@
 ##### define user args
 CONFIG_FILE="$1"
 
+##### check args
+if [ -z "${CONFIG_FILE}" ]; then
+  echo "Error: CONFIG_FILE is not provided"
+  exit 1
+fi
+
 if [ -z "${CUDA_VISIBLE_DEVICES}" ]; then
   GPU_NUM="nvidia-smi -L | grep -c "UUID""
   export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(($(eval $GPU_NUM)-1)))
@@ -12,22 +18,21 @@ fi
 export NCCL_DEBUG=INFO
 export OMP_NUM_THREADS=1
 
+##### Add working path to PYTHONPATH
+TOOLBOX_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
+export PYTHONPATH="${TOOLBOX_ROOT_DIR}":"${PYTHONPATH}"
+
 ##### define nodes number for jobs
 NNODES=${NNODES:-1}
 NODE_RANK=${NODE_RANK:-0}
 NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 
 ##### random DDP info
+free_port=$(python -c "from slimai.helper.utils.dist_env import DistEnv; print(DistEnv().get_free_port())")
 MASTER_ADDR=${MASTER_ADDR:-localhost}
-MASTER_PORT=${MASTER_PORT:-0}
+MASTER_PORT=${MASTER_PORT:-${free_port}}
 MAX_RESTARTS=${MAX_RESTARTS:-0}
 JOB_ID=${JOB_ID:-${MASTER_PORT}}
-
-##### check args
-if [ -z "${CONFIG_FILE}" ]; then
-  echo "Error: CONFIG_FILE is not provided"
-  exit 1
-fi
 
 ##### print job info
 echo """<<< JOB SUMMARY >>>
@@ -45,10 +50,6 @@ if  [ "${NNODES}" -eq 1 ]; then
   STANDALONE="--standalone"; \
   echo "Running in standalone mode"
 fi
-
-##### cd working path
-TOOLBOX_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
-export PYTHONPATH="${TOOLBOX_ROOT_DIR}":"${PYTHONPATH}"
 
 ##### DDP RUN
 torchrun ${STANDALONE}\
