@@ -146,6 +146,9 @@ class Record(object):
   def check_visualize_batch(self, output, step):
     if not self.should_record:
       return False
+
+    if self.visualizer is None:
+      return False
     
     assert (
       step >= 0
