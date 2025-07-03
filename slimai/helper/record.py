@@ -60,10 +60,6 @@ class Record(object):
 
     self._swanlab_ok = True
 
-    # only one process across all nodes&ranks should record
-    if not self.should_record:
-      return
-
     assert (
       cfg is not None
     ), "cfg is not specified in Record, this may caused by the wrong initialization order"
@@ -98,6 +94,10 @@ class Record(object):
       visualizer_cfg = None
     self.visualizer = build_visualizer(visualizer_cfg)
 
+    # only one process across all nodes&ranks should record
+    if not self.should_record:
+      return
+    
     try:
       swanlab.init(
         project=self.project_name, 
@@ -110,6 +110,7 @@ class Record(object):
       return
 
     self._initialized = True
+    print_log(self)
     return
   
   def __repr__(self):
@@ -143,6 +144,9 @@ class Record(object):
     return swanlab.log(data, step=step)
   
   def check_visualize_batch(self, output, step):
+    if not self.should_record:
+      return False
+    
     assert (
       step >= 0
     ), "step must be non-negative"
