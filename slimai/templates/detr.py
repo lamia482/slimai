@@ -181,6 +181,14 @@ RUNNER = dict(
     accumulation_every_n_steps=1, 
   ), 
 
+  visualizer=dict(
+    type="DetectionVisualizer", 
+    save_dir=None, # save visuals to this dir under work_dir, setting None to disable
+    every_n_steps_on_train=10, # save train visuals every n steps, set to None or ≤0 to disable
+    topk_vis_on_train=8, # topk samples will be rendered on train, setting to None to render all samples, setting to ≤0 to disable
+    topk_vis_on_eval=32, # topk samples will be rendered on eval, setting to None to render all samples, setting to ≤0 to disable
+  ), 
+
   logger=dict(
     log_level="INFO",
     log_dir="logs",

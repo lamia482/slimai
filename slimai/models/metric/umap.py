@@ -16,12 +16,12 @@ class UMAP(torch.nn.Module):
   def forward(self, 
               embeddings: torch.Tensor, 
               targets: torch.Tensor) -> matplotlib.figure.Figure: # type: ignore
-    visualizer = umap.UMAP(n_components=2, 
+    obj = umap.UMAP(n_components=2, 
                            n_neighbors=200,
                            min_dist=0.5,
                            random_state=10482, 
                            metric='cosine')
-    result = visualizer.fit_transform(embeddings)
+    result = obj.fit_transform(embeddings)
     result = torch.tensor(result)
 
     fig = plt.figure(figsize=(12, 10))

@@ -1,44 +1,9 @@
 import cv2
 import numpy as np
 import torch
-import mmengine
 from itertools import chain
-from typing import Dict, Any, List
-from . import scale_image, select
+from . import scale_image
 
-class Visualizer(object):
-  @classmethod
-  def render_batch_sample(cls, images, outputs, 
-                          targets: Dict[str, Any], 
-                          class_names: List[str], 
-                          progress_bar: bool = False):
-    vis_list = []
-
-    indices = list(range(len(images)))
-    if progress_bar:
-      indices = mmengine.track_iter_progress(indices)
-  
-    for index in indices:
-      image = select.recursive_select(images, index)
-      output = select.recursive_select(outputs, index)
-      target: dict = select.recursive_select(targets, index) # type: ignore
-
-      if instance := target.get("instance", None):
-        vis = cls.vis_instance(image, instance, output, class_names)
-      else:
-        raise NotImplementedError("Only instance is supported for now")
-
-      vis_list.append(vis)
-    return vis_list
-  
-  @classmethod
-  def vis_instance(cls, img_file, gt_instance, pred_instance, 
-                   names, score_thr=0.01, color=(0, 0, 255), 
-                   no_text=False):
-    image = scale_image.to_image(img_file)
-    image = put_gt_on_image(image, gt_instance, names, color=(255, 0, 0), no_text=no_text)
-    image = put_pred_on_image(image, pred_instance, names, score_thr=score_thr, color=color, no_text=no_text)
-    return image
 
 def put_gt_on_image(image, gt_instance, names, color=(255, 0, 0), no_text=False):
   img = scale_image.to_batch_numpy_image(image)[0]

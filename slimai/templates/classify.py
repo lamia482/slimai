@@ -177,6 +177,8 @@ RUNNER = dict(
     accumulation_every_n_steps=1, 
   ), 
 
+  visualizer=None, 
+
   logger=dict(
     log_level="INFO",
     log_dir="logs",

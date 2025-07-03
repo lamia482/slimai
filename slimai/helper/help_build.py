@@ -13,6 +13,7 @@ from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, OPTIMIZERS
 IMPORT = Registry("import")
 LOADERS = Registry("loaders")
 SOURCES = Registry("sources")
+VISUALIZERS = Registry("visualizers")
 from slimai.helper.help_utils import print_log, dist_env
 
 
@@ -159,3 +160,6 @@ def build_solver(cfg, params: List[torch.nn.Parameter]):
 
 def build_metric(cfg):
   return compose_components(cfg, source=MODELS)
+
+def build_visualizer(cfg):
+  return compose_components(cfg, source=VISUALIZERS)

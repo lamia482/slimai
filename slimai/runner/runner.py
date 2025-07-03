@@ -61,8 +61,6 @@ class Runner(object):
     )
 
     self.eval_every_n_epochs = ckpt.get("eval_every_n_epochs", 1)
-    self.n_vis_on_train = ckpt.get("n_vis_on_train", 0) # default no vis on train
-    self.n_vis_on_eval = ckpt.get("n_vis_on_eval", 8) # default 8 images on eval
 
     # Dump config to work_dir
     self.archive_env_for_reproducibility()
@@ -84,10 +82,10 @@ class Runner(object):
     self.epoch = ckpt.get("epoch", 0)
 
     # prepare model and solver for distributed training
-    self.train_dataloader, self.valid_dataloader, self.test_dataloader, self.arch, \
-      self.model, self.solver, self.scheduler, self.loss, self.metric = self.dist.prepare_for_distributed(
-        train_dataloader, valid_dataloader, test_dataloader, arch, \
-          model, solver, scheduler, loss, metric)
+    self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
+    self.arch, self.model, self.solver, self.scheduler, self.loss, self.metric = \
+      self.dist.prepare_for_distributed(train_dataloader, valid_dataloader, test_dataloader, \
+                                        arch, model, solver, scheduler, loss, metric)
     return
   
   def build_components(self, cfg):
@@ -199,8 +197,11 @@ class Runner(object):
       
       # walk through one epoch
       avg_loss_value = 0.0
+      num_steps_per_epoch = len(self.train_dataloader)
       for self.step, batch_info in enumerate(self.train_dataloader):
-        msg = f"Step: {self.step+1}/{len(self.train_dataloader)}"
+        global_step = self.step + (self.epoch-1) * num_steps_per_epoch
+
+        msg = f"Step: {self.step+1}/{num_steps_per_epoch}"
         batch_info = self.dist.prepare_for_distributed(batch_info)
         batch_info = DataSample(**batch_info).to(self.dist.env.device)
         batch_data = batch_info.pop("image")
@@ -211,17 +212,16 @@ class Runner(object):
 
         # forward step
         output, total_loss, loss_dict, latency_dict = self.step_train(
-          self.step, len(self.train_dataloader), batch_data, batch_info)
+          self.step, num_steps_per_epoch, batch_data, batch_info)
 
         # log batch sample in training duration
-        if (output is not None) and (self.n_vis_on_train > 0):
-          help_utils.print_log(f"Visualizing top-{self.n_vis_on_train}(random on truncated) samples...", warn_once=True)
+        if self.record.check_visualize_batch(output, self.step):
           with torch.inference_mode():
             output = getattr(self.arch, "postprocess")(output, batch_info).output
             targets = {key: getattr(batch_info, key) for key in self.train_dataloader.dataset.ann_keys}
           self.record.log_batch_sample(batch_data, output, targets, 
                                        class_names=self.train_dataloader.dataset.class_names,
-                                       phase=phase, topk=self.n_vis_on_train, progress_bar=False)
+                                       phase=phase, progress_bar=True, step=global_step)
         
         # update avg loss
         total_loss_value = total_loss.detach().cpu().item()
@@ -244,7 +244,7 @@ class Runner(object):
           else:
             msg += f", {key}: {value:{self.log_precision}}"
 
-        self.record.log_step_data(log_data, phase=phase)
+        self.record.log_step_data(log_data, phase=phase, step=global_step)
         if (self.step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
@@ -358,11 +358,9 @@ class Runner(object):
       mmengine.dump(results, result_file)
 
       # visualize
-      help_utils.print_log(f"Visualizing top-{self.n_vis_on_eval}(random on truncated) samples...")
       self.record.log_batch_sample(batch_info, output, targets, 
                                    class_names=dataloader.dataset.class_names,
                                    phase=phase, 
-                                   topk=self.n_vis_on_eval, 
                                    progress_bar=True)
 
     metrics = self.dist.env.broadcast(metrics)

@@ -36,6 +36,7 @@ JOB_ID=${JOB_ID:-${MASTER_PORT}}
 
 ##### print job info
 echo """<<< JOB SUMMARY >>>
+Python Interpreter: $(which python)
 CONFIG_FILE: ${CONFIG_FILE}
 NNODES: ${NNODES}
 NODE_RANK: ${NODE_RANK}
