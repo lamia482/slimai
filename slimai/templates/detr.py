@@ -74,8 +74,8 @@ test_dataset = dict(
 )
 
 ########## 1.3 DATA LOADER
-batch_size = 32
-num_workers = 8
+batch_size = 4
+num_workers = 2
 persistent_workers = True if num_workers > 0 else False
 
 TRAIN_LOADER = dict(
@@ -157,13 +157,13 @@ MODEL = dict(
   ), 
   solver=dict(
     type="torch.optim.AdamW",
-    lr=1e-4,
+    lr=1e-3,
     weight_decay=1e-2, 
     scheduler=dict(
       type="torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
       T_0=500,
       T_mult=1,
-      eta_min=1e-5,
+      eta_min=1e-4,
     ),
   ), 
 )
@@ -171,9 +171,9 @@ MODEL = dict(
 ############################## 3. RUNNER
 
 RUNNER = dict(
-  max_epoch=100, 
-  compile=False, 
-  checkpointing=True, 
+  max_epoch=300, 
+  compile=True, # accelerate training by compiling the model
+  checkpointing=False, # slow down training by checkpointing the model
 
   gradient=dict(
     amp=True, 
