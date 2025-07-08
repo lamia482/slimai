@@ -127,9 +127,9 @@ class DINO(ClassificationArch):
     backbone = teacher_without_ddp.backbone
     return backbone # type: ignore
   
-  def postprocess(self, 
-                  batch_data: torch.Tensor, 
-                  batch_info: DataSample) -> DataSample:
+  def _postprocess(self, 
+                   batch_data: torch.Tensor, 
+                   batch_info: DataSample) -> DataSample:
     embedding = batch_data
     batch_info.output = dict(
       embedding=embedding, # [B, D]

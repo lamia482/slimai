@@ -110,8 +110,6 @@ class MIL(ClassificationArch):
       atten_logits = None
     head = self.model.head(neck) # type: ignore # (B, C)
 
-    # TODO: add loss from backbone similarity to mil attention
-
     if return_flow:
       return dict(
         backbone=backbone,
@@ -131,4 +129,36 @@ class MIL(ClassificationArch):
     cls_targets = batch_info.label # type: ignore
     loss = self.loss(backbone, atten_logits, cls_logits, cls_targets)
     return loss
+
+  def _postprocess(self, 
+                  batch_data: torch.Tensor, 
+                  batch_info: DataSample) -> DataSample: 
+    super()._postprocess(batch_data, batch_info)
+
+    if isinstance(batch_data, dict):
+      batch_data = batch_data["atten_logits"]
+    else:
+      return batch_info
+    
+    atten_logits = batch_data
+    
+    topk = 8*8 # topk indices to visualize
+    atten_softmax = [
+      al.squeeze().softmax(-1) # [B, ~N]
+      for al in atten_logits
+    ]
+    atten_topk = [
+      al.topk(k=topk, dim=-1) # select topk maximum indices
+      for al in atten_softmax
+    ]
+
+    topk_scores, topk_indices = list(map(list, zip(*atten_topk)))
+
+    batch_info.output.update(dict(
+      atten_logits=[a[i] for a, i in zip(atten_logits, topk_indices)], # [B, ~N]
+      atten_indices=topk_indices, # [B, ~N]
+      atten_scores=topk_scores, # [B, ~N]
+    ))
+
+    return batch_info
   

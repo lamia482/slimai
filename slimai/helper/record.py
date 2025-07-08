@@ -8,6 +8,7 @@ from .utils.dist_env import dist_env
 from .utils.select import recursive_select, recursive_apply
 from .help_utils import print_log
 from .help_build import build_visualizer
+from .structure import DataSample
 
 
 class Record(object):
@@ -230,11 +231,12 @@ class Record(object):
     else:
       topk_ids = list(range(len(batch_image)))
     
-    if isinstance(batch_image, torch.Tensor):
-      topk_images = [batch_image[i] for i in topk_ids]
-    else:
+    if  isinstance(batch_image, list) and (len(batch_image) > 0) and \
+        all(list(map(lambda x: isinstance(x, DataSample), batch_image))):
       files = [v.file for v in batch_image] # type: ignore
       topk_images = recursive_select(files, topk_ids)
+    else:
+      topk_images = [batch_image[i] for i in topk_ids]
 
     topk_outputs = recursive_select(batch_output, topk_ids)
     topk_targets: dict = recursive_select(batch_targets, topk_ids) # type: ignore

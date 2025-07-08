@@ -47,3 +47,8 @@ def recursive_apply(
   elif isinstance(inputs, dict):
     return {k: recursive_apply(func, v) for k, v in inputs.items()}
   return func(inputs)
+
+def chunks(lst, n):
+  """Yield successive n-sized chunks from lst."""
+  for i in range(0, len(lst), n):
+    yield lst[i:i + n]

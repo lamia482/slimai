@@ -248,7 +248,9 @@ class Runner(object):
       self.arch.epoch_succeed_hooks(runner=self)
       
       # Evaluate on validation dataset
-      if (self.epoch % self.eval_every_n_epochs == 0) and (self.valid_dataloader is not None):
+      if (self.valid_dataloader is not None) and \
+         (self.eval_every_n_epochs is not None) and \
+         (self.epoch % self.eval_every_n_epochs == 0):
         phase = "valid"
         result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
         eval_metrics = self.evaluate(self.valid_dataloader, result_file, phase=phase)
@@ -265,7 +267,7 @@ class Runner(object):
         self.solver, 
         self.scheduler,
         self.epoch, 
-        avg_loss_value, 
+        loss=avg_loss_value, 
         cfg=self.cfg.MODEL)
 
     return

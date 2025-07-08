@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import torch
 from itertools import chain
-from . import scale_image
+from . import scale_image, select
 
 
 def put_gt_on_image(image, gt_instance, names, color=(255, 0, 0), no_text=False):
@@ -75,3 +75,19 @@ def vstack_imgs(img_list, interval_width=10, interval_value=0):
     zip(img_list, [interval_value+np.zeros([interval_width, img_list[0].shape[1], img_list[0].shape[2]]).astype("uint8")]*len(img_list))))[:-1]
   img = np.vstack(img_list)
   return img
+
+def square_imgs(img_list, interval_width=10, interval_value=0):
+  img_num = len(img_list)
+  square_s = np.floor(img_num**0.5).astype("int")
+  img_list = img_list[:square_s*square_s]
+
+  kwargs = dict(
+    interval_width=interval_width, interval_value=interval_value
+  )
+
+  v_list = []
+  for row_list in select.chunks(img_list, square_s):
+    h = hstack_imgs(row_list, **kwargs)
+    v_list.append(h)
+  v = vstack_imgs(v_list)
+  return v

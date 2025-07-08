@@ -6,9 +6,12 @@ from .base_arch import BaseArch
 
 @MODELS.register_module()
 class ClassificationArch(BaseArch):
-  def postprocess(self, 
-                  batch_data: torch.Tensor, 
-                  batch_info: DataSample) -> DataSample:
+  def _postprocess(self, 
+                   batch_data: torch.Tensor, 
+                   batch_info: DataSample) -> DataSample:
+    if isinstance(batch_data, dict):
+      batch_data = batch_data["head"]
+      
     cls_logits = batch_data
     softmax = torch.softmax(cls_logits, dim=1) # [B, C]
     pred_scores = softmax.max(dim=1).values # [B]

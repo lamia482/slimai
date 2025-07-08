@@ -69,7 +69,7 @@ class Checkpoint(object):
     solver: torch.optim.Optimizer, 
     scheduler: torch.optim.lr_scheduler.LRScheduler,
     epoch: int,
-    loss: float,
+    loss: float = float("inf"),
     export: bool = False, 
     **kwargs
   ) -> Path:
@@ -93,7 +93,7 @@ class Checkpoint(object):
       and self.dist.env.is_main_process()
     ):
       update_best = False
-      if loss < self.min_loss:
+      if loss <= self.min_loss:
         self.min_loss = loss
         update_best = True and self.keep_best
 

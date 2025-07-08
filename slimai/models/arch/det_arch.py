@@ -26,9 +26,12 @@ class DetectionArch(BaseArch):
     loss = self.loss(cls_logits, bbox_logits, cls_targets, bbox_targets)
     return loss
 
-  def postprocess(self, 
-                  batch_data: torch.Tensor, 
-                  batch_info: DataSample) -> DataSample:
+  def _postprocess(self, 
+                   batch_data: torch.Tensor, 
+                   batch_info: DataSample) -> DataSample:
+    if isinstance(batch_data, dict):
+      batch_data = batch_data["head"]
+      
     cls_logits, bbox_logits = batch_data
     bbox_logits = bbox_logits.sigmoid()
 

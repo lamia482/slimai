@@ -8,8 +8,10 @@ flip_color_jitter = [
   ], p=1/30), # patch num ~= 18000
   dict(type="RandomApply", transforms=[
     dict(type="ColorJitter", brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1), 
-  ], p=0.3), 
-  dict(type="RandomGrayscale", p=0.2),
+  ], p=1/30), 
+  dict(type="RandomApply", transforms=[
+    dict(type="GaussianBlur", kernel_size=(5, 5), sigma=(0.5, 2.0)), 
+  ], p=1/30), 
 ]
 
 import torch

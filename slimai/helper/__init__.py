@@ -1,8 +1,9 @@
 from . import (
-  common,
+  common, 
   help_build, 
   help_utils, 
-  utils,
+  utils, 
+  visuals, 
 )
 
 from .checkpoint import Checkpoint
@@ -16,6 +17,7 @@ __all__ = [
   "help_build", 
   "help_utils",
   "utils",
+  "visuals",
   "Checkpoint",
   "Distributed",
   "Gradient",

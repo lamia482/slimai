@@ -157,7 +157,6 @@ class BaseArch(object):
       embedding_dict = self.gradient_checkpoint(
         self._forward_tensor, batch_data, return_flow=True
       )
-      output = embedding_dict.get("head", None) # type: ignore
       loss_dict = self._forward_loss(embedding_dict, batch_info) # type: ignore
       assert (
         isinstance(loss_dict, dict) and len(loss_dict) > 0
@@ -167,7 +166,7 @@ class BaseArch(object):
       if not math.isfinite(loss.item()): # type: ignore
         print_log("Loss is {}, stopping training".format(loss), level="ERROR")
         sys.exit(1)
-      output = (output, loss_dict)
+      output = (embedding_dict, loss_dict)
 
     elif mode == "predict":
       output = self.predict(batch_data, batch_info)
@@ -205,12 +204,16 @@ class BaseArch(object):
     # Export model for inference and export to onnx
     raise NotImplementedError("`export_model` is not implemented and is necessary for `predict`")
 
+  @torch.inference_mode()
+  def postprocess(self, *args, **kwargs):
+    return self._postprocess(*args, **kwargs)
+
   @abstractmethod
-  def postprocess(self, 
-                  batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
-                  batch_info: DataSample) -> DataSample:
+  def _postprocess(self, 
+                   batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
+                   batch_info: DataSample) -> DataSample:
     # Postprocess method to be implemented in subclasses
-    raise NotImplementedError("`postprocess` is not implemented and is necessary for `predict`")
+    raise NotImplementedError("`_postprocess` is not implemented and is necessary for `predict`")
 
   @torch.inference_mode()
   def predict(self, 
