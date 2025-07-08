@@ -49,8 +49,9 @@ class Distributed(object):
 
     if self.env.global_world_size == 1:
       parallel_mode = "ddp"
+
     # TODO: currently, fsdp is not supported, use ddp instead
-    parallel_mode = "ddp"
+    # parallel_mode = "ddp"
     
     self.parallel_mode = parallel_mode
 
@@ -235,13 +236,18 @@ class Distributed(object):
 
 
 ##### FSDP Layer Wapper #####
+from torch.distributed.fsdp import fully_shard, FSDPModule
 class FSDPLayerWapper(torch.nn.Module):
-  def __init__(self, *, module=None):
+  def __init__(self, *, module=None, version="latest"):
     assert (
       module is not None
     ), "module must be provided"
     super().__init__()
     self.module = module
+    assert (
+      version in ["latest", "v1", "v2"]
+    ), "version must be 'latest', 'v1', or 'v2', but got {}".format(version)
+    self.version = version
     return
 
   def forward(self, *args, **kwargs):

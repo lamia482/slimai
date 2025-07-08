@@ -32,9 +32,6 @@ class Runner(object):
     help_utils.update_logger(self.log_dir / f"{int(time.time())}.txt", 
                              logger.get("log_level", "INFO"))
     self.log_every_n_steps = logger.get("log_every_n_steps", 10)
-    self.log_precision = logger.get("log_precision", ".8f")
-    self.log_loss_precision = logger.get("log_loss_precision", self.log_precision)
-    self.log_latency_precision = logger.get("log_latency_precision", self.log_precision)
 
     # Check environment
     slimai.check_env()
@@ -205,6 +202,7 @@ class Runner(object):
         batch_info = self.dist.prepare_for_distributed(batch_info)
         batch_info = DataSample(**batch_info).to(self.dist.env.device)
         batch_data = batch_info.pop("image")
+        batch_meta = batch_info.pop("meta")
         batch_latency = batch_info.pop("latency")
 
         # before forward step
@@ -224,7 +222,7 @@ class Runner(object):
                                        phase=phase, progress_bar=True, step=global_step)
         
         # update avg loss
-        total_loss_value = total_loss.detach().cpu().item()
+        total_loss_value = total_loss.detach()
         avg_loss_value = (avg_loss_value * self.step + total_loss_value) / (self.step + 1)
 
         log_data = {
@@ -232,17 +230,12 @@ class Runner(object):
           "avg_loss": avg_loss_value,
           "total_loss": total_loss_value, 
           **loss_dict, 
-          **latency_dict,
-          **recursive_apply(lambda x: x.detach().mean().cpu().item(), batch_latency) # type: ignore
+          **latency_dict, 
+          **recursive_apply(lambda x: x.mean(), batch_latency), # type: ignore
+          **batch_meta, 
         }
-
-        for key, value in log_data.items():
-          if "loss" in key:
-            msg += f", {key}: {value:{self.log_loss_precision}}"
-          elif "latency" in key:
-            msg += f", {key}: {value:{self.log_latency_precision}}"
-          else:
-            msg += f", {key}: {value:{self.log_precision}}"
+        _, log_msg = self.record.format(log_data)
+        msg += log_msg
 
         self.record.log_step_data(log_data, phase=phase, step=global_step)
         if (self.step + 1) % self.log_every_n_steps == 0:

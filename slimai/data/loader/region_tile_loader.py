@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from sdk.reader import get_reader_by_file
 from slimai.helper.help_build import LOADERS
 from slimai.helper.common import CACHE_ROOT_DIR
+from slimai.helper.help_utils import print_log
 
 
 @LOADERS.register_module()
@@ -86,7 +87,11 @@ class RegionTileLoader():
         if status:
           data = data.tobytes()
           mmengine.dump(data, cache_file)
-    
+        else:
+          print_log("[XX] Failed to compress tile from file: {}".format(file), 
+                    main_process_only=False, 
+                    level="WARNING")
+
     return tile
 
   def read_roi_async(self, reader, xmin, ymin, xmax, ymax, num_threads):

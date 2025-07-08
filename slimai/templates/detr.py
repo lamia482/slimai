@@ -129,7 +129,7 @@ MODEL = dict(
       num_heads=4, 
       num_layers=3, 
       num_query=100, 
-      dropout=0.1,
+      dropout=0.0,
     ), # [B, Q, K]
   ), 
   decoder=dict(
@@ -249,5 +249,5 @@ del datetime, hashlib, torch
 _PROJECT_ = "detr"
 
 _COMMENT_ = """
-
+1. set dropout to 0.0 in neck
 """

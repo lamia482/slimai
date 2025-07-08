@@ -20,7 +20,7 @@ __all__ = ["BasicDataset"]
 class BasicDataset(torch.utils.data.Dataset):
   version = "version"
   signature = "signature"
-  collect_keys = ["indice", "image"]
+  collect_keys = ["indice", "image", "meta"]
 
   def __init__(self, dataset, 
                *, 
@@ -118,7 +118,7 @@ class BasicDataset(torch.utils.data.Dataset):
     image = self.apply_kernel(to_pil_image, image)
     data_to_pil_latency = time.time() - data_to_pil_start_time
 
-    data = dict(indice=item, image=image)
+    data = dict(indice=item, image=image, meta=dict())
     data = self.load_extra_keys(data, index=item)
 
     # wrap data tv_tensors

@@ -5,6 +5,7 @@ from slimai.helper.help_build import DATASETS
 from .dataset_checker import DatasetChecker
 from .basic_dataset import BasicDataset
 from .sample_strategy import SampleStrategy
+from slimai.helper.help_utils import print_log
 
 
 __all__ = ["SupervisedDataset"]
@@ -100,6 +101,8 @@ class SupervisedDataset(BasicDataset):
       # update indices by sample strategy, change indices from list to dict[sampled id -> file id]
       self.indices = SampleStrategy.update_indices(annotations, ann_keys, 
                                                    sample_strategy, self.indices)
+    
+    self.log_label_distribution(annotations, ann_keys, self.indices)
     return
     
   def load_extra_keys(self, data, index):
@@ -167,3 +170,23 @@ class SupervisedDataset(BasicDataset):
     return repr_str
   __repr__=__str__
   
+  def log_label_distribution(self, annotations, ann_keys, indices):
+    labels = annotations.get("label", None)
+    if labels is None:
+      return
+
+    raw_dist = {name: 0 for name in self.class_names}
+    for index in range(len(labels)):
+      raw_dist[self.class_names[labels[index]]] += 1
+
+    new_dist = {name: 0 for name in self.class_names}
+    for index in range(len(self.indices)):
+      new_dist[self.class_names[labels[self.indices[index]]]] += 1
+
+    print_log("""<SupervisedDataset Label Distribution>
+    Before Sample Strategy: 
+    -> {}
+    After Sample Strategy({}): 
+    -> {}
+    """.format(raw_dist, self.sample_strategy, new_dist))
+    return

@@ -10,7 +10,7 @@ class DETRQuery(torch.nn.Module):
                num_heads, 
                num_layers, 
                num_query, 
-               dropout=0.1,
+               dropout=0.0,
                ):
     super().__init__()
     self.input_dim = input_dim

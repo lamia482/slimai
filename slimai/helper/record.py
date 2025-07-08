@@ -5,8 +5,7 @@ import torch
 from PIL import Image
 from typing import Dict, Any, Optional, Union, List
 from .utils.dist_env import dist_env
-from .visuals.visulizer import Visualizer
-from .utils.select import recursive_select
+from .utils.select import recursive_select, recursive_apply
 from .help_utils import print_log
 from .help_build import build_visualizer
 
@@ -94,6 +93,11 @@ class Record(object):
       visualizer_cfg = None
     self.visualizer = build_visualizer(visualizer_cfg)
 
+    logger = config["RUNNER"]["logger"]
+    self.log_precision = logger.get("log_precision", ".8f")
+    self.log_loss_precision = logger.get("log_loss_precision", self.log_precision)
+    self.log_latency_precision = logger.get("log_latency_precision", self.log_precision)
+
     # only one process across all nodes&ranks should record
     if not self.should_record:
       return
@@ -126,6 +130,26 @@ class Record(object):
             f"  topk_vis_on_eval={self.topk_vis_on_eval},\n"
             f")")
   __str__ = __repr__
+
+  def format(self, log_data: Dict[str, Any]):
+    def fix_type(value: Any):
+      if isinstance(value, torch.Tensor):
+        return value.detach().cpu().item()
+      return value
+    
+    log_data = recursive_apply(fix_type, log_data) # type: ignore
+
+    msg = ""
+    for key, value in log_data.items():
+      if "loss" in key:
+        msg += f", {key}: {value:{self.log_loss_precision}}"
+      elif "latency" in key:
+        msg += f", {key}: {value:{self.log_latency_precision}}"
+      elif isinstance(value, float):
+        msg += f", {key}: {value:{self.log_precision}}"
+      else:
+        msg += f", {key}: {value}"
+    return log_data, msg
   
   def log_step_data(self, data: Dict[str, Any], phase: Optional[str] = None, step: Optional[int] = None):
     """
@@ -141,7 +165,10 @@ class Record(object):
         f"{phase}/{key}": value
         for key, value in data.items()
       }
-    return swanlab.log(data, step=step)
+
+    data, _ = self.format(data) # type: ignore
+
+    return swanlab.log(data, step=step) # type: ignore
   
   def check_visualize_batch(self, output, step):
     if not self.should_record:

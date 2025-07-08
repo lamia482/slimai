@@ -17,7 +17,7 @@ class MILTransform(BaseTransform):
                tile_stride, 
                random_crop_patch_size=None, 
                random_crop_patch_num=None, 
-               topk=0, 
+               topk=None, 
                shuffle=False, 
                padding_value=255, 
                **kwargs):
@@ -41,7 +41,7 @@ class MILTransform(BaseTransform):
       )
     ), "random_crop_patch_num must be an integer greater than 0, but got {}".format(self.random_crop_patch_num)
     self.use_patch_as_view = (self.random_crop_patch_num > 0)
-    self.topk = topk
+    self.topk = topk or 0
     assert (
       isinstance(self.topk, (int, float))
     ), "topk must be an integer/float, but got {}".format(self.topk)
@@ -102,10 +102,15 @@ class MILTransform(BaseTransform):
     # produce output images in (N, C, H, W)
     out_patches = self.transforms(dict(image=patches))["image"]
     data.update(dict(image=out_patches))
+
+    # add extra info log
+    data["meta"].update(dict(
+      patch_num=len(out_patches), 
+    ))
     return data
 
   def process_shrink(self, image):
-    wsi_height, wsi_width = image.shape[:2]
+    wsi_height, wsi_width = image.shape[1:] # (C, H, W)
     if self.shrink == "tissue":
       raise NotImplementedError("Tissue shrink is not implemented yet")
     else:

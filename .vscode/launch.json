@@ -38,12 +38,13 @@
       "module": "torch.distributed.launch",
       "console": "integratedTerminal",
       "args": [
-        "--nproc_per_node=8",
+        "--nproc_per_node=2",
         "--standalone",
         "/hzztai/slimai/tools/run.py",
         "--config=/hzztai/slimai/_debug_/debug.py",
         "--work-dir=/hzztai/experiments/debug",
         "--action=train",
+        "--ddp=fsdp"
       ],
       "justMyCode": false
     },
