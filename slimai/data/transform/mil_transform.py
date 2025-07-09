@@ -157,11 +157,15 @@ class MILTransform(BaseTransform):
     wsi_height, wsi_width = image.shape[1:] # (C, H, W)
     vis = None
     if self.shrink == "tissue":
-      mask, vis = segment_foreground_mask(image, speed_up=20/5, kernel_size=5, iterations=3, return_vis=True)
+      operation_ratio = 5/20
+      mask, vis = segment_foreground_mask(image, speed_up=1/operation_ratio, kernel_size=5, iterations=3, return_vis=True)
       coords = find_patch_region_from_mask(mask, self.tile_size, self.tile_stride)
-      vis = cv2.merge([vis, vis, vis])
-      for (x, y, w, h) in coords:
+
+      vis_ratio = 1.25/20
+      vis = cv2.resize(cv2.merge([vis, vis, vis]), None, fx=vis_ratio, fy=vis_ratio) # type: ignore
+      for (x, y, w, h) in (coords * vis_ratio).astype("int"):
         cv2.rectangle(vis, (x, y), (x+w, y+h), (0, 255, 0), 2)
+
       xy_list = coords[:, :2].tolist()
     else:
       xy_list = list(itertools.product(
