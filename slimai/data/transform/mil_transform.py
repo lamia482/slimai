@@ -3,6 +3,7 @@ import torch
 import cv2
 import itertools
 import torch.nn.functional as F
+from PIL import Image
 from torchvision import tv_tensors
 from slimai.helper.help_build import TRANSFORMS
 from slimai.helper.shape import segment_foreground_mask, find_patch_region_from_mask
@@ -97,10 +98,10 @@ class MILTransform(BaseTransform):
       isinstance(wsi_image, tv_tensors.Image)
     ), f"wsi image is expected to be tv_tensors.Image, but got: {type(wsi_image)}"
 
-    xy_list = self.process_shrink(wsi_image)
+    shrink_xy_list, shrink_vis = self.process_shrink(wsi_image)
 
     tiles = []
-    for (x, y) in xy_list:
+    for (x, y) in shrink_xy_list:
       tile = wsi_image[..., y:y+self.tile_size, x:x+self.tile_size]
       tile = F.pad(tile, [0, self.tile_size-tile.shape[-1], 0, self.tile_size-tile.shape[-2]], 
                    mode="constant", value=255)
@@ -145,12 +146,18 @@ class MILTransform(BaseTransform):
     data["meta"].update(dict(
       patch_num=len(out_patches), 
     ))
+
+    if shrink_vis is not None:
+      data["meta"].update(dict(
+        wsi_shrink=Image.fromarray(cv2.resize(shrink_vis, (1024, 1024))),
+      ))
     return data
 
   def process_shrink(self, image):
     wsi_height, wsi_width = image.shape[1:] # (C, H, W)
+    vis = None
     if self.shrink == "tissue":
-      mask = segment_foreground_mask(image, speed_up=20/5, kernel_size=5, iterations=3)
+      mask, vis = segment_foreground_mask(image, speed_up=20/5, kernel_size=5, iterations=3, return_vis=True)
       xy_list = find_patch_region_from_mask(mask, self.tile_size, self.tile_stride)
       xy_list = xy_list[:, :2].tolist()
     else:
@@ -159,7 +166,7 @@ class MILTransform(BaseTransform):
         range(0, wsi_height, self.tile_stride)
       ))
 
-    return xy_list
+    return xy_list, vis
   
   def compose(self, transforms):
     return self._compose(transforms=transforms, source=[TRANSFORMS])

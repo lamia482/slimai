@@ -11,6 +11,8 @@ class DataCollate():
   instance_key = "instance"
   mask_key = "mask"
   text_key = "text"
+  latency_key = "latency"
+  meta_key = "meta"
 
   def __init__(self):
     return
@@ -32,6 +34,7 @@ class DataCollate():
     instances = [v.pop(self.instance_key) for v in original_batch if self.instance_key in v]
     masks = [v.pop(self.mask_key) for v in original_batch if self.mask_key in v]
     texts = [v.pop(self.text_key) for v in original_batch if self.text_key in v]
+    metas = [v.pop(self.meta_key) for v in original_batch if self.meta_key in v]
 
     data = default_collate(original_batch)
 
@@ -47,11 +50,12 @@ class DataCollate():
     instances = self.process_instance(instances)
     masks = self.process_mask(masks)
     texts = self.process_text(texts)
+    metas = self.process_meta(metas)
 
     data.update({
       k: v for k, v in zip(
-        [self.image_key, self.label_key, self.instance_key, self.mask_key, self.text_key],
-        [images, labels, instances, masks, texts]
+        [self.image_key, self.label_key, self.instance_key, self.mask_key, self.text_key, self.meta_key],
+        [images, labels, instances, masks, texts, metas]
       ) if v is not None
     })
     
@@ -111,4 +115,14 @@ class DataCollate():
     
     raise NotImplementedError("Text is not supported yet")
     return text_list
+
+  def process_meta(self, meta_list):
+    if len(meta_list) == 0:
+      return None
+    keys = list(meta_list[0].keys())
+    metas = {
+      k: [m[k] for m in meta_list]
+      for k in keys
+    }
+    return metas
   

@@ -76,6 +76,8 @@ class Record(object):
       self.project_name is not None
     ), "project name is not specified in config, please specify '_PROJECT_' in the config file"
 
+    self.workspace = config.get("_WORKSPACE_", None)
+
     self.experiment_name = config.get("_EXPERIMENT_", None)
     assert (
       self.experiment_name is not None
@@ -106,6 +108,7 @@ class Record(object):
     try:
       swanlab.init(
         project=self.project_name, 
+        workspace=self.workspace, 
         experiment_name=self.experiment_name,
         config=config,
       )
@@ -135,7 +138,13 @@ class Record(object):
   def format(self, log_data: Dict[str, Any]):
     def fix_type(value: Any):
       if isinstance(value, torch.Tensor):
-        return value.detach().cpu().item()
+        value = value.detach().cpu()
+        if value.numel() == 1:
+          value = value.item()
+        else:
+          value = value.tolist()
+      elif isinstance(value, Image.Image):
+        value = swanlab.Image(value)
       return value
     
     log_data = recursive_apply(fix_type, log_data) # type: ignore
@@ -148,8 +157,18 @@ class Record(object):
         msg += f", {key}: {value:{self.log_latency_precision}}"
       elif isinstance(value, float):
         msg += f", {key}: {value:{self.log_precision}}"
-      else:
+      elif not isinstance(value, list):
         msg += f", {key}: {value}"
+
+    # cast list to adapt swanlab
+    for key in list(log_data.keys()):
+      value = log_data[key]
+      if not isinstance(value, list):
+        continue
+      log_data.pop(key)
+      for i, v in enumerate(value):
+        log_data[f"{key}_{i}"] = v
+
     return log_data, msg
   
   def log_step_data(self, data: Dict[str, Any], phase: Optional[str] = None, step: Optional[int] = None):

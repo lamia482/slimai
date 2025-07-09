@@ -30,10 +30,12 @@ loader = dict(
 
 train_view_transform = [
   dict(type="MILTransform", 
-    tile_size=1024, 
-    tile_stride=896, 
+    shrink="tissue", 
+    tile_size=256, 
+    tile_stride=224, 
     random_crop_patch_size=224, # random crop n patch from each tile
-    random_crop_patch_num=16, 
+    random_crop_patch_num=1, 
+    transform_schema="individual",
     topk=0,
     shuffle=True, # shuffle patches
     padding_value=255,
@@ -44,10 +46,12 @@ train_view_transform = [
 
 val_view_transform = [
   dict(type="MILTransform", 
+    shrink="tissue", 
     tile_size=224, 
     tile_stride=224, 
     random_crop_patch_size=None, # random crop n patch from each tile
     random_crop_patch_num=None, 
+    transform_schema="individual",
     topk=0,
     shuffle=False,
     padding_value=255,
@@ -105,12 +109,14 @@ val_dataset["transform"] = val_view_transform
 ########## 1.3 DATA LOADER
 batch_size = 1
 num_workers = 1
+prefetch_factor = 1
 persistent_workers = False # True if num_workers > 0 else False
 
 TRAIN_LOADER = dict(
   dataset=train_dataset,
   batch_size=batch_size,
   num_workers=num_workers,
+  prefetch_factor=prefetch_factor,
   persistent_workers=persistent_workers,
   shuffle=True,
   pin_memory=True, 
@@ -123,6 +129,7 @@ VALID_LOADER = dict(
   dataset=val_dataset,
   batch_size=batch_size,
   num_workers=num_workers,
+  prefetch_factor=prefetch_factor,
   persistent_workers=persistent_workers,
   shuffle=False,
   pin_memory=True,
@@ -194,7 +201,10 @@ RUNNER = dict(
     accumulation_every_n_steps=1,
   ), 
 
-  visualizer=None, 
+  visualizer=dict(
+    type="MILVisualizer", 
+    every_n_steps_on_train=10,
+  ), 
 
   logger=dict(
     log_level="INFO",
@@ -270,8 +280,7 @@ _COMMENT_ = """
 2. use ABMIL as neck;
 3. use balance sample strategy;
 4. use 20X magnification;
-5. use full size region and crop subtiles;
-6. fix bug of MILTransform;
-7. keep accumulate grad steps as 1;
-8. use AdamW as optimizer;
+5. use full size region and crop subtiles by shrink;
+6. use AdamW as optimizer;
+7. use MILVisualizer;
 """

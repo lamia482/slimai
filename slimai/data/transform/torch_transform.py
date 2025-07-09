@@ -1,5 +1,3 @@
-import numpy as np
-from PIL import Image
 from torchvision.transforms import v2 as T
 from slimai.helper.help_build import TRANSFORMS
 from .base_transform import BaseTransform

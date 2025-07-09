@@ -103,6 +103,7 @@ class FlexViT(models.VisionTransformer):
 
     # Expand the class token to the full batch
     batch_class_token = self.class_token.expand(B, -1, -1)
+
     x = torch.cat([batch_class_token, x], dim=1)
 
     """.../site-packages/torchvision/models/vision_transformer.py:154
@@ -117,7 +118,7 @@ class FlexViT(models.VisionTransformer):
       # Classifier "token" as used by standard language architectures
       x = x[:, 0] # [B, ~N, D] -> [B, D]
     else:
-      x = x # [B, ~N, D], keep cls_token
+      x = x[:, 1:] # [B, ~N, D], strip class token
 
     x = self.heads(x) # [B, D] -> [B, C] or [B, ~N, D] -> [B, ~N, C]
 
