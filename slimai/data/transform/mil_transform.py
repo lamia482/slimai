@@ -149,7 +149,7 @@ class MILTransform(BaseTransform):
 
     if shrink_vis is not None:
       data["meta"].update(dict(
-        wsi_shrink=Image.fromarray(cv2.resize(shrink_vis, (1024, 1024))),
+        wsi_shrink=Image.fromarray(shrink_vis)),
       ))
     return data
 
