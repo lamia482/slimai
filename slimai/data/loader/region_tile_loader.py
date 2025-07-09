@@ -16,7 +16,6 @@ class RegionTileLoader():
   def __init__(self, *, 
                magnification: int, 
                region: Dict, 
-               shrink: str="",
                cache: bool=True, 
                cache_mode: str="raw", 
                num_threads: int=0, 
@@ -29,7 +28,6 @@ class RegionTileLoader():
         isinstance(region, dict) and {"xmin", "ymin", "xmax", "ymax"}.issubset(set(region.keys()))
       )
     ), "Region must be None or a dictionary with keys: 'xmin', 'ymin', 'xmax', 'ymax'"
-    self.shrink = shrink
     self.cache = cache
     assert (
       cache_mode in ["raw", "compressed"]

@@ -1,9 +1,11 @@
 import numpy as np
 import torch
+import cv2
 import itertools
 import torch.nn.functional as F
 from torchvision import tv_tensors
 from slimai.helper.help_build import TRANSFORMS
+from slimai.helper.shape import segment_foreground_mask, find_patch_region_from_mask
 from .base_transform import BaseTransform
 
 
@@ -17,34 +19,64 @@ class MILTransform(BaseTransform):
                tile_stride, 
                random_crop_patch_size=None, 
                random_crop_patch_num=None, 
+               transform_schema="individual",
                topk=None, 
                shuffle=False, 
                padding_value=255, 
                **kwargs):
+    """
+    Brief:
+      This transform is used to produce MIL views from a WSI image.
+      It can produce tiles by sliding windows from input image(expect to be a WSI image in shape (H, W, C))
+      then random crop n patches from each tile if needed, otherwise use tiles as views
+      finally, transfroms views and stack them together as multiple instances
+
+    Args:
+      shrink: str, "tissue" or None
+      tile_size: int
+      tile_stride: int
+      random_crop_patch_size: int or None
+      random_crop_patch_num: int or None
+      transform_schema: str, "individual" or "group"
+      topk: int or None
+      shuffle: bool
+      padding_value: int
+    """
     super().__init__(*args, **kwargs)
     self.shrink = shrink
     assert (
       self.shrink in [None, "tissue"]
     ), "shrink is expected to be one of [None, 'tissue'], but got: {}".format(self.shrink)
+
     self.tile_size = tile_size
     self.tile_stride = tile_stride
+    
     self.random_crop_patch_size = random_crop_patch_size
     assert (
       self.random_crop_patch_size is None or (
         isinstance(self.random_crop_patch_size, int) and (0 < self.random_crop_patch_size < self.tile_size)
       )
     ), "random_crop_patch_size must be an integer between 0 and tile_size, but got {}".format(self.random_crop_patch_size)
+    
     self.random_crop_patch_num = random_crop_patch_num or 0
     assert (
       self.random_crop_patch_num is None or (
         isinstance(self.random_crop_patch_num, int) and (self.random_crop_patch_num >= 0)
       )
     ), "random_crop_patch_num must be an integer greater than 0, but got {}".format(self.random_crop_patch_num)
+    
     self.use_patch_as_view = (self.random_crop_patch_num > 0)
+
+    self.transform_schema = transform_schema
+    assert (
+      self.transform_schema in ["individual", "group"]
+    ), "transform_schema must be one of ['individual', 'group'], but got {}".format(self.transform_schema)
+
     self.topk = topk or 0
     assert (
       isinstance(self.topk, (int, float))
     ), "topk must be an integer/float, but got {}".format(self.topk)
+
     self.shuffle = shuffle
     self.padding_value = padding_value
     return
@@ -100,7 +132,13 @@ class MILTransform(BaseTransform):
     patches = tv_tensors.Image(topk_views) # (N, C, H, W)
 
     # produce output images in (N, C, H, W)
-    out_patches = self.transforms(dict(image=patches))["image"]
+    if self.transform_schema == "individual":
+      out_patches = torch.stack([self.transforms(dict(image=img))["image"] for img in patches], dim=0)
+    elif self.transform_schema == "group":
+      out_patches = self.transforms(dict(image=patches))["image"]
+    else:
+      raise ValueError(f"transform_schema must be one of ['individual', 'group'], but got {self.transform_schema}")
+
     data.update(dict(image=out_patches))
 
     # add extra info log
@@ -112,7 +150,9 @@ class MILTransform(BaseTransform):
   def process_shrink(self, image):
     wsi_height, wsi_width = image.shape[1:] # (C, H, W)
     if self.shrink == "tissue":
-      raise NotImplementedError("Tissue shrink is not implemented yet")
+      mask = segment_foreground_mask(image, speed_up=20/5, kernel_size=5, iterations=3)
+      xy_list = find_patch_region_from_mask(mask, self.tile_size, self.tile_stride)
+      xy_list = xy_list[:, :2].tolist()
     else:
       xy_list = list(itertools.product(
         range(0, wsi_width, self.tile_stride), 

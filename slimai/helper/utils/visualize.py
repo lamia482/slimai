@@ -76,6 +76,13 @@ def vstack_imgs(img_list, interval_width=10, interval_value=0):
   img = np.vstack(img_list)
   return img
 
+def pad_image(img, *, up=0, down=0, left=0, right=0, default_value=0):
+  dim = img.ndim
+  extend = ((up, down), (left, right))
+  if dim > 2:
+    extend = extend + ((0, 0),) * (dim - 2)
+  return np.pad(img, extend, mode="constant", constant_values=default_value)
+
 def square_imgs(img_list, interval_width=10, interval_value=0):
   img_num = len(img_list)
   square_s = np.floor(img_num**0.5).astype("int")

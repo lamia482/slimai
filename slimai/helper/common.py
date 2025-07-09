@@ -6,8 +6,8 @@ CACHE_ROOT_DIR = "/.slimai/cache"
 ##### REQUIRMENTS #####
 REQUIREMENTS = {
   # package: [min_version, max_version]
-  "torch": ["2.7.0", None],
+  "torch": ["2.5.1", None],
 }
 
 ##### VERSION #####
-VERSION = "0.1.3"
+VERSION = "0.1.4"
