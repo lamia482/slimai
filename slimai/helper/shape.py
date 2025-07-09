@@ -34,6 +34,7 @@ def segment_foreground_mask(image,
   vis = None
   if return_vis:
     vis = cv2.addWeighted(gray, 0.5, mask, 0.5, 0)
+    vis = cv2.resize(vis, wsi.shape[:2][::-1])
   
   mask = cv2.resize(mask, wsi.shape[:2][::-1])
   mask = mask.astype("bool")
