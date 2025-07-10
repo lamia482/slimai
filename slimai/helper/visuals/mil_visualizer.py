@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from PIL import Image, ImageDraw
+import cv2
 from .visulizer import Visualizer
 from ..utils.scale_image import to_batch_numpy_image
 from ..utils.visualize import square_imgs, pad_image
@@ -17,14 +17,15 @@ class MILVisualizer(Visualizer):
     atten_indices = output["atten_indices"]
     atten_scores = output["atten_scores"]
     atten_patches = to_batch_numpy_image(torch.stack([patch_imgs[index] for index in atten_indices]))
-    vis = square_imgs(atten_patches)
 
-    raw_size = 30
+    raw_size, font_scale, font_thickness = 60, 0.5, 2
+    for atten_score, atten_patch in zip(atten_scores, atten_patches):
+      cv2.putText(atten_patch, f"Atten: {atten_score:.6f}", (0, raw_size//2), 
+                  cv2.FONT_HERSHEY_SIMPLEX, font_scale*1.5, (255, 0, 0), font_thickness)
+    
+    vis = square_imgs(atten_patches)
     vis = pad_image(vis, up=raw_size)
-    pil_image = Image.fromarray(vis)
-    draw = ImageDraw.Draw(pil_image)
     title = f"GT: {class_names[label]}, Pred: {class_names[pred_label]}, Score: {pred_score:.4f}"
-    length = draw.textlength(title)
-    draw.text(((vis.shape[1] - length)//2, 0), title, fill=(255, 0, 0))
-    vis = np.array(pil_image)[..., ::-1]
+    cv2.putText(vis, title, ((vis.shape[1] - len(title))//3, raw_size//2), 
+                cv2.FONT_HERSHEY_SIMPLEX, font_scale*2, (0, 0, 255), font_thickness)
     return vis
