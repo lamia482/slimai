@@ -1,5 +1,5 @@
 import torch
-from typing import Union, Dict, List
+from typing import Union, Dict, List, Tuple
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import MODELS, build_model
 from slimai.helper.utils import PytorchNetworkUtils
@@ -69,7 +69,8 @@ class MIL(ClassificationArch):
   
   def _forward_tensor(self, 
                 batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]], 
-                return_flow: bool = False) -> Union[torch.Tensor, Dict[str, Union[torch.Tensor, List[torch.Tensor]]]]:
+                return_flow: bool = False
+    ) -> Union[Tuple[torch.Tensor, torch.Tensor], Dict[str, Union[torch.Tensor, List[torch.Tensor]]]]:
     """Forward pass for tensor input.
     
     Processes a batch of bags through the model. Each bag contains multiple instances.
@@ -102,7 +103,12 @@ class MIL(ClassificationArch):
       return torch.cat(output, dim=0)
 
     # batch_data in shape (B, ~N, C, H, W)
-    backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
+    backbone = None
+    if meta := getattr(self, "meta", None):
+      backbone = meta.get("embeddings", None)
+    if backbone is None:
+      backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
+
     neck = self.model.neck(backbone) # type: ignore # (B, D)
     if isinstance(neck, tuple):
       neck, atten_logits = neck
@@ -118,7 +124,7 @@ class MIL(ClassificationArch):
         head=head,
       )
     else:
-      return head
+      return atten_logits, head # type: ignore
 
   def _forward_loss(self, 
               embedding_dict: Dict[str, torch.Tensor], 
@@ -131,16 +137,15 @@ class MIL(ClassificationArch):
     return loss
 
   def _postprocess(self, 
-                  batch_data: torch.Tensor, 
+                  batch_data: Union[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]], 
                   batch_info: DataSample) -> DataSample: 
-    super()._postprocess(batch_data, batch_info)
-
     if isinstance(batch_data, dict):
-      batch_data = batch_data["atten_logits"]
+      atten_logits = batch_data["atten_logits"]
+      cls_logits = batch_data["head"]
     else:
-      return batch_info
+      atten_logits, cls_logits = batch_data
     
-    atten_logits = batch_data
+    super()._postprocess(cls_logits, batch_info)
     
     topk = 8*8 # topk indices to visualize
     atten_softmax = [
@@ -148,16 +153,24 @@ class MIL(ClassificationArch):
       for al in atten_logits
     ]
     atten_topk = [
-      al.topk(k=topk, dim=-1) # select topk maximum indices
+      al.topk(k=topk, dim=-1, largest=True) # select topk(maximum) indices
+      for al in atten_softmax
+    ]
+    atten_tailk = [
+      al.topk(k=topk, dim=-1, largest=False) # select tailk(minimum) indices
       for al in atten_softmax
     ]
 
     topk_scores, topk_indices = list(map(list, zip(*atten_topk)))
+    tailk_scores, tailk_indices = list(map(list, zip(*atten_tailk)))
 
     batch_info.output.update(dict(
-      atten_logits=[a[i] for a, i in zip(atten_logits, topk_indices)], # [B, ~N]
-      atten_indices=topk_indices, # [B, ~N]
-      atten_scores=topk_scores, # [B, ~N]
+      topk_atten_logits=[a[i] for a, i in zip(atten_logits, topk_indices)], # [B, ~N]
+      topk_atten_indices=topk_indices, # [B, ~N]
+      topk_atten_scores=topk_scores, # [B, ~N]
+      tailk_atten_logits=[a[i] for a, i in zip(atten_logits, tailk_indices)], # [B, ~N]
+      tailk_atten_indices=tailk_indices, # [B, ~N]
+      tailk_atten_scores=tailk_scores, # [B, ~N]
     ))
 
     return batch_info

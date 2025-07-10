@@ -18,6 +18,7 @@ class Checkpoint(object):
   
   Attributes:
     save_dir (Path): Directory to save checkpoints
+    save_every_n_steps (int): Save checkpoint every N steps
     save_every_n_epochs (int): Save checkpoint every N epochs
     keep_max (int): Maximum number of checkpoints to keep
     keep_best (bool): Whether to keep the best checkpoint
@@ -31,6 +32,7 @@ class Checkpoint(object):
   def __init__(
     self,
     save_dir: str,
+    save_every_n_steps: int = None,
     save_every_n_epochs: int = 1,
     keep_max: int = -1,
     keep_best: bool = True,
@@ -50,6 +52,7 @@ class Checkpoint(object):
     self.dist = Distributed.create()
 
     self.save_dir = Path(save_dir).resolve()
+    self.save_every_n_steps = save_every_n_steps
     self.save_every_n_epochs = save_every_n_epochs
     self.keep_max = keep_max
     self.keep_best = keep_best
@@ -69,7 +72,8 @@ class Checkpoint(object):
     solver: torch.optim.Optimizer, 
     scheduler: torch.optim.lr_scheduler.LRScheduler,
     epoch: int,
-    loss: float = float("inf"),
+    step: int, 
+    loss: float = None,
     export: bool = False, 
     **kwargs
   ) -> Path:
@@ -87,13 +91,22 @@ class Checkpoint(object):
     Returns:
       Path to saved checkpoint
     """
-    ckpt_path = self.save_dir / f"epoch_{epoch}.pth"
+    save_by_step = self.save_every_n_steps is not None and step % self.save_every_n_steps == 0
+    save_by_epoch = epoch % self.save_every_n_epochs == 0
+    if save_by_step:
+      save_by_epoch = False # skip duplicate save by step and epoch
+
+    if save_by_step:
+      ckpt_path = self.save_dir / f"step_{step}.pth" 
+    else:
+      ckpt_path = self.save_dir / f"epoch_{epoch}.pth" 
+
     if (
-      epoch % self.save_every_n_epochs == 0
+      (save_by_step or save_by_epoch)
       and self.dist.env.is_main_process()
     ):
       update_best = False
-      if loss <= self.min_loss:
+      if loss is not None and loss <= self.min_loss:
         self.min_loss = loss
         update_best = True and self.keep_best
 
@@ -211,7 +224,8 @@ class Checkpoint(object):
         scheduler.load_state_dict(scheduler_state)
 
       if resume:
-        self.min_loss = ckpt.get("min_loss", float("inf"))
+        min_loss = ckpt.get("min_loss", None)
+        self.min_loss = min_loss or float("inf")
       else:
         ckpt.pop("epoch")
         ckpt.pop("min_loss")

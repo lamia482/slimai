@@ -81,6 +81,21 @@ class MILTransform(BaseTransform):
     self.shuffle = shuffle
     self.padding_value = padding_value
     return
+
+  def __repr__(self):
+    return (f"MILTransform(\n"
+            f"  shrink={self.shrink},\n"
+            f"  tile_size={self.tile_size},\n"
+            f"  tile_stride={self.tile_stride},\n"
+            f"  random_crop_patch_size={self.random_crop_patch_size},\n"
+            f"  random_crop_patch_num={self.random_crop_patch_num},\n"
+            f"  transform_schema={self.transform_schema},\n"
+            f"  topk={self.topk},\n"
+            f"  shuffle={self.shuffle},\n"
+            f"  padding_value={self.padding_value},\n"
+            f"  transforms={self.transforms},\n"
+            f")")
+  __str__ = __repr__
   
   def __call__(self, data):
     """ 

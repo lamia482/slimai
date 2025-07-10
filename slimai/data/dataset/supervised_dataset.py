@@ -183,10 +183,10 @@ class SupervisedDataset(BasicDataset):
     for index in range(len(self.indices)):
       new_dist[self.class_names[labels[self.indices[index]]]] += 1
 
-    print_log("""<SupervisedDataset Label Distribution>
+    print_log("""<{} Label Distribution>
     Before Sample Strategy: 
     -> {}
     After Sample Strategy({}): 
     -> {}
-    """.format(raw_dist, self.sample_strategy, new_dist))
+    """.format(self.__class__.__name__, raw_dist, self.sample_strategy, new_dist))
     return

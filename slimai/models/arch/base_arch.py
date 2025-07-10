@@ -94,27 +94,42 @@ class BaseArch(object):
     )
     self.model.load_state_dict(state_dict, strict=strict)
     return
+
+  def set_extra_attributes(self, **kwargs):
+    for key, value in kwargs.items():
+      setattr(self, key, value)
+    return
   
   @abstractmethod
-  def epoch_precede_hooks(self, *, runner):
+  def epoch_precede_hooks(self, *, runner, **kwargs):
     print_log(
       f"Using default `epoch_precede_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
     # set train and clear grad before next epoch in case of former evaluation
     self.model.train()
+    self.set_extra_attributes(**kwargs)
     return
   
   @abstractmethod
-  def epoch_succeed_hooks(self, *, runner):
+  def epoch_succeed_hooks(self, *, runner, **kwargs):
     print_log(
       f"Using default `epoch_succeed_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
+    runner.checkpoint.save(
+      runner.model, 
+      runner.solver, 
+      runner.scheduler,
+      runner.epoch, 
+      runner.global_step, 
+      cfg=runner.cfg.MODEL,
+    )
+    self.set_extra_attributes(**kwargs)
     return
   
   @abstractmethod
-  def step_precede_hooks(self, *, runner):
+  def step_precede_hooks(self, *, runner, **kwargs):
     # Default step_precede_hooks
     print_log(
       f"Using default `step_precede_hooks` in {self.__class__.__name__}",
@@ -124,15 +139,25 @@ class BaseArch(object):
     self.max_train_epoch = runner.max_epoch
     self.current_train_step = runner.step # step in runner start from 0
     self.max_train_step = len(runner.train_dataloader)
+    self.set_extra_attributes(**kwargs)
     return
   
   @abstractmethod
-  def step_succeed_hooks(self, *, runner):
+  def step_succeed_hooks(self, *, runner, **kwargs):
     # Default step_succeed_hooks
     print_log(
       f"Using default `step_succeed_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
+    runner.checkpoint.save(
+      runner.model, 
+      runner.solver, 
+      runner.scheduler,
+      runner.epoch, 
+      runner.global_step, 
+      cfg=runner.cfg.MODEL,
+    )
+    self.set_extra_attributes(**kwargs)
     return
   
   def __call__(self, 

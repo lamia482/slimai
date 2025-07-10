@@ -126,6 +126,7 @@ class Record(object):
             f"  swanlab_ok={self._swanlab_ok},\n"
             f"  should_record={self.should_record},\n"
             f"  project_name={self.project_name},\n"
+            f"  workspace={self.workspace},\n"
             f"  experiment_name={self.experiment_name},\n"
             f"  work_dir={self.work_dir},\n"
             f"  save_dir={self.save_dir},\n"

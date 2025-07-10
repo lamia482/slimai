@@ -51,6 +51,7 @@ class Runner(object):
     ckpt = cfg.RUNNER.ckpt
     self.checkpoint = Checkpoint(
       save_dir=self.work_dir / ckpt.get("save_dir", "ckpts"),
+      save_every_n_steps=ckpt.get("save_every_n_steps", None),
       save_every_n_epochs=ckpt.get("save_every_n_epochs", 1),
       keep_max=ckpt.get("keep_max", -1),
       keep_best=ckpt.get("keep_best", True),
@@ -58,6 +59,9 @@ class Runner(object):
     )
 
     self.eval_every_n_epochs = ckpt.get("eval_every_n_epochs", 1)
+    self.eval_every_n_steps = ckpt.get("eval_every_n_steps", None)
+    self.eval_every_n_epochs = self.eval_every_n_epochs or 1
+    self.eval_every_n_steps = self.eval_every_n_steps or 0
 
     # Dump config to work_dir
     self.archive_env_for_reproducibility()
@@ -196,7 +200,7 @@ class Runner(object):
       avg_loss_value = 0.0
       num_steps_per_epoch = len(self.train_dataloader)
       for self.step, batch_info in enumerate(self.train_dataloader):
-        global_step = self.step + (self.epoch-1) * num_steps_per_epoch
+        self.global_step = self.step + (self.epoch-1) * num_steps_per_epoch # global step starts from 0
 
         msg = f"Step: {self.step+1}/{num_steps_per_epoch}"
         batch_info = self.dist.prepare_for_distributed(batch_info)
@@ -206,7 +210,7 @@ class Runner(object):
         batch_latency = batch_info.pop("latency")
 
         # before forward step
-        self.arch.step_precede_hooks(runner=self)
+        self.arch.step_precede_hooks(runner=self, meta=batch_meta, latency=batch_latency)
 
         # forward step
         output, total_loss, loss_dict, latency_dict = self.step_train(
@@ -219,7 +223,7 @@ class Runner(object):
             targets = {key: getattr(batch_info, key) for key in self.train_dataloader.dataset.ann_keys}
           self.record.log_batch_sample(batch_data, output, targets, 
                                        class_names=self.train_dataloader.dataset.class_names,
-                                       phase=phase, progress_bar=True, step=global_step)
+                                       phase=phase, progress_bar=True, step=self.global_step)
         
         # update avg loss
         total_loss_value = total_loss.detach()
@@ -237,7 +241,7 @@ class Runner(object):
         _, log_msg = self.record.format(log_data)
         msg += log_msg
 
-        self.record.log_step_data(log_data, phase=phase, step=global_step)
+        self.record.log_step_data(log_data, phase=phase, step=self.global_step)
         if (self.step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
@@ -250,9 +254,15 @@ class Runner(object):
       # Evaluate on validation dataset
       if (self.valid_dataloader is not None) and \
          (self.eval_every_n_epochs is not None) and \
-         (self.epoch % self.eval_every_n_epochs == 0):
+         (
+          (self.epoch % self.eval_every_n_epochs == 0) or 
+          (self.eval_every_n_steps > 0 and self.global_step > 0 and self.global_step % self.eval_every_n_steps == 0)
+        ):
         phase = "valid"
-        result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
+        if self.epoch % self.eval_every_n_epochs == 0:
+          result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
+        else:
+          result_file = self.work_dir / "results" / f"step_{self.global_step}.pkl"
         eval_metrics = self.evaluate(self.valid_dataloader, result_file, phase=phase)
         avg_loss_value = eval_metrics.get("loss", avg_loss_value)
         log_data = {
@@ -260,15 +270,6 @@ class Runner(object):
           **eval_metrics,
         }
         self.record.log_step_data(log_data, phase=phase)
-
-      # Save checkpoint with strategy
-      self.checkpoint.save(
-        self.model, 
-        self.solver, 
-        self.scheduler,
-        self.epoch, 
-        loss=avg_loss_value, 
-        cfg=self.cfg.MODEL)
 
     return
   
@@ -289,9 +290,15 @@ class Runner(object):
       batch_info = self.dist.prepare_for_distributed(batch_info)
       batch_info = DataSample(**batch_info).to(self.dist.env.device)
       batch_data = batch_info.pop("image")
+      batch_meta = batch_info.pop("meta")
+      batch_latency = batch_info.pop("latency")
+
+      self.arch.step_precede_hooks(runner=self, meta=batch_meta, latency=batch_latency)
+
       with torch.autocast(device_type=self.dist.env.accelerator, 
                           enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
         batch_info = infer_forward_func(batch_data, batch_info).cpu()
+
       results.extend(batch_info.split_as_list())
       pbar.update(sep="\r\t")
     pbar.close()

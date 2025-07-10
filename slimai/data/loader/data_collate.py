@@ -25,10 +25,11 @@ class DataCollate():
     ), "original_batch must be a list of dicts with the same keys"
 
     keys = original_batch[0].keys()
-    assert (
+    assert ( # make sure developer has properly handle with image_key
       self.image_key in keys
     ), "image_key must be in the keys of the batch"
     
+    # pop attributes from original_batch for custom processing
     images = [v.pop(self.image_key) for v in original_batch if self.image_key in v]
     labels = [v.pop(self.label_key) for v in original_batch if self.label_key in v]
     instances = [v.pop(self.instance_key) for v in original_batch if self.instance_key in v]
@@ -36,22 +37,22 @@ class DataCollate():
     texts = [v.pop(self.text_key) for v in original_batch if self.text_key in v]
     metas = [v.pop(self.meta_key) for v in original_batch if self.meta_key in v]
 
+    # default collate for other keys
     data = default_collate(original_batch)
 
+    # custom processing
     images = self.process_image(images)
-    assert (
-      images is not None
-    ), "images must be not None"
-    whwh = torch.stack([torch.as_tensor(image.shape[-2:] * 2) for image in images])
-    width, height = whwh.unbind(dim=1)[:2]
-    data["width"], data["height"] = width, height
-
+    if (images is not None) and len(images) > 0:
+      whwh = torch.stack([torch.as_tensor(image.shape[-2:] * 2) for image in images])
+      width, height = whwh.unbind(dim=1)[:2]
+      data["width"], data["height"] = width, height
     labels = self.process_label(labels)
     instances = self.process_instance(instances)
     masks = self.process_mask(masks)
     texts = self.process_text(texts)
     metas = self.process_meta(metas)
 
+    # update data with custom processed keys
     data.update({
       k: v for k, v in zip(
         [self.image_key, self.label_key, self.instance_key, self.mask_key, self.text_key, self.meta_key],

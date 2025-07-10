@@ -125,7 +125,7 @@ class DataSample(BaseDataElement):
         if isinstance(inputs[0], dict): # merge every key in dict
           return {k: concat([d[k] for d in inputs]) for k in inputs[0].keys()}
         
-        if isinstance(inputs[0], str):
+        if not isinstance(inputs[0], torch.Tensor):
           return inputs
 
         assert (
