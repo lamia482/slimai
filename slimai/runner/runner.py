@@ -134,7 +134,7 @@ class Runner(object):
     raise ValueError(f"Invalid action: {action}")
   
   def step_train(self, i_step, total_steps, 
-                 batch_data, batch_info):
+                 batch_data, batch_info, phase):
     """Train the model for one step."""
 
     step_train_start_time = time.time()
@@ -175,13 +175,25 @@ class Runner(object):
       )
       backward_latency = time.time() - backward_start_time
 
+    # log batch sample in training duration
+    batch_visual_start_time = time.time()
+    if self.record.check_visualize_batch(output, self.step):
+      with torch.inference_mode():
+        output = getattr(self.arch, "postprocess")(output, batch_info).output
+        targets = {key: getattr(batch_info, key) for key in self.train_dataloader.dataset.ann_keys}
+      self.record.log_batch_sample(batch_data, output, targets, 
+                                    class_names=self.train_dataloader.dataset.class_names,
+                                    phase=phase, progress_bar=False, step=self.global_step)
+    batch_visual_latency = time.time() - batch_visual_start_time
+
     step_train_latency = time.time() - step_train_start_time
     latency_dict = dict(
       step_train_latency=step_train_latency,
       forward_latency=forward_latency,
       backward_latency=backward_latency,
+      batch_visual_latency=batch_visual_latency,
     )
-    return output, total_loss, loss_dict, latency_dict
+    return total_loss, loss_dict, latency_dict
 
   def extract_batch_info(self, batch_info):
     return batch_info.pop("image"), batch_info.get("meta"), batch_info.get("latency")
@@ -214,17 +226,8 @@ class Runner(object):
         self.arch.step_precede_hooks(runner=self, meta=batch_meta, latency=batch_latency)
 
         # forward step
-        output, total_loss, loss_dict, latency_dict = self.step_train(
-          self.step, num_steps_per_epoch, batch_data, batch_info)
-
-        # log batch sample in training duration
-        if self.record.check_visualize_batch(output, self.step):
-          with torch.inference_mode():
-            output = getattr(self.arch, "postprocess")(output, batch_info).output
-            targets = {key: getattr(batch_info, key) for key in self.train_dataloader.dataset.ann_keys}
-          self.record.log_batch_sample(batch_data, output, targets, 
-                                       class_names=self.train_dataloader.dataset.class_names,
-                                       phase=phase, progress_bar=True, step=self.global_step)
+        total_loss, loss_dict, latency_dict = self.step_train(
+          self.step, num_steps_per_epoch, batch_data, batch_info, phase)
         
         # update avg loss
         total_loss_value = total_loss.detach()

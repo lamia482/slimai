@@ -106,11 +106,7 @@ val_dataset["dataset"]["filter"][0] = ("phase", "==", "test")
 val_dataset["desc"] = "val tct wsi mil"
 val_dataset["transform"] = val_view_transform
 val_dataset["cache_embedding"] = True
-val_dataset["feature_extractor"] = dict(
-  type="Plugin",
-  module="/mnt/wangqiang/server/10.168.100.21/ai/nengwp/TCT/dino/infer_wq.py:get_backbone",
-  weight="/mnt/wangqiang/server/10.168.100.21/ai/nengwp/TCT/dino/pretrain/dinov2_exp3/training_742052/teacher_checkpoint.pth" 
-)
+val_dataset["cache_embedding_key"] = "embeddings"
 
 ########## 1.3 DATA LOADER
 batch_size = 1
@@ -152,8 +148,8 @@ MODEL = dict(
   encoder=dict(
     backbone=dict(
       type="Plugin",
-      module="/mnt/wangqiang/server/10.168.100.21/ai/nengwp/TCT/dino/infer_wq.py:get_backbone",
-      weight="/mnt/wangqiang/server/10.168.100.21/ai/nengwp/TCT/dino/pretrain/dinov2_exp3/training_742052/teacher_checkpoint.pth" 
+      module="/.slimai/plugins/dino/infer_wq.py:get_backbone",
+      weight="/.slimai/plugins/dino/teacher_checkpoint.pth" 
     ),
     neck=dict(
       type="ABMIL", 
@@ -187,7 +183,7 @@ MODEL = dict(
     weight_decay=1e-2, 
     scheduler=dict(
       type="torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
-      T_0=1800,
+      T_0=900,
       T_mult=1,
       eta_min=1e-4,
     ),
@@ -197,7 +193,7 @@ MODEL = dict(
 ############################## 3. RUNNER
 
 RUNNER = dict(
-  max_epoch=100,
+  max_epoch=30,
   compile=True, 
   checkpointing=True, 
 
@@ -223,10 +219,12 @@ RUNNER = dict(
 
   ckpt=dict(
     save_dir="ckpts",
+    save_every_n_steps=100,
     save_every_n_epochs=1, 
     keep_max=5,
     keep_best=True, # keep ckpt with minimum loss on VALID dataset
     keep_latest=True, # keep ckpt link to latest epoch
+    eval_every_n_steps=100,
     eval_every_n_epochs=1, 
   ),
 

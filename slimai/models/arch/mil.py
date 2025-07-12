@@ -109,12 +109,14 @@ class MIL(ClassificationArch):
     if backbone is None:
       # batch_data in shape (B, ~N, C, H, W)
       backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
-      if cache_file_list := meta.get("cache_file", None):
-        for cache_file, embeddings in zip(cache_file_list, backbone):
-          embeddings = self.dist.copy_cpu_offload_tensor(embeddings)
+      if cache_embedding_list := meta.get("cache_embedding", None):
+        for vis_image, embedding, cache_embedding, cache_file, visual_file in zip(
+          batch_data, backbone, cache_embedding_list, 
+          meta.get("cache_file", []), meta.get("visual_file", [])):
+          if not cache_embedding:
+            continue
+          embeddings = self.dist.copy_cpu_offload_tensor(embedding)
           mmengine.dump(dict(meta=dict(embeddings=embeddings)), cache_file)
-      if visual_file_list := meta.get("visual_file", None):
-        for visual_file, vis_image in zip(visual_file_list, batch_data):
           vis_image = self.dist.copy_cpu_offload_tensor(vis_image)
           mmengine.dump(dict(meta=dict(visual_image=vis_image)), visual_file, protocol=4)
 

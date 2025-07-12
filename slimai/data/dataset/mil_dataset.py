@@ -62,6 +62,7 @@ class MILDataset(SupervisedDataset):
         ), 
       ))
       data["meta"].update(dict(
+        cache_embedding=self.cache_embedding,
         visual_file=vis_cache_file,
         cache_file=cache_file,
       ))
@@ -70,6 +71,7 @@ class MILDataset(SupervisedDataset):
     else:
       data = super().select_sample(item)
       data["meta"].update(dict(
+        cache_embedding=self.cache_embedding,
         visual_file=vis_cache_file,
         cache_file=cache_file,
       ))
