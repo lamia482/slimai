@@ -14,7 +14,7 @@ IMPORT = Registry("import")
 LOADERS = Registry("loaders")
 SOURCES = Registry("sources")
 VISUALIZERS = Registry("visualizers")
-from slimai.helper.help_utils import print_log, dist_env
+from slimai.helper.help_utils import print_log, get_dist_env
 
 
 def compose_components(components, 
@@ -106,6 +106,8 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
   dataset = build_dataset(cfg.pop("dataset", None))
   if dataset is None:
     return None # type: ignore
+
+  dist_env = get_dist_env()
   if dist_env.is_dist_initialized():
     assert (
       "sampler" not in cfg

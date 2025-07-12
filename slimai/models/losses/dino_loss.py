@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import Dict
 from slimai.helper.help_build import MODELS
-from slimai.helper.help_utils import dist_env
+from slimai.helper.help_utils import get_dist_env
 
 
 @MODELS.register_module()
@@ -55,7 +55,7 @@ class DINOLoss(torch.nn.Module):
     Update center used for teacher output.
     """
     batch_center = torch.mean(teacher_output, dim=0, keepdim=True)
-    batch_center = dist_env.sync(batch_center) # already divided by world size, no need to divide again
+    batch_center = get_dist_env().sync(batch_center) # already divided by world size, no need to divide again
 
     # ema update
     self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum) # type: ignore

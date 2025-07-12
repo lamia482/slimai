@@ -79,6 +79,9 @@ class RegionTileLoader():
       tile = reader.ReadRoi(xmin, ymin, xmax-xmin, ymax-ymin, scale=reader.getReadScale()) # type: ignore
 
     if self.cache:
+      h, w = tile.shape[:2] # type: ignore
+      if h >= 65536 or w >= 65536:
+        return tile # skip large tiles
       data = tile
       if self.compressed:
         status, data = cv2.imencode(".jpg", data) # type: ignore

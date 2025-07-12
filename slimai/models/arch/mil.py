@@ -1,4 +1,5 @@
 import torch
+import mmengine
 from typing import Union, Dict, List, Tuple
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import MODELS, build_model
@@ -102,12 +103,20 @@ class MIL(ClassificationArch):
         output.append(embedding)
       return torch.cat(output, dim=0)
 
-    # batch_data in shape (B, ~N, C, H, W)
-    backbone = None
-    if meta := getattr(self, "meta", None):
-      backbone = meta.get("embeddings", None)
+    meta = getattr(self, "meta")
+    backbone = meta.get("embeddings", None)
+
     if backbone is None:
+      # batch_data in shape (B, ~N, C, H, W)
       backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
+      if cache_file_list := meta.get("cache_file", None):
+        for cache_file, embeddings in zip(cache_file_list, backbone):
+          embeddings = self.dist.copy_cpu_offload_tensor(embeddings)
+          mmengine.dump(dict(meta=dict(embeddings=embeddings)), cache_file)
+      if visual_file_list := meta.get("visual_file", None):
+        for visual_file, vis_image in zip(visual_file_list, batch_data):
+          vis_image = self.dist.copy_cpu_offload_tensor(vis_image)
+          mmengine.dump(dict(meta=dict(visual_image=vis_image)), visual_file, protocol=4)
 
     neck = self.model.neck(backbone) # type: ignore # (B, D)
     if isinstance(neck, tuple):

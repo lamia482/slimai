@@ -29,7 +29,7 @@ class BaseArch(object):
     """
     super().__init__()
 
-    self.dist = Distributed.create()
+    self.dist = Distributed()
 
     # Initialize model layers
     model = self.init_layers(encoder, decoder)
@@ -106,26 +106,11 @@ class BaseArch(object):
       f"Using default `epoch_precede_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
+    self.set_extra_attributes(**kwargs)
+
     # set train and clear grad before next epoch in case of former evaluation
     self.model.train()
-    self.set_extra_attributes(**kwargs)
-    return
-  
-  @abstractmethod
-  def epoch_succeed_hooks(self, *, runner, **kwargs):
-    print_log(
-      f"Using default `epoch_succeed_hooks` in {self.__class__.__name__}",
-      level="WARNING", warn_once=True
-    )
-    runner.checkpoint.save(
-      runner.model, 
-      runner.solver, 
-      runner.scheduler,
-      runner.epoch, 
-      runner.global_step, 
-      cfg=runner.cfg.MODEL,
-    )
-    self.set_extra_attributes(**kwargs)
+    runner.train_dataloader.sampler.set_epoch(runner.epoch)
     return
   
   @abstractmethod
@@ -135,11 +120,12 @@ class BaseArch(object):
       f"Using default `step_precede_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
-    self.current_train_epoch = runner.epoch - 1 # epoch in runner start from 1
+    self.set_extra_attributes(**kwargs)
+
+    self.current_train_epoch = runner.epoch # epoch in runner start from 0
     self.max_train_epoch = runner.max_epoch
     self.current_train_step = runner.step # step in runner start from 0
     self.max_train_step = len(runner.train_dataloader)
-    self.set_extra_attributes(**kwargs)
     return
   
   @abstractmethod
@@ -149,15 +135,46 @@ class BaseArch(object):
       f"Using default `step_succeed_hooks` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
+    self.set_extra_attributes(**kwargs)
+
+    global_step = runner.global_step + 1 # for better mod
+
     runner.checkpoint.save(
       runner.model, 
       runner.solver, 
       runner.scheduler,
-      runner.epoch, 
-      runner.global_step, 
+      epoch=-1, # epoch
+      step=global_step, # step
+      num_steps_per_epoch=self.max_train_step,
       cfg=runner.cfg.MODEL,
     )
+
+    runner.evaluate_by_strategy(runner.valid_dataloader, phase="valid", 
+                                epoch=-1, step=global_step)
+    return
+
+  @abstractmethod  
+  def epoch_succeed_hooks(self, *, runner, **kwargs):
+    print_log(
+      f"Using default `epoch_succeed_hooks` in {self.__class__.__name__}",
+      level="WARNING", warn_once=True
+    )
     self.set_extra_attributes(**kwargs)
+
+    epoch = runner.epoch + 1 # for better mod
+
+    runner.checkpoint.save(
+      runner.model, 
+      runner.solver, 
+      runner.scheduler,
+      epoch=epoch, # epoch
+      step=-1, # step
+      num_steps_per_epoch=self.max_train_step,
+      cfg=runner.cfg.MODEL,
+    )
+
+    runner.evaluate_by_strategy(runner.valid_dataloader, phase="valid", 
+                                epoch=epoch, step=-1)
     return
   
   def __call__(self, 

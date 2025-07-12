@@ -75,7 +75,7 @@ class DataSample(BaseDataElement):
 
     assert (
       len(set(batch_size)) == 1
-    ), "all values must have the same batch size"
+    ), f"all values must have the same batch size, but got: {batch_size} for {self.keys()}"
     batch_size = batch_size[0]
 
     result_list = []
@@ -125,12 +125,8 @@ class DataSample(BaseDataElement):
         if isinstance(inputs[0], dict): # merge every key in dict
           return {k: concat([d[k] for d in inputs]) for k in inputs[0].keys()}
         
-        if not isinstance(inputs[0], torch.Tensor):
+        if not all(map(lambda x: isinstance(x, torch.Tensor), inputs)):
           return inputs
-
-        assert (
-        all(list(map(lambda v: isinstance(v, torch.Tensor), inputs)))
-        ), "only torch.Tensor is supported for concatenation"
         
         shape = list(set(list(map(lambda v: v.shape, inputs))))
         if len(shape) == 1: # same shape

@@ -3,6 +3,7 @@ import os.path as osp
 import importlib
 import torch
 from slimai.helper.help_build import MODELS
+from slimai.helper.distributed import Distributed
 
 
 __all__ = [
@@ -28,6 +29,7 @@ class Plugin(torch.nn.Module):
   """
   def __init__(self, *, 
                module, 
+               batch_size: int = -1, 
                layer_replacement={}, 
                **kwargs):
     super().__init__()
@@ -61,7 +63,21 @@ class Plugin(torch.nn.Module):
         setattr(layer, name, Plugin(module=replacement))
 
     self.layer = layer
+    self.batch_size = batch_size
+    self.dist = Distributed()
     return
   
   def forward(self, x):
-    return self.layer(x)
+    group_size = self.batch_size
+    if group_size <= 0:
+      group_size = len(x)
+
+    output = []
+    for i in range(0, len(x), group_size):
+      tmp_x = x[i:i+group_size]
+      tmp_x = self.dist.prepare_for_distributed(tmp_x)
+      tmp_x = self.layer(tmp_x)
+      output.append(tmp_x)
+    output = torch.cat(output, dim=0)
+
+    return output

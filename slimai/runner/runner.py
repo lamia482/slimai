@@ -17,8 +17,8 @@ from torch.distributed.elastic.multiprocessing.errors import record
 class Runner(object):
   def __init__(self, cfg: mmengine.Config):
 
-    self.record = Record.create(cfg=cfg)
-    self.dist = Distributed.create()
+    self.record = Record(cfg=cfg)
+    self.dist = Distributed()
 
     # Initialize runner with configuration
     self.cfg = cfg.copy()
@@ -150,14 +150,18 @@ class Runner(object):
       forward_latency = time.time() - forward_start_time
 
       total_loss = None
-      for loss_name, loss_value in loss_dict.items():
+      loss_keys = list(loss_dict.keys())
+      for loss_name in loss_keys:
+        loss_value = loss_dict[loss_name]
         if "loss" in loss_name:
           if total_loss is None:
-            total_loss = torch.tensor(0.0, device=self.dist.env.device)
+            total_loss = torch.zeros_like(loss_value)
+          loss_dict[f"{loss_name}^"] = loss_dict.pop(loss_name) # add ^ to loss name for visualization
           total_loss += loss_value
+          
       assert (
         total_loss is not None
-      ), "total_loss must be provided"
+      ), "losses name should contain 'loss' and so to go backward, please check your loss name, backward loss shows with hat '^'."
       
       backward_start_time = time.time()
       self.gradient.step(
@@ -178,7 +182,10 @@ class Runner(object):
       backward_latency=backward_latency,
     )
     return output, total_loss, loss_dict, latency_dict
-  
+
+  def extract_batch_info(self, batch_info):
+    return batch_info.pop("image"), batch_info.get("meta"), batch_info.get("latency")
+
   def train(self):
     """Train the model."""
     assert (
@@ -187,29 +194,23 @@ class Runner(object):
 
     for self.epoch in range(self.epoch, self.max_epoch):
       phase = "train"
-
-      self.train_dataloader.sampler.set_epoch(self.epoch)
-
-      self.epoch += 1 # Increment epoch for checkpoint saving
       desc = f"[TRAIN {self.epoch}/{self.max_epoch} EPOCH]" + " {msg}"
 
-      # before epoch
+      # before epoch # set training status and epoch
       self.arch.epoch_precede_hooks(runner=self)
       
       # walk through one epoch
       avg_loss_value = 0.0
       num_steps_per_epoch = len(self.train_dataloader)
       for self.step, batch_info in enumerate(self.train_dataloader):
-        self.global_step = self.step + (self.epoch-1) * num_steps_per_epoch # global step starts from 0
+        self.global_step = self.step + (self.epoch) * num_steps_per_epoch
 
         msg = f"Step: {self.step+1}/{num_steps_per_epoch}"
         batch_info = self.dist.prepare_for_distributed(batch_info)
         batch_info = DataSample(**batch_info).to(self.dist.env.device)
-        batch_data = batch_info.pop("image")
-        batch_meta = batch_info.pop("meta")
-        batch_latency = batch_info.pop("latency")
+        batch_data, batch_meta, batch_latency = self.extract_batch_info(batch_info)
 
-        # before forward step
+        # before forward step # set steps and epochs, and extra info
         self.arch.step_precede_hooks(runner=self, meta=batch_meta, latency=batch_latency)
 
         # forward step
@@ -245,32 +246,11 @@ class Runner(object):
         if (self.step + 1) % self.log_every_n_steps == 0:
           help_utils.print_log(desc.format(msg=msg), level="INFO")
 
-        # after forward step
+        # after forward step # save checkpoint and evaluate by step strategy
         self.arch.step_succeed_hooks(runner=self)
 
-      # after epoch
+      # after epoch # save checkpoint and evaluate by epoch strategy
       self.arch.epoch_succeed_hooks(runner=self)
-      
-      # Evaluate on validation dataset
-      if (self.valid_dataloader is not None) and \
-         (self.eval_every_n_epochs is not None) and \
-         (
-          (self.epoch % self.eval_every_n_epochs == 0) or 
-          (self.eval_every_n_steps > 0 and self.global_step > 0 and self.global_step % self.eval_every_n_steps == 0)
-        ):
-        phase = "valid"
-        if self.epoch % self.eval_every_n_epochs == 0:
-          result_file = self.work_dir / "results" / f"epoch_{self.epoch}.pkl"
-        else:
-          result_file = self.work_dir / "results" / f"step_{self.global_step}.pkl"
-        eval_metrics = self.evaluate(self.valid_dataloader, result_file, phase=phase)
-        avg_loss_value = eval_metrics.get("loss", avg_loss_value)
-        log_data = {
-          "eval_avg_loss": avg_loss_value,
-          **eval_metrics,
-        }
-        self.record.log_step_data(log_data, phase=phase)
-
     return
   
   @torch.inference_mode()
@@ -289,11 +269,9 @@ class Runner(object):
     for step, batch_info in enumerate(dataloader):
       batch_info = self.dist.prepare_for_distributed(batch_info)
       batch_info = DataSample(**batch_info).to(self.dist.env.device)
-      batch_data = batch_info.pop("image")
-      batch_meta = batch_info.pop("meta")
-      batch_latency = batch_info.pop("latency")
+      batch_data, batch_meta, batch_latency = self.extract_batch_info(batch_info)
 
-      self.arch.step_precede_hooks(runner=self, meta=batch_meta, latency=batch_latency)
+      self.arch.set_extra_attributes(meta=batch_meta, latency=batch_latency)
 
       with torch.autocast(device_type=self.dist.env.accelerator, 
                           enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
@@ -367,6 +345,35 @@ class Runner(object):
 
     metrics = self.dist.env.broadcast(metrics)
     return metrics
+
+  def evaluate_by_strategy(self, dataloader, phase: str = "test", 
+                           epoch: int = -1, step: int = -1):
+    def is_positive(x):
+      return (x is not None and x > 0)
+
+    eval_by_epoch, eval_by_step = False, False
+    if is_positive(self.eval_every_n_epochs) and is_positive(epoch) and (epoch % self.eval_every_n_epochs == 0):
+      eval_by_epoch = True
+      result_file = self.work_dir / "results" / f"epoch_{epoch}.pkl"
+    elif is_positive(self.eval_every_n_steps) and is_positive(step) and (step % self.eval_every_n_steps == 0):
+      eval_by_step = True
+      result_file = self.work_dir / "results" / f"step_{step}.pkl"
+
+    if not eval_by_epoch and not eval_by_step:
+      return
+
+    if eval_by_epoch:
+      phase, index = f"{phase}_by_epoch", epoch - 1
+    elif eval_by_step:
+      phase, index = f"{phase}_by_step", step - 1
+
+    eval_metrics = self.evaluate(dataloader, result_file, phase=phase)
+    if avg_loss_value := eval_metrics.get("loss", None):
+      eval_metrics["avg_loss"] = avg_loss_value
+
+    self.record.log_step_data(eval_metrics, phase=phase, step=index)
+
+    return
 
   def archive_env_for_reproducibility(self):
     """Archive config and source code under work dir for reproducibility."""

@@ -14,7 +14,7 @@ if [ -z "${CUDA_VISIBLE_DEVICES}" ]; then
   export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(($(eval $GPU_NUM)-1)))
 fi
 
-# export NCCL_SOCKET_IFNAME=eth0
+export NCCL_SOCKET_IFNAME=eth0
 export NCCL_DEBUG=INFO
 export OMP_NUM_THREADS=1
 
@@ -28,7 +28,7 @@ NODE_RANK=${NODE_RANK:-0}
 NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 
 ##### random DDP info
-free_port=$(python -c "from slimai.helper.utils.dist_env import DistEnv; print(DistEnv().get_free_port())")
+free_port=$(python -c "from slimai.helper.utils.dist_env import get_dist_env; print(get_dist_env().get_free_port())")
 MASTER_ADDR=${MASTER_ADDR:-localhost}
 MASTER_PORT=${MASTER_PORT:-${free_port}}
 MAX_RESTARTS=${MAX_RESTARTS:-0}

@@ -7,12 +7,11 @@ from loguru import logger
 logger.remove()
 logger_format = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <level>{message}</level>"
 logger.add(sys.stderr, format=logger_format)
+from .utils import get_dist_env
 
-from . import utils
-from .utils import dist_env
 
 def update_logger(log_file: Path, log_level: str = "INFO"):
-  if not dist_env.is_main_process():
+  if not get_dist_env().is_main_process():
     return
   logger.add(log_file, level=log_level, format=logger_format)
   return
@@ -20,7 +19,7 @@ def update_logger(log_file: Path, log_level: str = "INFO"):
 _warned_messages = set()
 
 def print_log(msg, level="INFO", main_process_only=True, warn_once=False, disable_log=False):
-  if (not dist_env.is_main_process() and main_process_only) or disable_log:
+  if (not get_dist_env().is_main_process() and main_process_only) or disable_log:
     return
   assert (
     level in ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -33,7 +32,7 @@ def print_log(msg, level="INFO", main_process_only=True, warn_once=False, disabl
     msg += " << This message will be printed only once. >>"
     
   if not main_process_only:
-    msg = f"[GLOBAL RANK: {dist_env.global_rank}] {msg}"
+    msg = f"[GLOBAL RANK: {get_dist_env().global_rank}] {msg}"
 
   logger.log(level, msg)
   return
@@ -61,7 +60,7 @@ class ProgressBar(mmengine.ProgressBar):
     return
 
   def update(self, msg: str = "", num_tasks: int = 1, sep="\t"):
-    if not dist_env.is_main_process():
+    if not get_dist_env().is_main_process():
       return
     assert num_tasks > 0
     self.completed += num_tasks
@@ -101,7 +100,7 @@ class ProgressBar(mmengine.ProgressBar):
     self.file.flush()
 
   def close(self):
-    if dist_env.is_main_process():
+    if get_dist_env().is_main_process():
       self.file.write("\n")
     self.file.flush()
     return

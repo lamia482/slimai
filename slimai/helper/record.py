@@ -1,63 +1,30 @@
-import threading
 import swanlab
 import mmengine
 import torch
+from pathlib import Path
 from PIL import Image
-from typing import Dict, Any, Optional, Union, List
-from .utils.dist_env import dist_env
+from typing import Dict, Any, Optional, Union, List, Callable
 from .utils.select import recursive_select, recursive_apply
-from .help_utils import print_log
+from .help_utils import print_log, get_dist_env
 from .help_build import build_visualizer
 from .structure import DataSample
+from .utils import singleton
 
 
+@singleton.singleton_wrapper
 class Record(object):
   """
   A singleton class for recording experiment metrics and visualizations.
   Uses swanlab for experiment tracking and ensures only one process records data.
   """
-  _instance = None
-  _lock = threading.Lock()
 
-  def __new__(cls, *args, **kwargs):
-    """
-    Implements the singleton pattern to ensure only one Record instance exists.
-    """
-    if cls._instance is None:
-      with cls._lock:
-        if cls._instance is None:
-          cls._instance = super().__new__(cls)
-          cls._instance._initialized = False
-    return cls._instance
-
-  @classmethod
-  def create(cls, *args, **kwargs):
-    """
-    Factory method to create or return the singleton instance.
-    """
-    return cls(*args, **kwargs)
-  
-  @property
-  def should_record(self):
-    """
-    Determines if the current process should record data.
-    Only the main process across all nodes should record.
-    """
-    return (
-      dist_env.is_main_process(local=False) and 
-      self._swanlab_ok
-    )
-  
   def __init__(self, *, cfg: Optional[mmengine.Config] = None):
-    """
+    """ no attribute will be changed after initialization, so it is safe to use singleton wrapper without classproperty
     Initialize the Record instance with configuration.
     
     Args:
       cfg: Configuration object containing experiment settings
     """
-    if self._initialized:
-      return
-
     self._swanlab_ok = True
 
     assert (
@@ -108,7 +75,7 @@ class Record(object):
     try:
       swanlab.init(
         project=self.project_name, 
-        workspace=self.workspace, 
+        workspace=self.workspace, # type: ignore
         experiment_name=self.experiment_name,
         config=config,
       )
@@ -117,7 +84,6 @@ class Record(object):
       self._swanlab_ok = False
       return
 
-    self._initialized = True
     print_log(self)
     return
   
@@ -136,6 +102,17 @@ class Record(object):
             f")")
   __str__ = __repr__
 
+  @property
+  def should_record(self):
+    """
+    Determines if the current process should record data.
+    Only the main process across all nodes should record.
+    """
+    return (
+      get_dist_env().is_main_process(local=False) and 
+      self._swanlab_ok
+    )
+
   def format(self, log_data: Dict[str, Any]):
     def fix_type(value: Any):
       if isinstance(value, torch.Tensor):
@@ -146,6 +123,8 @@ class Record(object):
           value = value.tolist()
       elif isinstance(value, Image.Image):
         value = swanlab.Image(value)
+      elif isinstance(value, (str, Path)):
+        value = swanlab.Text(str(value))
       return value
     
     log_data = recursive_apply(fix_type, log_data) # type: ignore
@@ -166,8 +145,12 @@ class Record(object):
       value = log_data[key]
       if not isinstance(value, list):
         continue
+      if all(map(lambda x: isinstance(x, (swanlab.Image, swanlab.Text)), value)):
+        continue
       log_data.pop(key)
       for i, v in enumerate(value):
+        if isinstance(v, (str, Path)):
+          v = swanlab.Text(str(v))
         log_data[f"{key}_{i}"] = v
 
     return log_data, msg
@@ -212,12 +195,16 @@ class Record(object):
 
     return status
 
+  def topk(self, phase: str):
+    topk = self.topk_vis_on_train if (phase == "train") else self.topk_vis_on_eval
+    return topk
+
   def log_batch_sample(self, 
                        batch_image: Union[List, torch.Tensor], 
                        batch_output: Union[List, torch.Tensor], 
                        batch_targets: Dict[str, List[Any]],
                        class_names: List[str],
-                       phase: Optional[str] = None,
+                       phase: str = "runtime",
                        progress_bar: bool = False, 
                        step: Optional[int] = None):
     """
@@ -234,12 +221,7 @@ class Record(object):
     if not self.should_record:
       return
 
-    assert (
-      phase in ["train", "valid", "test", "eval"]
-    ), f"phase must be one of ['train', 'valid', 'test', 'eval'], but got {phase}"
-
-    topk = self.topk_vis_on_train if (phase == "train") else self.topk_vis_on_eval
-    
+    topk = self.topk(phase)
     if topk is None:
       topk = len(batch_image)
 
@@ -250,23 +232,22 @@ class Record(object):
       topk_ids = torch.randperm(len(batch_image))[:topk].tolist()
     else:
       topk_ids = list(range(len(batch_image)))
-    
+
     if  isinstance(batch_image, list) and (len(batch_image) > 0) and \
         all(list(map(lambda x: isinstance(x, DataSample), batch_image))):
-      files = [v.file for v in batch_image] # type: ignore
-      topk_images = recursive_select(files, topk_ids)
+      vis_images = [batch_image[i].meta["visual_file"] for i in topk_ids]
     else:
-      topk_images = [batch_image[i] for i in topk_ids]
+      vis_images = [batch_image[i] for i in topk_ids]
 
-    topk_outputs = recursive_select(batch_output, topk_ids)
-    topk_targets: dict = recursive_select(batch_targets, topk_ids) # type: ignore
+    vis_outputs = recursive_select(batch_output, topk_ids)
+    vis_targets: dict = recursive_select(batch_targets, topk_ids) # type: ignore
 
-    print_log(f"Visualizing top-{topk}(random on truncated) samples on {phase}...")
+    print_log(f"Visualizing top-{len(topk_ids)}(random on truncated) samples on {phase}...")
 
     try:
       vis_list = self.visualizer.render_batch_sample(
-        topk_images, topk_outputs, topk_targets, 
-        class_names, 
+        vis_images, vis_outputs, vis_targets, 
+        class_names,
         progress_bar=progress_bar,
       )
     except Exception as e:
@@ -279,7 +260,7 @@ class Record(object):
     vis_list = [
       swanlab.Image(Image.fromarray(vis[..., ::-1]), 
                     caption=(name if isinstance(name, str) else str(i)))
-      for i, (vis, name) in enumerate(zip(vis_list, topk_images))
+      for i, (vis, name) in enumerate(zip(vis_list, vis_images))
     ] # not support in private deploy env yet.
     return self.log_step_data({"visualize": vis_list}, phase=phase, step=step)
   

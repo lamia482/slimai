@@ -33,7 +33,7 @@ class Gradient(object):
       accumulation_every_n_steps: Number of steps to accumulate gradients (default: 1)
       clip: Gradient clipping value (default: None)
     """
-    self.dist = Distributed.create()
+    self.dist = Distributed()
 
     # Validate inputs
     assert (

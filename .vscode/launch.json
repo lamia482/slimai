@@ -11,7 +11,7 @@
       "cwd": "/hzztai",
       "env": {
         "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
-        "CUDA_VISIBLE_DEVICES": "0",
+        "CUDA_VISIBLE_DEVICES": "7",
         "PYDEVD_WARN_SLOW_RESOLVE": "0",
         "CUDA_LAUNCH_BLOCKING": "1"
       },
@@ -44,7 +44,7 @@
         "--config=/hzztai/slimai/_debug_/debug.py",
         "--work-dir=/hzztai/experiments/debug",
         "--action=train",
-        "--ddp=fsdp"
+        "--ddp=ddp"
       ],
       "justMyCode": false
     },

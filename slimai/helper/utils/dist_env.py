@@ -6,8 +6,18 @@ import numpy as np
 import random
 from typing import Dict
 import torch.distributed as dist
+from . import singleton
 
 
+__all__ = [
+  "get_dist_env",
+]
+
+def get_dist_env():
+  return DistEnv()
+
+
+@singleton.singleton_wrapper
 class DistEnv(object):
   env = {
     k: os.environ[k] for k in [
@@ -24,17 +34,21 @@ class DistEnv(object):
       "TORCHELASTIC_MAX_RESTARTS",
       "TORCHELASTIC_RUN_ID",
     ] if k in os.environ}
-  
+
+  accelerator = "cpu"
+  timeout = datetime.timedelta(seconds=60)
+  supported_accelerators = []
+
+  ########################################
+
   def __init__(self) -> None:
-    self.accelerator = "cpu"
-    self.timeout = datetime.timedelta(seconds=60)
     accelerator_candidates = ["cpu", "cuda", "mps", "mkldnn", "xla", "npu"]
-    self.supported_accelerators = []
     for accelerator in accelerator_candidates:
       self.try_register_accelerator(accelerator)
     return
   
-  def set_seed(self, *, seed=10482):
+  @classmethod
+  def set_seed(cls, *, seed=10482):
     deterministic = False if seed is None else True
 
     torch.use_deterministic_algorithms(deterministic, warn_only=False)
@@ -45,7 +59,7 @@ class DistEnv(object):
       np.random.seed(seed)
       random.seed(seed)
     
-    if self.accelerator == "cuda":
+    if cls.accelerator == "cuda":
       torch.backends.cudnn.benchmark = (not deterministic)
       torch.backends.cudnn.deterministic = deterministic
 
@@ -56,12 +70,14 @@ class DistEnv(object):
     
     return
 
-  def is_main_process(self, local=True):
+  @classmethod
+  def is_main_process(cls, local=True):
     # Check if the current process is the main process (local or global)
-    rank = self.local_rank if local else self.global_rank
+    rank = cls.local_rank if local else cls.global_rank
     return rank == 0
 
-  def is_dist_initialized(self):
+  @classmethod
+  def is_dist_initialized(cls):
     # Check if the distributed environment is initialized
     return dist.is_initialized()
 
@@ -74,33 +90,35 @@ class DistEnv(object):
     sock.close()
     return port
   
-  @property
-  def device(self):
-    return torch.device(self.accelerator)
+  @singleton.classproperty
+  def device(cls):
+    return torch.device(cls.accelerator)
   
-  @property
-  def device_module(self):
-    return getattr(torch, self.accelerator)
+  @singleton.classproperty
+  def device_module(cls):
+    return getattr(torch, cls.accelerator)
 
-  def try_register_accelerator(self, accelerator, rebase=False):
+  @classmethod
+  def try_register_accelerator(cls, accelerator, rebase=False):
     if accelerator is None:
       return
-    if accelerator not in self.supported_accelerators:
+    if accelerator not in cls.supported_accelerators:
       device = getattr(torch, accelerator, None)
       if device is not None and device.is_available():
-        self.supported_accelerators.append(accelerator)
+        cls.supported_accelerators.append(accelerator)
     if rebase:
-      if accelerator in self.supported_accelerators:
-        self.accelerator = accelerator
+      if accelerator in cls.supported_accelerators:
+        cls.accelerator = accelerator
       else:
         raise ValueError(f"Accelerator {accelerator} is not supported")
     return
 
-  def init_dist(self, *, device=None, timeout=None, seed=10482):
+  @classmethod
+  def init_dist(cls, *, device=None, timeout=None, seed=10482):
     """Initialize distributed environment."""
 
     # check if device is supported and rebase the device as default device
-    self.try_register_accelerator(device, rebase=True)
+    cls.try_register_accelerator(device, rebase=True)
 
     backend = dict(
       cpu="gloo",
@@ -109,32 +127,39 @@ class DistEnv(object):
       mps="gloo",
       mkldnn="gloo",
       xla="gloo",
-    ).get(self.accelerator, None)
+    ).get(cls.accelerator, None)
 
     if timeout is not None:
-      self.timeout = datetime.timedelta(seconds=timeout)
+      cls.timeout = datetime.timedelta(seconds=timeout)
 
-    self.set_seed(seed=seed)
+    cls.set_seed(seed=seed)
 
     # initialize distributed environment
     if not dist.is_initialized():
-      if self.env.get("WORLD_SIZE", None) is None: # in non ddp mode, MASTER_ADDR and MASTER_PORT are not set, mannually set them to use distributed training
-        self.env["MASTER_ADDR"] = os.environ["MASTER_ADDR"] = "localhost"
-        self.env["MASTER_PORT"] = os.environ["MASTER_PORT"] = "12345"
+      if cls.env.get("WORLD_SIZE", None) is None: # in non ddp mode, MASTER_ADDR and MASTER_PORT are not set, mannually set them to use distributed training
+        cls.env["MASTER_ADDR"] = os.environ["MASTER_ADDR"] = "localhost"
+        cls.env["MASTER_PORT"] = os.environ["MASTER_PORT"] = "12345"
       
-      self.device_module.set_device(self.local_rank)
+      cls.set_start_method("fork")
+      cls.device_module.set_device(cls.local_rank)
       dist.init_process_group(
         backend=backend, 
-        rank=self.global_rank, 
-        world_size=self.global_world_size,
-        timeout=self.timeout, 
+        rank=cls.global_rank, 
+        world_size=cls.global_world_size,
+        timeout=cls.timeout, 
       )
+    return
 
+  @classmethod
+  def set_start_method(cls, method="fork"):
+    if torch.multiprocessing.get_start_method() != method:
+      torch.multiprocessing.set_start_method(method, force=True)
     return
   
-  def broadcast(self, data, from_rank=0):
+  @classmethod
+  def broadcast(cls, data, from_rank=0):
     """Broadcast data to all processes."""
-    if not self.is_dist_initialized():
+    if not cls.is_dist_initialized():
       return data
     
     output = [data] # wrap to list to use broadcast_object_list
@@ -142,9 +167,10 @@ class DistEnv(object):
     data = output[0]
     return data
   
-  def sync(self, data=None, tensor_op=dist.ReduceOp.AVG):
+  @classmethod
+  def sync(cls, data=None, tensor_op=dist.ReduceOp.AVG):
     """Reduce data (Tensor or Dict of Tensor) across all processes."""
-    if not self.is_dist_initialized():
+    if not cls.is_dist_initialized():
       return data
     
     def _sync_all_types(_data):
@@ -160,75 +186,75 @@ class DistEnv(object):
       data = _sync_all_types(data)
 
     if work := dist.barrier(async_op=True):
-      work.wait(timeout=self.timeout)
+      work.wait(timeout=cls.timeout)
     return data
 
-  def collect(self, data):
+  @classmethod
+  def collect(cls, data):
     """Collect list of objects from all processes and merge into a single list.
     This collect may need sea of memory so that lead into crash.
     """
-    if not self.is_dist_initialized():
+    if not cls.is_dist_initialized():
       return data
     
     assert (
       isinstance(data, list)
     ), "collect data must be a list, but got {}".format(type(data))
 
-    output = [None for _ in range(self.global_world_size)]
+    output = [None for _ in range(cls.global_world_size)]
     dist.all_gather_object(output, data) # auto barrier across all processes
     output = list(itertools.chain(*output)) # type: ignore
     return output
 
-  def close_dist(self):
+  @classmethod
+  def close_dist(cls):
     """Close the distributed environment."""
-    self.sync()
+    cls.sync()
     if dist.is_initialized():
       dist.destroy_process_group()
     return
   
-  @property
-  def desc(self):
+  @singleton.classproperty
+  def desc(cls):
     """Describe the distributed environment."""
-    return "Distributed {}, LOCAL RANK: {} of {}-th NODE, GLOBAL RANK: {} in all {} NODES".format(
-      "enabled" if self.is_dist_initialized() else "disabled",
-      self.local_rank, self.local_world_size, self.global_rank, self.global_world_size
+    return "Accelerator: {}, Distributed {}, LOCAL RANK: {} of {}-th NODE, GLOBAL RANK: {} in all {} NODES".format(
+      cls.accelerator,
+      "enabled" if cls.is_dist_initialized() else "disabled",
+      cls.local_rank, cls.local_world_size, cls.global_rank, cls.global_world_size
     )
   
-  @property
-  def local_rank(self):
-    return int(self.env.get("LOCAL_RANK", 0))
+  @singleton.classproperty
+  def local_rank(cls):
+    return int(cls.env.get("LOCAL_RANK", 0))
   
-  @property
-  def global_rank(self):
-    return int(self.env.get("RANK", 0))
+  @singleton.classproperty
+  def global_rank(cls):
+    return int(cls.env.get("RANK", 0))
   
-  @property
-  def local_world_size(self):
-    return int(self.env.get("LOCAL_WORLD_SIZE", 1))
+  @singleton.classproperty
+  def local_world_size(cls):
+    return int(cls.env.get("LOCAL_WORLD_SIZE", 1))
   
-  @property
-  def global_world_size(self):
-    return int(self.env.get("WORLD_SIZE", 1))
+  @singleton.classproperty
+  def global_world_size(cls):
+    return int(cls.env.get("WORLD_SIZE", 1))
   
-  @property
-  def master_addr(self):
-    return self.env.get("MASTER_ADDR", "localhost")
+  @singleton.classproperty
+  def master_addr(cls):
+    return cls.env.get("MASTER_ADDR", "localhost")
 
-  @property
-  def master_port(self):
-    return int(self.env.get("MASTER_PORT", "12345"))
+  @singleton.classproperty
+  def master_port(cls):
+    return int(cls.env.get("MASTER_PORT", str(cls.get_free_port())))
 
-  @property
-  def torchelastic_restart_count(self):
-    return int(self.env.get("TORCHELASTIC_RESTART_COUNT", "0"))
+  @singleton.classproperty
+  def torchelastic_restart_count(cls):
+    return int(cls.env.get("TORCHELASTIC_RESTART_COUNT", "0"))
 
-  @property
-  def torchelastic_max_restarts(self):
-    return int(self.env.get("TORCHELASTIC_MAX_RESTARTS", "0"))
+  @singleton.classproperty
+  def torchelastic_max_restarts(cls):
+    return int(cls.env.get("TORCHELASTIC_MAX_RESTARTS", "0"))
 
-  @property
-  def torchelastic_run_id(self):
-    return self.env.get("TORCHELASTIC_RUN_ID", "0")
-  
-
-dist_env = DistEnv()
+  @singleton.classproperty
+  def torchelastic_run_id(cls):
+    return cls.env.get("TORCHELASTIC_RUN_ID", "0")

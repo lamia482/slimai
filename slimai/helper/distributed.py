@@ -7,40 +7,30 @@ from torch.distributed.fsdp import (
   MixedPrecision, ShardingStrategy, StateDictType, FullStateDictConfig
 )
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy, size_based_auto_wrap_policy, transformer_auto_wrap_policy
-from .utils import dist_env, PytorchNetworkUtils
+from .utils import PytorchNetworkUtils, get_dist_env, singleton
 from .structure import DataSample
 
 
 __all__ = ["Distributed", "FSDPLayerWapper"]
 
-
+@singleton.singleton_wrapper
 class Distributed(object):
   """A class to handle model distributed parallel.
   
   Attributes:
     parallel_mode (str): The parallel mode to use.
     mix_precision (str): The mixed precision to use.
-    env (dist_env): The environment to use pytorch distributed.
+    env: The environment to use pytorch distributed.
   """
-  _instance = None
-  _lock = threading.Lock()
-
-  def __new__(cls, *args, **kwargs):
-    if cls._instance is None:
-      with cls._lock:
-        if cls._instance is None:
-          cls._instance = super().__new__(cls)
-          cls._instance._initialized = False
-    return cls._instance
 
   def __init__(self, 
                parallel_mode="ddp", 
                default_dtype="fp32", 
                mix_precision="bf16", 
     ):
-    if self._initialized:
-      return
-
+    """
+    no attribute will be changed after initialization, so it is safe to use singleton wrapper without classproperty
+    """
     assert (
       parallel_mode in ["auto", "ddp", "fsdp"]
     ), "parallel_mode must be 'auto' or 'ddp' or 'fsdp', but got {}".format(parallel_mode)
@@ -65,8 +55,6 @@ class Distributed(object):
       mix_precision in ["fp16", "bf16", "fp32"]
     ), "mix_precision must be 'fp16', 'bf16', or 'fp32', but got {}".format(mix_precision)
     self.mix_precision = mix_precision
-
-    self._initialized = True
     return
   
   @property
@@ -89,13 +77,9 @@ class Distributed(object):
     return f"Distributed(parallel_mode={self.parallel_mode}, mix_precision={self.mix_precision})"
   __str__ = __repr__
 
-  @classmethod
-  def create(cls, *args, **kwargs):
-    return cls(*args, **kwargs)
-
   @property
   def env(self):
-    return dist_env
+    return get_dist_env()
   
   def prepare_for_distributed(self, *args) -> Any:
     """
@@ -139,7 +123,7 @@ class Distributed(object):
     elif isinstance(component, torch.nn.Module):
       component = self._wrap_module(component)
     elif isinstance(component, torch.Tensor):
-      component = component.to(self.env.device_module.current_device())
+      component = component.to(f"{self.env.accelerator}:{self.env.local_rank}")
     elif isinstance(component, dict):
       component = {
         k: self._prepare_component(v)
@@ -233,6 +217,11 @@ class Distributed(object):
   def copy_cpu_offload_state_dict(self, module):
     state_dict = module.state_dict()
     return DataSample(**state_dict).cpu().to_dict()
+
+  def copy_cpu_offload_tensor(self, tensor):
+    if isinstance(tensor, torch.Tensor):
+      tensor = tensor.detach().cpu()
+    return tensor
 
 
 ##### FSDP Layer Wapper #####

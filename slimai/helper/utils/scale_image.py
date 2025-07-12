@@ -1,11 +1,20 @@
 import cv2
 import torch
 import numpy as np
+from PIL import Image
 
 
 def to_image(image):
   if isinstance(image, str):
     image = cv2.imread(image)
+
+  if isinstance(image, Image.Image):
+    image = np.array(image)
+    if image.ndim == 2:
+      image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    elif image.ndim == 3:
+      image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
   return image
     
 def to_batch_tensor_image(image, device=None):

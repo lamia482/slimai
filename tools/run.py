@@ -88,7 +88,7 @@ def main():
 
   # Initialize distributed environment
   print_log("Waiting for other processes to start...")
-  dist = Distributed.create(
+  dist = Distributed(
     parallel_mode=args.ddp,
     default_dtype=args.default_dtype,
     mix_precision=args.mix_precision,

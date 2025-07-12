@@ -56,7 +56,7 @@ class DETRLoss(torch.nn.Module):
 
     self.register_buffer("class_weight", class_weight)
 
-    self.dist = Distributed.create()
+    self.dist = Distributed()
     return
   
   def forward(self, 

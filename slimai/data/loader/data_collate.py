@@ -42,10 +42,12 @@ class DataCollate():
 
     # custom processing
     images = self.process_image(images)
-    if (images is not None) and len(images) > 0:
-      whwh = torch.stack([torch.as_tensor(image.shape[-2:] * 2) for image in images])
-      width, height = whwh.unbind(dim=1)[:2]
-      data["width"], data["height"] = width, height
+    whwh = torch.stack([
+      torch.as_tensor(((0, 0) if image is None else image.shape[-2:]) * 2)
+      for image in images]) # type: ignore
+    width, height = whwh.unbind(dim=1)[:2]
+    data["width"], data["height"] = width, height
+    
     labels = self.process_label(labels)
     instances = self.process_instance(instances)
     masks = self.process_mask(masks)

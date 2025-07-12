@@ -84,7 +84,8 @@ class BasicDataset(torch.utils.data.Dataset):
     self.to_rgb = to_rgb
 
     loader = build_loader(loader)
-    self.loader = functools.lru_cache(maxsize=max_loader_cache_size)(loader)
+    loader = functools.lru_cache(maxsize=max_loader_cache_size)(loader)
+    self.loader = loader
 
     self.desc = desc or "No specific description."
 
@@ -118,7 +119,7 @@ class BasicDataset(torch.utils.data.Dataset):
     image = self.apply_kernel(to_pil_image, image)
     data_to_pil_latency = time.time() - data_to_pil_start_time
 
-    data = dict(indice=item, image=image, meta=dict())
+    data = dict(indice=item, image=image, meta=dict(visual_file=file))
     data = self.load_extra_keys(data, index=item)
 
     # wrap data tv_tensors

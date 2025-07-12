@@ -30,7 +30,7 @@ class Exporter(torch.nn.Module):
       {"model", "weight"}.issubset(set(ckpt.keys()))
     ), "Invalid checkpoint keys, expect 'model' and 'weight', but got {}".format(ckpt.keys())
 
-    dist = Distributed.create()
+    dist = Distributed()
 
     # turn to non-ddp mode
     help_utils.print_log("Building model architecture", disable_log=self.disable_log)

@@ -36,7 +36,8 @@ class Checkpoint(object):
     save_every_n_epochs: int = 1,
     keep_max: int = -1,
     keep_best: bool = True,
-    keep_latest: bool = True
+    keep_latest: bool = True, 
+    save_on_rank_0: bool = True,
   ):
     """Initialize Checkpoint handler.
     
@@ -49,7 +50,7 @@ class Checkpoint(object):
       keep_best: Whether to keep the best checkpoint (default: True)
       keep_latest: Whether to keep the latest checkpoint (default: True)
     """
-    self.dist = Distributed.create()
+    self.dist = Distributed()
 
     self.save_dir = Path(save_dir).resolve()
     self.save_every_n_steps = save_every_n_steps
@@ -61,10 +62,23 @@ class Checkpoint(object):
     self.min_loss = float("inf")  # will be updated in `load`
     self.best_path = self.save_dir / "best.pth"
     self.latest_path = self.save_dir / "latest.pth"
+    self.save_on_rank_0 = save_on_rank_0
     
     # Create checkpoint directory if it doesn't exist
     self.save_dir.mkdir(parents=True, exist_ok=True)
     return
+
+  def __repr__(self):
+    return (f"Checkpoint(\n"
+            f"  save_dir={self.save_dir},\n"
+            f"  save_every_n_steps={self.save_every_n_steps},\n"
+            f"  save_every_n_epochs={self.save_every_n_epochs},\n"
+            f"  keep_max={self.keep_max},\n"
+            f"  keep_best={self.keep_best},\n"
+            f"  keep_latest={self.keep_latest},\n"
+            f"  save_on_rank_0={self.save_on_rank_0},\n"
+            f")")
+  __str__ = __repr__
 
   def save(
     self,
@@ -73,6 +87,7 @@ class Checkpoint(object):
     scheduler: torch.optim.lr_scheduler.LRScheduler,
     epoch: int,
     step: int, 
+    num_steps_per_epoch: int,
     loss: float = None,
     export: bool = False, 
     **kwargs
@@ -91,20 +106,26 @@ class Checkpoint(object):
     Returns:
       Path to saved checkpoint
     """
-    save_by_step = self.save_every_n_steps is not None and step % self.save_every_n_steps == 0
-    save_by_epoch = epoch % self.save_every_n_epochs == 0
+    # step starts from 0, epoch starts from 1
+    save_by_step = self.save_every_n_steps is not None and step >= 0 and step % self.save_every_n_steps == 0
+    save_by_epoch = epoch >= 0 and epoch % self.save_every_n_epochs == 0
     if save_by_step:
       save_by_epoch = False # skip duplicate save by step and epoch
 
     if save_by_step:
+      epoch = step // num_steps_per_epoch
       ckpt_path = self.save_dir / f"step_{step}.pth" 
     else:
-      ckpt_path = self.save_dir / f"epoch_{epoch}.pth" 
+      ckpt_path = self.save_dir / f"epoch_{epoch}.pth"
 
     if (
       (save_by_step or save_by_epoch)
-      and self.dist.env.is_main_process()
+      and (not self.save_on_rank_0 or self.dist.env.is_main_process())
     ):
+      if not self.save_on_rank_0:
+        ckpt_path = str(ckpt_path).replace(".pth", f"-rank_{self.dist.env.local_rank}.pth")
+        ckpt_path = Path(ckpt_path)
+
       update_best = False
       if loss is not None and loss <= self.min_loss:
         self.min_loss = loss
@@ -112,6 +133,7 @@ class Checkpoint(object):
 
       def _save(ckpt: Path, export: bool = False) -> None:
         Path(ckpt).resolve().parent.mkdir(parents=True, exist_ok=True)
+        print_log(f"Save checkpoint to {ckpt}")
         summon_module = self.dist.get_summon_module(model)
         torch.save(dict(weight=self.dist.copy_cpu_offload_state_dict(summon_module),
                         solver=self.dist.copy_cpu_offload_state_dict(solver),
