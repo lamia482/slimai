@@ -52,3 +52,12 @@ def chunks(lst, n):
   """Yield successive n-sized chunks from lst."""
   for i in range(0, len(lst), n):
     yield lst[i:i + n]
+
+def check_list_dict_keys(kv_item_list: List[Dict]):
+  first_keys = set(kv_item_list[0].keys())
+  for kv_item in kv_item_list[1:]:
+    current_keys = set(kv_item.keys())
+    assert (
+      first_keys == current_keys
+    ), f"All DataSample elements must have the same keys, but got {first_keys} and {current_keys}"
+  return first_keys

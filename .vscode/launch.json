@@ -20,7 +20,6 @@
       "args": [
         "--config=/hzztai/slimai/_debug_/debug.py",
         "--work-dir=/hzztai/experiments/debug",
-        "--action=train",
       ],
       "justMyCode": false
     },

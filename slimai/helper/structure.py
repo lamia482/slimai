@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from mmengine.structures import BaseDataElement
+from .utils.select import check_list_dict_keys
 
 
 class DataSample(BaseDataElement):  
@@ -109,13 +110,7 @@ class DataSample(BaseDataElement):
     
     # Verify all elements have the same keys
     first_data = list_data[0]
-    first_keys = set(first_data.keys())
-    for data in list_data[1:]:
-      current_keys = set(data.keys())
-      assert (
-        first_keys == current_keys
-      ), "All DataSample elements must have the same keys"
-    all_keys = first_keys
+    first_keys = check_list_dict_keys(list_data)
     
     def concat(inputs):
       if isinstance(inputs, list):
@@ -123,7 +118,8 @@ class DataSample(BaseDataElement):
           len(inputs) > 0
         ), "inputs must be a non-empty list"
         if isinstance(inputs[0], dict): # merge every key in dict
-          return {k: concat([d[k] for d in inputs]) for k in inputs[0].keys()}
+          keys = check_list_dict_keys(inputs)
+          return {k: concat([d[k] for d in inputs]) for k in keys}
         
         if not all(map(lambda x: isinstance(x, torch.Tensor), inputs)):
           return inputs
@@ -141,7 +137,7 @@ class DataSample(BaseDataElement):
       raise ValueError(f"Expected a list or dict, but got {type(inputs)}")
       
     # expect to have all values as torch.Tensor
-    for key in all_keys:
+    for key in first_keys:
       elem_list = [getattr(data, key) for data in list_data]
       result[key] = concat(elem_list)
 

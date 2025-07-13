@@ -104,12 +104,13 @@ class MIL(ClassificationArch):
       return torch.cat(output, dim=0)
 
     meta = getattr(self, "meta")
-    backbone = meta.get("embeddings", None)
+    backbone = meta.pop("embeddings", None) # pop out to save memory
 
     if backbone is None:
       # batch_data in shape (B, ~N, C, H, W)
       backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
       if cache_embedding_list := meta.get("cache_embedding", None):
+
         for vis_image, embedding, cache_embedding, cache_file, visual_file in zip(
           batch_data, backbone, cache_embedding_list, 
           meta.get("cache_file", []), meta.get("visual_file", [])):
@@ -176,12 +177,12 @@ class MIL(ClassificationArch):
     tailk_scores, tailk_indices = list(map(list, zip(*atten_tailk)))
 
     batch_info.output.update(dict(
-      topk_atten_logits=[a[i] for a, i in zip(atten_logits, topk_indices)], # [B, ~N]
-      topk_atten_indices=topk_indices, # [B, ~N]
-      topk_atten_scores=topk_scores, # [B, ~N]
-      tailk_atten_logits=[a[i] for a, i in zip(atten_logits, tailk_indices)], # [B, ~N]
-      tailk_atten_indices=tailk_indices, # [B, ~N]
-      tailk_atten_scores=tailk_scores, # [B, ~N]
+      topk_atten_logits=[a[i] for a, i in zip(atten_logits, topk_indices)], # [B, topk]
+      topk_atten_indices=topk_indices, # [B, topk]
+      topk_atten_scores=topk_scores, # [B, topk]
+      tailk_atten_logits=[a[i] for a, i in zip(atten_logits, tailk_indices)], # [B, tailk]
+      tailk_atten_indices=tailk_indices, # [B, tailk]
+      tailk_atten_scores=tailk_scores, # [B, tailk]
     ))
 
     return batch_info

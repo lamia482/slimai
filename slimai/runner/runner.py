@@ -196,7 +196,7 @@ class Runner(object):
     return total_loss, loss_dict, latency_dict
 
   def extract_batch_info(self, batch_info):
-    return batch_info.pop("image"), batch_info.get("meta"), batch_info.get("latency")
+    return batch_info.pop("image"), batch_info.get("meta"), batch_info.pop("latency")
 
   def train(self):
     """Train the model."""
