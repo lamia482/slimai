@@ -1,17 +1,18 @@
 ############################## 1. DATASET
 ########## 1.1 DATA TRANSFORM
 
-flip_color_jitter = [
+individual_transform = [
   dict(type="RandomApply", transforms=[
     dict(type="RandomHorizontalFlip", p=0.5),
-    dict(type="RandomVerticalFlip", p=0.5),
-  ], p=1/30), # patch num ~= 18000
+    dict(type="RandomVerticalFlip", p=0.5), 
+    dict(type="GaussianBlur", kernel_size=(5, 5), sigma=(0.8, 1.2)), 
+  ], p=1/30), # patch num ~= 9000
+]
+
+group_transform = [
   dict(type="RandomApply", transforms=[
-    dict(type="ColorJitter", brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1), 
-  ], p=1/30), 
-  dict(type="RandomApply", transforms=[
-    dict(type="GaussianBlur", kernel_size=(5, 5), sigma=(0.5, 2.0)), 
-  ], p=1/30), 
+    dict(type="ColorJitter", brightness=0.2, contrast=0.2, saturation=0.1, hue=0.1), 
+  ], p=1/10), # patch num ~= 9000
 ]
 
 import torch
@@ -22,9 +23,10 @@ normalize = [
 
 loader = dict(
   type="RegionTileLoader", 
-  magnification=10, 
-  region=dict(xmin=0.15, ymin=0.15, xmax=0.85, ymax=0.85),  # -1 for full size
+  magnification=20, 
+  region=dict(xmin=-1, ymin=-1, xmax=-1, ymax=-1),  # -1 for full size
   cache=True, 
+  cache_mode="compressed", 
   num_threads=4,
 )
 
@@ -35,13 +37,17 @@ train_view_transform = [
     tile_stride=224, 
     random_crop_patch_size=224, # random crop n patch from each tile
     random_crop_patch_num=1, 
-    transform_schema="individual",
     topk=0,
     shuffle=True, # shuffle patches
     padding_value=255,
-    transforms=dict(
-      type="TorchTransform", transforms=[*flip_color_jitter, *normalize],
+    individual_transform=dict(
+      type="TorchTransform", 
+      transforms=[*flip_color_jitter, *normalize],
     ),
+    group_transform=dict(
+      type="TorchTransform", 
+      transforms=[*flip_color_jitter, *normalize],
+    )
   )]
 
 val_view_transform = [
@@ -51,13 +57,14 @@ val_view_transform = [
     tile_stride=224, 
     random_crop_patch_size=None, # random crop n patch from each tile
     random_crop_patch_num=None, 
-    transform_schema="individual",
     topk=0,
     shuffle=False,
     padding_value=255,
-    transforms=dict(
-      type="TorchTransform", transforms=normalize, 
-    ), 
+    individual_transform=None,
+    group_transform=dict(
+      type="TorchTransform", 
+      transforms=normalize,
+    )
   )]
 
 dataset_type = "MILDataset"

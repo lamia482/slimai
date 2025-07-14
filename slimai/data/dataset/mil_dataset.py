@@ -7,7 +7,7 @@ from slimai.helper.help_build import DATASETS
 from slimai.helper.common import CACHE_ROOT_DIR
 
 
-@DATASETS.register_module("MILDataset")
+@DATASETS.register_module()
 class MILDataset(SupervisedDataset):
   def __init__(self, *args, 
                cache_embedding=False, 

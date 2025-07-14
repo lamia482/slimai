@@ -8,7 +8,7 @@ from ..utils.visualize import square_imgs, pad_image, hstack_imgs
 from ..help_build import VISUALIZERS
 
 
-@VISUALIZERS.register_module("MILVisualizer")
+@VISUALIZERS.register_module()
 class MILVisualizer(Visualizer):
   def _visualize(self, image, target, output, class_names):
     if isinstance(image, (str, Path)):

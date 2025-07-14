@@ -4,7 +4,7 @@ import shutil
 import matplotlib
 from pathlib import Path
 from functools import partial
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import mmengine
 import slimai
 from slimai.helper import (
@@ -296,7 +296,10 @@ class Runner(object):
     return results
   
   @torch.inference_mode()
-  def evaluate(self, dataloader, result_file, phase: str = "test") -> Dict[str, Any]:
+  def evaluate(self, dataloader, result_file, 
+                     phase: str = "test", 
+                     step: Optional[int] = None
+    ) -> Dict[str, Any]:
     """Evaluate on result_file, if not exists, infer first with dataloader."""
     if not Path(result_file).exists():
       results = self.infer(dataloader, result_file)
@@ -346,7 +349,13 @@ class Runner(object):
                                    phase=phase, 
                                    progress_bar=True)
 
+      if avg_loss_value := metrics.get("loss", None):
+        metrics["avg_loss"] = avg_loss_value
+
+      self.record.log_step_data(metrics, phase=phase, step=step)
+
     metrics = self.dist.env.broadcast(metrics)
+    
     return metrics
 
   def evaluate_by_strategy(self, dataloader, phase: str = "test", 
@@ -370,13 +379,7 @@ class Runner(object):
     elif eval_by_step:
       phase, index = f"{phase}_by_step", step - 1
 
-    eval_metrics = self.evaluate(dataloader, result_file, phase=phase)
-    if avg_loss_value := eval_metrics.get("loss", None):
-      eval_metrics["avg_loss"] = avg_loss_value
-
-    self.record.log_step_data(eval_metrics, phase=phase, step=index)
-
-    return
+    return self.evaluate(dataloader, result_file, phase=phase, step=index)
 
   def archive_env_for_reproducibility(self):
     """Archive config and source code under work dir for reproducibility."""

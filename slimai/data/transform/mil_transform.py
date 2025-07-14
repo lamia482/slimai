@@ -5,6 +5,7 @@ import itertools
 import torch.nn.functional as F
 from PIL import Image
 from torchvision import tv_tensors
+from _debug_.debug import individual_transform
 from slimai.helper.help_build import TRANSFORMS
 from slimai.helper.shape import segment_foreground_mask, find_patch_region_from_mask
 from .base_transform import BaseTransform
@@ -20,11 +21,13 @@ class MILTransform(BaseTransform):
                tile_stride, 
                random_crop_patch_size=None, 
                random_crop_patch_num=None, 
-               transform_schema="individual",
                topk=None, 
                shuffle=False, 
                padding_value=255, 
-               **kwargs):
+               individual_transform=None,
+               group_transform=None, 
+               **kwargs
+              ):
     """
     Brief:
       This transform is used to produce MIL views from a WSI image.
@@ -38,12 +41,13 @@ class MILTransform(BaseTransform):
       tile_stride: int
       random_crop_patch_size: int or None
       random_crop_patch_num: int or None
-      transform_schema: str, "individual" or "group"
       topk: int or None
       shuffle: bool
       padding_value: int
+      individual_transform: TorchTransform or None
+      group_transform: TorchTransform or None
     """
-    super().__init__(*args, **kwargs)
+    super().__init__(*args, transforms=None, **kwargs)
     self.shrink = shrink
     assert (
       self.shrink in [None, "tissue"]
@@ -68,11 +72,6 @@ class MILTransform(BaseTransform):
     
     self.use_patch_as_view = (self.random_crop_patch_num > 0)
 
-    self.transform_schema = transform_schema
-    assert (
-      self.transform_schema in ["individual", "group"]
-    ), "transform_schema must be one of ['individual', 'group'], but got {}".format(self.transform_schema)
-
     self.topk = topk or 0
     assert (
       isinstance(self.topk, (int, float))
@@ -80,6 +79,8 @@ class MILTransform(BaseTransform):
 
     self.shuffle = shuffle
     self.padding_value = padding_value
+    self.individual_transform = self.compose(individual_transform)
+    self.group_transform = self.compose(group_transform)
     return
 
   def __repr__(self):
@@ -89,11 +90,11 @@ class MILTransform(BaseTransform):
             f"  tile_stride={self.tile_stride},\n"
             f"  random_crop_patch_size={self.random_crop_patch_size},\n"
             f"  random_crop_patch_num={self.random_crop_patch_num},\n"
-            f"  transform_schema={self.transform_schema},\n"
             f"  topk={self.topk},\n"
             f"  shuffle={self.shuffle},\n"
             f"  padding_value={self.padding_value},\n"
-            f"  transforms={self.transforms},\n"
+            f"  individual_transform={self.individual_transform},\n"
+            f"  group_transform={self.group_transform},\n"
             f")")
   __str__ = __repr__
   
@@ -148,12 +149,11 @@ class MILTransform(BaseTransform):
     patches = tv_tensors.Image(topk_views) # (N, C, H, W)
 
     # produce output images in (N, C, H, W)
-    if self.transform_schema == "individual":
-      out_patches = torch.stack([self.transforms(dict(image=img))["image"] for img in patches], dim=0)
-    elif self.transform_schema == "group":
-      out_patches = self.transforms(dict(image=patches))["image"]
-    else:
-      raise ValueError(f"transform_schema must be one of ['individual', 'group'], but got {self.transform_schema}")
+    out_patches = patches
+    if self.individual_transform is not None:
+      out_patches = torch.stack([self.individual_transform(dict(image=img))["image"] for img in out_patches], dim=0)
+    if self.group_transform is not None:
+      out_patches = self.group_transform(dict(image=out_patches))["image"]
 
     data.update(dict(image=out_patches))
 

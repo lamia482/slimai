@@ -4,7 +4,7 @@ import torchvision
 from slimai.helper.help_build import MODELS
 
 
-@MODELS.register_module("FocalLoss")
+@MODELS.register_module()
 class FocalLoss(torch.nn.Module):
   def __init__(self, num_classes, *, weight=None, alpha=0.25, gamma=2.0):
     super().__init__()
