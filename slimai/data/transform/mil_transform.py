@@ -5,7 +5,6 @@ import itertools
 import torch.nn.functional as F
 from PIL import Image
 from torchvision import tv_tensors
-from _debug_.debug import individual_transform
 from slimai.helper.help_build import TRANSFORMS
 from slimai.helper.shape import segment_foreground_mask, find_patch_region_from_mask
 from .base_transform import BaseTransform

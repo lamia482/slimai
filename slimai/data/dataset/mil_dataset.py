@@ -62,6 +62,8 @@ class MILDataset(SupervisedDataset):
         ), 
       ))
       data["meta"].update(dict(
+        wsi_shrink=None, 
+        patch_num=-1, 
         cache_embedding=self.cache_embedding,
         visual_file=vis_cache_file.as_posix(),
         cache_file=cache_file.as_posix(),
