@@ -320,8 +320,11 @@ class Runner(object):
 
       # split figure and metric
       msg_list = []
-      for key, value in metrics.items():
+      keys = list(metrics.keys())
+      for key in keys:
+        value = metrics[key]
         if isinstance(value, matplotlib.figure.Figure): # type: ignore
+          value = metrics.pop(key)
           fig = value
           fig.savefig(str(result_file).replace(".pkl", f"_{key}.png"))
           continue
@@ -352,6 +355,7 @@ class Runner(object):
       if avg_loss_value := metrics.get("loss", None):
         metrics["avg_loss"] = avg_loss_value
 
+      metrics, _ = self.record.format(metrics) # format data to cpu for further broadcast
       self.record.log_step_data(metrics, phase=phase, step=step)
 
     metrics = self.dist.env.broadcast(metrics)

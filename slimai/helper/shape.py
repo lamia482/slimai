@@ -53,7 +53,7 @@ def segment_background_mask(wsi, speed_up=1, kernel_size=5, iterations=3):
 def find_patch_region_from_mask(foregroun_mask, 
                                 patch_size, 
                                 patch_stride=None, 
-                                min_foreground_ratio=0.1):
+                                min_foreground_ratio=0.05):
   """
   Args:
     foregroun_mask: numpy like or tensor like image, in dtype=bool

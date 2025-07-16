@@ -14,7 +14,8 @@ class Visualizer(object):
   def render_batch_sample(self, images, outputs, 
                           targets: Dict[str, Any], 
                           class_names: List[str], 
-                          progress_bar: bool = False):
+                          progress_bar: bool = False,
+                          num_workers: int = 1):
     if progress_bar:
       pbar = ProgressBar(len(images), desc="Visualizing")
     
@@ -37,7 +38,7 @@ class Visualizer(object):
     
     # Use ThreadPoolExecutor for parallel processing
     with concurrent.futures.ThreadPoolExecutor(
-      max_workers=get_dist_env().local_world_size) as executor:
+      max_workers=num_workers) as executor:
       vis_list = list(executor.map(process_func, indices))
       
     return vis_list

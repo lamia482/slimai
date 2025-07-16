@@ -33,7 +33,7 @@ class Record(object):
     
     config = cfg.copy().to_dict()
 
-    self.work_dir = config.get("_WORK_DIR_", None)
+    self.work_dir = config.get("work_dir", None)
     assert (
       self.work_dir is not None
     ), "work_dir is not specified in config, please specify '_WORK_DIR_' in the config file or set 'work_dir' in CLI"

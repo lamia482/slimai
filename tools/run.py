@@ -66,10 +66,7 @@ def parse_config(args):
     cfg.work_dir = f"{cfg.work_dir}-{args.tag}"
     print_log(f"_EXPERIMENT_ change from {cfg._EXPERIMENT_} to {args.tag} by '--tag' CLI", 
               level="WARNING")
-    cfg._EXPERIMENT_ = args.tag
-
-  if cfg.get("_WORK_DIR_", None) is None:
-    cfg._WORK_DIR_ = cfg.work_dir
+    cfg._EXPERIMENT_ = osp.basename(cfg.work_dir)
   
   if args.amp is True:
     cfg.RUNNER.gradient.amp = True

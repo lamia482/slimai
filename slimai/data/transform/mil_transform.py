@@ -173,7 +173,7 @@ class MILTransform(BaseTransform):
     if self.shrink == "tissue":
       operation_ratio = 5/20
       mask, vis = segment_foreground_mask(image, speed_up=1/operation_ratio, kernel_size=5, iterations=3, return_vis=True)
-      coords = find_patch_region_from_mask(mask, self.tile_size, self.tile_stride)
+      coords = find_patch_region_from_mask(mask, self.tile_size, self.tile_stride, min_foreground_ratio=0.05)
 
       vis_ratio = 1.25/20
       vis = cv2.resize(cv2.merge([vis, vis, vis]), None, fx=vis_ratio, fy=vis_ratio) # type: ignore

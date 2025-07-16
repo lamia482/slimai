@@ -157,13 +157,16 @@ class DistEnv(object):
     return
   
   @classmethod
-  def broadcast(cls, data, from_rank=0):
+  def broadcast(cls, data, from_rank=0, device="cpu"):
     """Broadcast data to all processes."""
     if not cls.is_dist_initialized():
       return data
+
+    if isinstance(device, str):
+      device = torch.device(device)
     
     output = [data] # wrap to list to use broadcast_object_list
-    dist.broadcast_object_list(output, src=from_rank) # auto barrier across all processes
+    dist.broadcast_object_list(output, src=from_rank, device=device) # auto barrier across all processes
     data = output[0]
     return data
   
