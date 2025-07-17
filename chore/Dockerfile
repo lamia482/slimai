@@ -40,7 +40,7 @@ RUN conda install -y conda-forge::pydensecrf conda-forge::ncurses conda-forge::o
 # Install utility and ML packages
 RUN pip install dill pika paramiko parse openpyxl loguru pandas &&\
     pip install opencv-python lightgbm future nvitop clearml scikit-learn scikit-image tidecv ipywidgets &&\
-    pip install albumentations --no-binary qudida,albumentations mmcv mmengine
+    pip install albumentations --no-binary qudida,albumentations mmcv mmengine lmdb
 
 # Install PyTorch ecosystem
 RUN pip install --upgrade torch torchvision torchaudio xformers

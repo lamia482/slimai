@@ -14,9 +14,10 @@ if [ -z "${CUDA_VISIBLE_DEVICES}" ]; then
   export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(($(eval $GPU_NUM)-1)))
 fi
 
-export NCCL_SOCKET_IFNAME=eth0
-export NCCL_DEBUG=INFO
 export OMP_NUM_THREADS=1
+export NCCL_DEBUG=INFO
+export NCCL_SOCKET_IFNAME=eth0
+export GLOO_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}
 
 ##### Add working path to PYTHONPATH
 TOOLBOX_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
@@ -31,7 +32,7 @@ NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 free_port=$(python -c "from slimai.helper.utils.dist_env import get_dist_env; print(get_dist_env().get_free_port())")
 MASTER_ADDR=${MASTER_ADDR:-localhost}
 MASTER_PORT=${MASTER_PORT:-${free_port}}
-MAX_RESTARTS=${MAX_RESTARTS:-0}
+MAX_RESTARTS=${MAX_RESTARTS:-3} # 0 for no restart, set default to 3 for 3 times restart
 JOB_ID=${JOB_ID:-${MASTER_PORT}}
 
 ##### print job info

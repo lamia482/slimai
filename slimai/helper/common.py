@@ -1,7 +1,7 @@
 
 
 ##### ENVIRONMENT VARIABLES #####
-CACHE_ROOT_DIR = "/.slimai/cache" # TODO: use LMDB instead of pickle
+CACHE_ROOT_DIR = "/.slimai/cache"
 
 ##### REQUIRMENTS #####
 REQUIREMENTS = {
@@ -10,4 +10,4 @@ REQUIREMENTS = {
 }
 
 ##### VERSION #####
-VERSION = "0.1.5"
+VERSION = "0.1.6"

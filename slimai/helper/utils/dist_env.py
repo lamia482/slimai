@@ -157,10 +157,13 @@ class DistEnv(object):
     return
   
   @classmethod
-  def broadcast(cls, data, from_rank=0, device="cpu"):
+  def broadcast(cls, data, from_rank=0, device=None):
     """Broadcast data to all processes."""
     if not cls.is_dist_initialized():
       return data
+
+    if device is None:
+      device = cls.device
 
     if isinstance(device, str):
       device = torch.device(device)

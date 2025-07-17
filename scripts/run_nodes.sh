@@ -5,13 +5,14 @@ CONFIG_FILE="$1"
 
 ##### define nodes number for jobs
 export NNODES=1
-export NODE_RANK=0
+export NODE_RANK=${NODE_RANK:-0}
+
+free_port=$(python -c "from slimai.helper.utils.dist_env import get_dist_env; print(get_dist_env().get_free_port())")
 
 ##### random DDP info
-export JOB_ID=12345
 export MASTER_ADDR=10.168.100.88
-export MASTER_PORT=29603
-export MAX_RESTARTS=1
+export MASTER_PORT=${free_port}
+export MAX_RESTARTS=0 # in multi-node training, set to 0 for no restart
 
 if [ ${NNODES} -eq 1 ]; then
   export MASTER_ADDR=127.0.0.1

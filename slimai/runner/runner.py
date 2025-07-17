@@ -55,7 +55,8 @@ class Runner(object):
       save_every_n_epochs=ckpt.get("save_every_n_epochs", 1),
       keep_max=ckpt.get("keep_max", -1),
       keep_best=ckpt.get("keep_best", True),
-      keep_latest=ckpt.get("keep_latest", True)
+      keep_latest=ckpt.get("keep_latest", True), 
+      save_on_rank_0=cfg.RUNNER.get("save_on_rank_0", True)
     )
 
     self.eval_every_n_epochs = ckpt.get("eval_every_n_epochs", 1)
@@ -80,6 +81,7 @@ class Runner(object):
       resume_from=resume.resume_from,
       load_from=resume.load_from
     )
+    self.step = ckpt.get("step", 0)
     self.epoch = ckpt.get("epoch", 0)
 
     # prepare model and solver for distributed training
@@ -214,7 +216,9 @@ class Runner(object):
       # walk through one epoch
       avg_loss_value = 0.0
       num_steps_per_epoch = len(self.train_dataloader)
-      for self.step, batch_info in enumerate(self.train_dataloader):
+      dataloader_generator = iter(self.train_dataloader)
+      for self.step in range(self.step, num_steps_per_epoch):
+        batch_info = next(dataloader_generator)
         self.global_step = self.step + (self.epoch) * num_steps_per_epoch
 
         msg = f"Step: {self.step+1}/{num_steps_per_epoch}"
@@ -269,7 +273,7 @@ class Runner(object):
     infer_forward_func = partial(self.arch, mode="predict")
 
     results = []
-    for step, batch_info in enumerate(dataloader):
+    for batch_info in dataloader:
       batch_info = self.dist.prepare_for_distributed(batch_info)
       batch_info = DataSample(**batch_info).to(self.dist.env.device)
       batch_data, batch_meta, batch_latency = self.extract_batch_info(batch_info)
@@ -350,7 +354,7 @@ class Runner(object):
       self.record.log_batch_sample(batch_info, output, targets, 
                                    class_names=dataloader.dataset.class_names,
                                    phase=phase, 
-                                   progress_bar=True)
+                                   progress_bar=True, step=step)
 
       if avg_loss_value := metrics.get("loss", None):
         metrics["avg_loss"] = avg_loss_value

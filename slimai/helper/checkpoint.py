@@ -32,7 +32,7 @@ class Checkpoint(object):
   def __init__(
     self,
     save_dir: str,
-    save_every_n_steps: int = None,
+    save_every_n_steps: Optional[int] = None,
     save_every_n_epochs: int = 1,
     keep_max: int = -1,
     keep_best: bool = True,
@@ -88,7 +88,7 @@ class Checkpoint(object):
     epoch: int,
     step: int, 
     num_steps_per_epoch: int,
-    loss: float = None,
+    loss: Optional[float] = None,
     export: bool = False, 
     **kwargs
   ) -> Path:
@@ -113,9 +113,11 @@ class Checkpoint(object):
       save_by_epoch = False # skip duplicate save by step and epoch
 
     if save_by_step:
+      step_mod = step % num_steps_per_epoch
       epoch = step // num_steps_per_epoch
       ckpt_path = self.save_dir / f"step_{step}.pth" 
     else:
+      step_mod = 0
       ckpt_path = self.save_dir / f"epoch_{epoch}.pth"
 
     if (
@@ -138,7 +140,8 @@ class Checkpoint(object):
         torch.save(dict(weight=self.dist.copy_cpu_offload_state_dict(summon_module),
                         solver=self.dist.copy_cpu_offload_state_dict(solver),
                         scheduler=self.dist.copy_cpu_offload_state_dict(scheduler),
-                        epoch=epoch, loss=loss, min_loss=self.min_loss, 
+                        step=step_mod, epoch=epoch, 
+                        loss=loss, min_loss=self.min_loss, 
                         **kwargs), ckpt)
         
         if export:
@@ -159,7 +162,9 @@ class Checkpoint(object):
 
       records = mmengine.load(self.record_file)
       records.append(dict(
-        ckpt=ckpt_path, epoch=epoch, loss=loss, min_loss=self.min_loss, **kwargs
+        ckpt=ckpt_path, epoch=epoch, 
+        global_step=step, num_steps_per_epoch=num_steps_per_epoch, step=step_mod,
+        loss=loss, min_loss=self.min_loss, **kwargs
       ))
       if (
         (self.keep_max is not None and self.keep_max > 0) 
@@ -170,7 +175,9 @@ class Checkpoint(object):
 
       mmengine.dump(records, self.record_file)
 
-    self.dist.env.sync()
+    if self.save_on_rank_0:
+      self.dist.env.sync()
+
     return ckpt_path
 
   def load(
@@ -249,7 +256,8 @@ class Checkpoint(object):
         min_loss = ckpt.get("min_loss", None)
         self.min_loss = min_loss or float("inf")
       else:
-        ckpt.pop("epoch")
-        ckpt.pop("min_loss")
+        ckpt.pop("step", None)
+        ckpt.pop("epoch", None)
+        ckpt.pop("min_loss", None)
         
     return model, solver, scheduler, ckpt
