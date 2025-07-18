@@ -137,6 +137,8 @@ def build_model(cfg) -> torch.nn.Module:
   module = compose_components(cfg, source=MODELS)
   if module is None:
     module = torch.nn.Identity()
+  if isinstance(module, (tuple, list)):
+    module = torch.nn.Sequential(*module)
   return module
 
 def build_loss(cfg) -> torch.nn.Module:

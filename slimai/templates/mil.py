@@ -152,33 +152,24 @@ MODEL = dict(
   type="MIL", 
   embedding_group_size=16, 
   freeze_backbone=True,
-  encoder=dict(
-    backbone=dict(
-      type="Plugin",
-      module="/.slimai/plugins/dino/infer_wq.py:get_backbone",
-      weight="/.slimai/plugins/dino/teacher_checkpoint.pth" 
-    ),
-    neck=dict(
-      type="ABMIL", 
-      input_dim=1152, 
-      hidden_dim=1152, 
-      attention="gated",
-      dropout=0.1,
-    ), 
+  backbone=dict(
+    type="Plugin",
+    module="/.slimai/plugins/dino/infer_wq.py:get_backbone",
+    weight="/.slimai/plugins/dino/teacher_checkpoint.pth" 
+  ),
+  neck=dict(
+    type="ABMIL", 
+    input_dim=1152, 
+    hidden_dim=1152, 
+    attention="gated",
+    dropout=0.1,
   ), 
-  decoder=dict(
-    head=dict(
-      type="MLP",
-      input_dim=1152,
-      hidden_dim=1536,
-      bottleneck_dim=256, 
-      output_dim=len(class_names),
-      n_layer=3,
-      act="gelu",
-      norm="layer_norm",
-      # norm="batch_norm_1d",
-      dropout=0.1,
-    ),
+  head=dict(
+    type="MLP",
+    input_dim=1152,
+    output_dim=len(class_names),
+    n_layer=1,
+    dropout=0.1,
   ),
   loss=dict(
     type="MILLoss",

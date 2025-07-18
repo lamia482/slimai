@@ -114,29 +114,25 @@ VALID_LOADER = dict(
 ############################## 2. MODEL
 MODEL = dict(
   type="DINO",
-  encoder=dict(
-    backbone=dict(
-      type="ViT",
-      arch="huge", 
-      patch_size=14,
-      drop_head=True,
-      dropout=0.1, 
-      attention_dropout=0.1, 
-    ),
-    neck=None, 
-  ), 
-  decoder=dict(
-    head=dict(
-      type="MLP",
-      input_dim=1280,
-      hidden_dim=2048,
-      bottleneck_dim=384, 
-      output_dim=131072,
-      n_layer=2,
-      act="gelu",
-      norm=None,
-      dropout=0.1,
-    ),
+  backbone=dict(
+    type="ViT",
+    arch="huge", 
+    patch_size=14,
+    drop_head=True,
+    dropout=0.1, 
+    attention_dropout=0.1, 
+  ),
+  neck=None, 
+  head=dict(
+    type="MLP",
+    input_dim=1280,
+    hidden_dim=2048,
+    bottleneck_dim=384, 
+    output_dim=131072,
+    n_layer=2,
+    act="gelu",
+    norm=None,
+    dropout=0.1,
   ),
   loss=dict(
     type="DINOLoss",

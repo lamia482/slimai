@@ -15,17 +15,14 @@ __all__ = [
 @MODELS.register_module()
 class DINO(ClassificationArch):
   def __init__(self, *, 
-               encoder=dict(
-                 backbone=None, neck=None, 
-               ), 
-               decoder=dict(
-                 head=None, 
-               ), 
+               backbone=None, 
+               neck=None, 
+               head=None, 
                loss=None, 
                solver=None, 
                momentum_teacher=0.9995, 
                ):
-    super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
+    super().__init__(backbone=backbone, neck=neck, head=head, loss=loss, solver=solver)
     
     # in DINO teacher use student weight by default
     self.teacher.load_state_dict(self.student.state_dict())
@@ -40,9 +37,9 @@ class DINO(ClassificationArch):
     self.momentum_teacher_schedule = None # update in step_precede_hooks
     return
   
-  def init_layers(self, encoder, decoder) -> torch.nn.ModuleDict:
-    student = Pipeline(encoder.backbone, encoder.neck, decoder.head)
-    teacher = Pipeline(encoder.backbone, encoder.neck, decoder.head)    
+  def init_layers(self, backbone, neck, head) -> torch.nn.ModuleDict:
+    student = Pipeline(backbone, neck, head)
+    teacher = Pipeline(backbone, neck, head)    
     return torch.nn.ModuleDict(dict(teacher=teacher, student=student))
   
   @property

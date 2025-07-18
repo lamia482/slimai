@@ -111,36 +111,32 @@ TEST_LOADER = dict(
 ############################## 2. MODEL
 MODEL = dict(
   type="DetectionArch", 
-  encoder=dict(
-    backbone=dict(
-      type="ViT",
-      arch="small",
-      image_size=224,
-      patch_size=16,
-      embed_dim=384, 
-      drop_head=True,
-      dropout=0.1, 
-      attention_dropout=0.1, 
-      cls_pooling=False,
-    ), # [B, N, K]
-    neck=dict(
-      type="DETRQuery", 
-      input_dim=384, 
-      num_heads=4, 
-      num_layers=3, 
-      num_query=100, 
-      dropout=0.0,
-    ), # [B, Q, K]
-  ), 
-  decoder=dict(
-    head=dict(
-      type="DetectionHead",
-      input_dim=384,
-      num_classes=len(class_names),
-      num_layers=3,
-      dropout=0.1,
-    ), # [B, Q, n_classes] + [B, Q, 4]
-  ),
+  backbone=dict(
+    type="ViT",
+    arch="small",
+    image_size=224,
+    patch_size=16,
+    embed_dim=384, 
+    drop_head=True,
+    dropout=0.1, 
+    attention_dropout=0.1, 
+    cls_pooling=False,
+  ), # [B, N, K]
+  neck=dict(
+    type="DETRQuery", 
+    input_dim=384, 
+    num_heads=4, 
+    num_layers=3, 
+    num_query=100, 
+    dropout=0.0,
+  ), # [B, Q, K]
+  head=dict(
+    type="DetectionHead",
+    input_dim=384,
+    num_classes=len(class_names),
+    num_layers=3,
+    dropout=0.1,
+  ), # [B, Q, n_classes] + [B, Q, 4]
   loss=dict(
     type="DETRLoss",
     matcher=dict(

@@ -82,3 +82,16 @@ class MLP(torch.nn.Module):
   def get_linear(self, in_features, out_features, **kwargs) -> torch.nn.Module:
     return torch.nn.Linear(in_features, out_features, **kwargs)
   
+
+@MODELS.register_module()
+class SequentialMLP(MLP):
+  def forward(self, x):
+    if isinstance(x, list):
+      output = []
+      for _x in x:
+        _x = super().forward(_x.unsqueeze(0)).squeeze(0)
+        output.append(_x)
+      x = output
+    else:
+      x = super().forward(x)
+    return x

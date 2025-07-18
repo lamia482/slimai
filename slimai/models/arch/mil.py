@@ -30,30 +30,28 @@ class MIL(ClassificationArch):
     freeze_backbone (bool): Whether to freeze the backbone parameters during training.
   """
   def __init__(self, *, 
-               encoder=dict(
-                 backbone=None, neck=None, 
-               ), 
-               decoder=dict(
-                 head=None, 
-               ), 
+               backbone=None, 
+               neck=None, 
+               head=None, 
                loss=None, 
                solver=None, 
                embedding_group_size=1, 
                freeze_backbone=False,
                ):
-    super().__init__(encoder=encoder, decoder=decoder, loss=loss, solver=solver)
+    super().__init__(backbone=backbone, neck=neck, head=head, loss=loss, solver=solver)
     if freeze_backbone:
       print_log("Freezing backbone.")
       PytorchNetworkUtils.freeze(self.model.backbone)
     self.embedding_group_size = embedding_group_size
     return
 
-  def init_layers(self, encoder, decoder) -> torch.nn.Module:
+  def init_layers(self, backbone, neck, head) -> torch.nn.Module:
     """Initialize the model layers.
     
     Args:
-      encoder (dict): Configuration for the encoder components.
-      decoder (dict): Configuration for the decoder components.
+      backbone (dict): Configuration for the backbone components.
+      neck (dict): Configuration for the neck components.
+      head (dict): Configuration for the head components.
       
     Returns:
       torch.nn.ModuleDict: Dictionary containing the backbone, neck, and head modules.
@@ -62,9 +60,9 @@ class MIL(ClassificationArch):
       f"Using default `init_layers` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
-    backbone = build_model(encoder.backbone)
-    neck = build_model(encoder.neck) 
-    head = build_model(decoder.head)
+    backbone = build_model(backbone)
+    neck = build_model(neck) 
+    head = build_model(head)
     
     return torch.nn.ModuleDict(dict(backbone=backbone, neck=neck, head=head))
   

@@ -122,27 +122,23 @@ TEST_LOADER = dict(
 ############################## 2. MODEL
 MODEL = dict(
   type="ClassificationArch",
-  encoder=dict(
-    backbone=dict(
-      type="ViT",
-      arch="base",
-      patch_size=16,
-      drop_head=True,
-    ),
-    neck=None,
-  ), 
-  decoder=dict(
-    head=dict(
-      type="MLP",
-      input_dim=768,
-      hidden_dim=2048,
-      bottleneck_dim=256, 
-      output_dim=65536,
-      n_layer=1,
-      act="gelu",
-      norm=None,
-      dropout=0.5,
-    ),
+  backbone=dict(
+    type="ViT",
+    arch="base",
+    patch_size=16,
+    drop_head=True,
+  ),
+  neck=None,
+  head=dict(
+    type="MLP",
+    input_dim=768,
+    hidden_dim=2048,
+    bottleneck_dim=256, 
+    output_dim=65536,
+    n_layer=1,
+    act="gelu",
+    norm=None,
+    dropout=0.5,
   ),
   loss=dict(
     type="BasicClassificationLoss",

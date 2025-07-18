@@ -12,7 +12,8 @@ class Pipeline(torch.nn.Module):
     return
   
   def forward(self, batch_data: torch.Tensor, 
-              return_flow: bool = False) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+              return_flow: bool = False
+    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
     backbone = self.backbone(batch_data)
     neck = self.neck(backbone)
     head = self.head(neck)

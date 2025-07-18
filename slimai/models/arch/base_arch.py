@@ -13,12 +13,9 @@ from ..component.pipeline import Pipeline
 
 class BaseArch(object):
   def __init__(self, *, 
-               encoder=dict(
-                 backbone=None, neck=None, 
-               ), 
-               decoder=dict(
-                 head=None, 
-               ), 
+               backbone=None, 
+               neck=None, 
+               head=None, 
                loss=None, 
                solver=None):
     """initialize model and solver
@@ -32,7 +29,7 @@ class BaseArch(object):
     self.dist = Distributed()
 
     # Initialize model layers
-    model = self.init_layers(encoder, decoder)
+    model = self.init_layers(backbone, neck, head)
     self.model = model.apply(PytorchNetworkUtils.init_weights)
     print_log(model)
 
@@ -61,12 +58,12 @@ class BaseArch(object):
     return self.model, self.solver, self.scheduler, self.loss
 
   @abstractmethod
-  def init_layers(self, encoder, decoder) -> torch.nn.Module:
+  def init_layers(self, backbone, neck, head) -> torch.nn.Module:
     print_log(
       f"Using default `init_layers` in {self.__class__.__name__}",
       level="WARNING", warn_once=True
     )
-    model = Pipeline(encoder.backbone, encoder.neck, decoder.head)
+    model = Pipeline(backbone, neck, head)
     return model
 
   @abstractmethod
