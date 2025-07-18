@@ -1,6 +1,5 @@
 from abc import abstractmethod
 from typing import Dict, Any, List
-import concurrent.futures
 from functools import partial
 from ..utils.select import recursive_select
 from ..help_utils import ProgressBar, get_dist_env
@@ -15,7 +14,7 @@ class Visualizer(object):
                           targets: Dict[str, Any], 
                           class_names: List[str], 
                           progress_bar: bool = False,
-                          num_workers: int = 1):
+                          ):
     if progress_bar:
       pbar = ProgressBar(len(images), desc="Visualizing")
     
@@ -36,9 +35,6 @@ class Visualizer(object):
                           targets=targets, 
                           class_names=class_names)
     
-    # Use ThreadPoolExecutor for parallel processing
-    with concurrent.futures.ThreadPoolExecutor(
-      max_workers=num_workers) as executor:
-      vis_list = list(executor.map(process_func, indices))
+    vis_list = list(map(process_func, indices))
       
     return vis_list

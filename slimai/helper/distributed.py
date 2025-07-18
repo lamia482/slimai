@@ -9,6 +9,7 @@ from torch.distributed.fsdp import (
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy, size_based_auto_wrap_policy, transformer_auto_wrap_policy
 from .utils import PytorchNetworkUtils, get_dist_env, singleton
 from .structure import DataSample
+from .help_utils import print_log
 
 
 __all__ = ["Distributed", "FSDPLayerWapper"]
@@ -38,10 +39,10 @@ class Distributed(object):
       parallel_mode = "fsdp"
 
     if self.env.global_world_size == 1:
+      print_log("Cast Distributed to DDP because global world size is 1", level="WARNING")
       parallel_mode = "ddp"
 
     # TODO: currently, fsdp is not supported, use ddp instead
-    # parallel_mode = "ddp"
     
     self.parallel_mode = parallel_mode
 

@@ -45,8 +45,9 @@ def check_env():
     package = importlib.import_module(package_name)
     package_version = getattr(package, "__version__", None)
     assert (
-      str(min_version) <= str(package_version) <= str(max_version)
-    ), "{} <= version <= {} is required, but got {}".format(package_name, min_version, max_version, package_version)
+      (min_version is None or str(package_version) >= str(min_version)) and
+      (max_version is None or str(package_version) <= str(max_version))
+    ), "{} <= {}.ver <= {} is required, but got {}".format(min_version, package_name, max_version, package_version)
     print_log("+++ {} version: {} passed the environment check".format(package_name, package_version))
 
   print_log(">>> All packages depended by slimai passed the environment check.")

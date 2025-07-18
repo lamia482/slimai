@@ -258,6 +258,7 @@ class Checkpoint(object):
       else:
         ckpt.pop("step", None)
         ckpt.pop("epoch", None)
+        ckpt.pop("loss", None)
         ckpt.pop("min_loss", None)
         
     return model, solver, scheduler, ckpt

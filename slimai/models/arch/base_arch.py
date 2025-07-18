@@ -146,6 +146,7 @@ class BaseArch(object):
       epoch=-1, # epoch
       step=global_step, # step
       num_steps_per_epoch=self.max_train_step,
+      loss=runner.train_avg_loss,
       cfg=runner.cfg.MODEL,
     )
 
@@ -170,8 +171,11 @@ class BaseArch(object):
       epoch=epoch, # epoch
       step=-1, # step
       num_steps_per_epoch=self.max_train_step,
+      loss=runner.train_avg_loss,
       cfg=runner.cfg.MODEL,
     )
+
+    runner.train_avg_loss = 0.0 # reset avg loss every epoch
 
     runner.evaluate_by_strategy(runner.valid_dataloader, phase="valid", 
                                 epoch=epoch, step=-1)

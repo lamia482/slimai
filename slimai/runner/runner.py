@@ -83,6 +83,7 @@ class Runner(object):
     )
     self.step = ckpt.get("step", 0)
     self.epoch = ckpt.get("epoch", 0)
+    self.train_avg_loss = ckpt.get("loss", None) or 0.0
 
     # prepare model and solver for distributed training
     self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
@@ -214,7 +215,6 @@ class Runner(object):
       self.arch.epoch_precede_hooks(runner=self)
       
       # walk through one epoch
-      avg_loss_value = 0.0
       num_steps_per_epoch = len(self.train_dataloader)
       dataloader_generator = iter(self.train_dataloader)
       for self.step in range(self.step, num_steps_per_epoch):
@@ -235,11 +235,11 @@ class Runner(object):
         
         # update avg loss
         total_loss_value = total_loss.detach()
-        avg_loss_value = (avg_loss_value * self.step + total_loss_value) / (self.step + 1)
+        self.train_avg_loss = (self.train_avg_loss * self.step + total_loss_value) / (self.step + 1)
 
         log_data = {
           "lr": self.scheduler.get_last_lr()[0],
-          "avg_loss": avg_loss_value,
+          "avg_loss": self.train_avg_loss,
           "total_loss": total_loss_value, 
           **loss_dict, 
           **latency_dict, 
@@ -256,7 +256,7 @@ class Runner(object):
         # after forward step # save checkpoint and evaluate by step strategy
         self.arch.step_succeed_hooks(runner=self)
 
-      # after epoch # save checkpoint and evaluate by epoch strategy
+      # after epoch # save checkpoint and evaluate by epoch strategy, reset avg loss
       self.arch.epoch_succeed_hooks(runner=self)
     return
   
