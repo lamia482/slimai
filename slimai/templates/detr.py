@@ -134,7 +134,7 @@ MODEL = dict(
     type="DetectionHead",
     input_dim=384,
     num_classes=len(class_names),
-    num_layers=3,
+    num_layers=1,
     dropout=0.1,
   ), # [B, Q, n_classes] + [B, Q, 4]
   loss=dict(

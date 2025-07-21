@@ -12,7 +12,7 @@ class DetectionHead(torch.nn.Module):
                *, 
                input_dim, 
                num_classes, 
-               num_layers=3, 
+               num_layers=1, 
                dropout=0.1,
                ):
     super().__init__()

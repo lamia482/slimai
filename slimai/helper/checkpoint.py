@@ -37,7 +37,7 @@ class Checkpoint(object):
     keep_max: int = -1,
     keep_best: bool = True,
     keep_latest: bool = True, 
-    save_on_rank_0: bool = True,
+    save_on_rank_0: bool = False,
   ):
     """Initialize Checkpoint handler.
     
@@ -124,10 +124,6 @@ class Checkpoint(object):
       (save_by_step or save_by_epoch)
       and (not self.save_on_rank_0 or self.dist.env.is_main_process())
     ):
-      if not self.save_on_rank_0:
-        ckpt_path = str(ckpt_path).replace(".pth", f"-rank_{self.dist.env.local_rank}.pth")
-        ckpt_path = Path(ckpt_path)
-
       update_best = False
       if loss is not None and loss <= self.min_loss:
         self.min_loss = loss
