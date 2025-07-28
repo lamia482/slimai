@@ -64,7 +64,8 @@ class DatasetChecker(object):
   
   @classmethod
   def check_element_type(cls, key, value, element_type):
+    type_sets = list(set(map(type, value)))
     assert (
-      all(isinstance(v, element_type) for v in value)
-    ), f"All elements in key: '{key}' must be of type: {element_type}, please check your dataset"
+      (len(type_sets) == 0) or (len(type_sets) == 1 and type_sets[0] == element_type)
+    ), f"All elements in key: '{key}' must be of type: {element_type}, but got: {type_sets}, please check your dataset"
     return value

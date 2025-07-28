@@ -1,3 +1,4 @@
+from pathlib import Path
 import torch
 import torchvision
 import torch.nn.functional as F
@@ -6,15 +7,52 @@ from scipy.optimize import linear_sum_assignment
 from slimai.helper.help_build import MODELS
 from slimai.helper.utils import box_ops
 from slimai.helper import Distributed
+from slimai.helper.common import TORCH_HUB_DIR
 
 
 __all__ = [
-  "DETRLoss", 
-  "HungarianMatcher", 
+  "DETR",
+  "DETRLoss",
 ]
 
 @MODELS.register_module()
+class DETR(torch.nn.Module):
+  """
+  DETR ported from https://github.com/facebookresearch/detr/blob/main/models/detr.py
+  """
+  def __init__(self, 
+               *, 
+               num_classes, 
+               num_query=100, 
+               ):
+    super().__init__()
+
+    num_classes += 1 # add background class for future loss
+    self.num_classes = num_classes
+
+    try:
+      model = torch.hub.load(str(Path(TORCH_HUB_DIR, "facebookresearch_detr")), 
+                             "detr_resnet50", pretrained=True, source="local")
+    except FileNotFoundError as ex:
+      model = torch.hub.load("facebookresearch/detr", "detr_resnet50", pretrained=True)
+
+    self.model = model
+    self.in_features = model.class_embed.in_features
+    model.class_embed = torch.nn.Linear(in_features=self.in_features, out_features=self.num_classes)
+    model.num_queries = num_query
+    return
+
+  def forward(self, x):
+    query = self.model(x)
+    cls_logits, bbox_logits = query["pred_logits"], query["pred_boxes"]
+    return cls_logits, bbox_logits
+
+
+@MODELS.register_module()
 class DETRLoss(torch.nn.Module):
+  """
+  DETR loss ported from https://github.com/facebookresearch/detr/blob/main/models/detr.py
+  """
   def __init__(self, 
                *, 
                matcher=dict(
@@ -65,7 +103,7 @@ class DETRLoss(torch.nn.Module):
               cls_targets: List[torch.Tensor], 
               bbox_targets: List[torch.Tensor]) -> Dict[str, torch.Tensor]:
     cls_logits = self.fix_cls_logits(cls_logits) # truncate [B, Q, C+1] to [B, Q, C]
-    bbox_preds = bbox_logits.sigmoid()
+    bbox_preds = bbox_logits # already sigmoid
     indices = self.matcher(cls_logits, bbox_preds, cls_targets, bbox_targets)
     num_bboxes = self.dist.prepare_for_distributed(torch.as_tensor(sum(map(len, bbox_targets)), dtype=torch.float))
     num_bboxes: int = self.dist.env.sync(num_bboxes).clamp_min(min=1).item() # type: ignore

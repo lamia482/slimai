@@ -173,6 +173,7 @@ class BaseArch(object):
     )
 
     runner.train_avg_loss = 0.0 # reset avg loss every epoch
+    runner.step = 0 # reset step every epoch
 
     runner.evaluate_by_strategy(runner.valid_dataloader, phase="valid", 
                                 epoch=epoch, step=-1)

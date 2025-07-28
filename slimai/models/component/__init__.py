@@ -3,9 +3,7 @@ from .vit import ViT
 from .mlp import MLP
 from .plugin import Plugin
 from .abmil import ABMIL
-from .qmil import QMIL, RABMIL
-from .detr_query import DETRQuery
-from .det_head import DetectionHead
+from .kmil import KMIL
 
 
 __all__ = [
@@ -14,7 +12,5 @@ __all__ = [
   "MLP",
   "Plugin",
   "ABMIL",
-  "QMIL",
-  "RABMIL",
-  "DETRQuery",
+  "KMIL",
 ]

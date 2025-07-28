@@ -80,7 +80,7 @@ def compose_components(components,
 def build_loader(cfg) -> Callable:
   """Build loader from configuration."""
   if cfg is None:
-    return Image.open
+    return lambda x: Image.open(x) if isinstance(x, str) else x
   cfg = cfg.copy()
   return compose_components(cfg, source=LOADERS)
 

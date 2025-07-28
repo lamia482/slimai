@@ -39,6 +39,7 @@ class MIL(ClassificationArch):
                freeze_backbone=False,
                ):
     super().__init__(backbone=backbone, neck=neck, head=head, loss=loss, solver=solver)
+    self.freeze_backbone = freeze_backbone
     if freeze_backbone:
       print_log("Freezing backbone.")
       PytorchNetworkUtils.freeze(self.model.backbone)
@@ -96,9 +97,15 @@ class MIL(ClassificationArch):
       if group_size <= 0:
         group_size = len(images)
       output = []
-      for i in range(0, len(images), group_size):
-        embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
-        output.append(embedding)
+      if self.freeze_backbone:
+        for i in range(0, len(images), group_size):
+            with torch.inference_mode():
+              embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
+            output.append(embedding)
+      else:
+        for i in range(0, len(images), group_size):
+          embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
+          output.append(embedding)
       return torch.cat(output, dim=0)
 
     meta = getattr(self, "meta")
@@ -119,66 +126,56 @@ class MIL(ClassificationArch):
           vis_image = self.dist.copy_cpu_offload_tensor(vis_image)
           mmengine.dump(dict(meta=dict(visual_image=vis_image)), visual_file, protocol=4)
 
-    neck = self.model.neck(backbone) # type: ignore # (B, D)
-    if isinstance(neck, tuple):
-      neck, atten_logits = neck
-    else:
-      atten_logits = None
+    neck, atten_weights = self.model.neck(backbone) # type: ignore # (B, D)
     head = self.model.head(neck) # type: ignore # (B, C)
 
     if return_flow:
       return dict(
         backbone=backbone,
-        atten_logits=atten_logits,
+        atten_weights=atten_weights,
         neck=neck,
         head=head,
       )
     else:
-      return atten_logits, head # type: ignore
+      return atten_weights, head # type: ignore
 
   def _forward_loss(self, 
               embedding_dict: Dict[str, torch.Tensor], 
               batch_info: DataSample) -> Dict[str, torch.Tensor]:
     backbone = embedding_dict["backbone"]
-    atten_logits = embedding_dict["atten_logits"]
+    atten_weights = embedding_dict["atten_weights"]
     cls_logits = embedding_dict["head"]
     cls_targets = batch_info.label # type: ignore
-    loss = self.loss(backbone, atten_logits, cls_logits, cls_targets)
+    loss = self.loss(backbone, atten_weights, cls_logits, cls_targets)
     return loss
 
   def _postprocess(self, 
                   batch_data: Union[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]], 
                   batch_info: DataSample) -> DataSample: 
     if isinstance(batch_data, dict):
-      atten_logits = batch_data["atten_logits"]
+      atten_weights = batch_data["atten_weights"]
       cls_logits = batch_data["head"]
     else:
-      atten_logits, cls_logits = batch_data
+      atten_weights, cls_logits = batch_data
     
     super()._postprocess(cls_logits, batch_info)
     
     topk = 8*8 # topk indices to visualize
-    atten_softmax = [
-      al.squeeze().softmax(-1) # [B, ~N]
-      for al in atten_logits
-    ]
     atten_topk = [
       al.topk(k=topk, dim=-1, largest=True) # select topk(maximum) indices
-      for al in atten_softmax
+      for al in atten_weights
     ]
     atten_tailk = [
       al.topk(k=topk, dim=-1, largest=False) # select tailk(minimum) indices
-      for al in atten_softmax
+      for al in atten_weights
     ]
 
     topk_scores, topk_indices = list(map(list, zip(*atten_topk)))
     tailk_scores, tailk_indices = list(map(list, zip(*atten_tailk)))
 
     batch_info.output.update(dict(
-      topk_atten_logits=[a[i] for a, i in zip(atten_logits, topk_indices)], # [B, topk]
       topk_atten_indices=topk_indices, # [B, topk]
       topk_atten_scores=topk_scores, # [B, topk]
-      tailk_atten_logits=[a[i] for a, i in zip(atten_logits, tailk_indices)], # [B, tailk]
       tailk_atten_indices=tailk_indices, # [B, tailk]
       tailk_atten_scores=tailk_scores, # [B, tailk]
     ))

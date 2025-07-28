@@ -73,7 +73,7 @@ class ABMIL(torch.nn.Module):
       batch_embeddings: Aggregated embeddings of shape [B, K]
     """
     batch_embeddings = []
-    batch_attentions_logits = []
+    batch_attentions_weights = []
 
     for _x in x:
       _x = _x.view(-1, self.input_dim) # convert [N*K] or [N, K] to [N, K]
@@ -91,8 +91,8 @@ class ABMIL(torch.nn.Module):
       # Compute final attention weights
       A_W = self.attention_W(A) # [1, N, 1]
       A_W = self.dropout(A_W)
-      batch_attentions_logits.append(A_W.squeeze())
       A_W = A_W.transpose(1, 2).softmax(-1) # [1, 1, N] - normalize with softmax
+      batch_attentions_weights.append(A_W.squeeze())
       
       # Compute weighted average of embeddings
       Z = torch.bmm(A_W, embeddings) # [1, 1, K] - batch matrix multiplication
@@ -101,4 +101,4 @@ class ABMIL(torch.nn.Module):
 
     batch_embeddings = torch.stack(batch_embeddings) # [B, K]
 
-    return batch_embeddings, batch_attentions_logits
+    return batch_embeddings, batch_attentions_weights

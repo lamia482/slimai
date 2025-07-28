@@ -1,6 +1,7 @@
 import swanlab
 import mmengine
 import torch
+import numpy as np
 from pathlib import Path
 from PIL import Image
 from typing import Dict, Any, Optional, Union, List, Callable
@@ -151,6 +152,8 @@ class Record(object):
       for i, v in enumerate(value):
         if isinstance(v, (str, Path)):
           v = swanlab.Text(str(v))
+        elif isinstance(v, np.ndarray):
+          continue
         log_data[f"{key}_{i}"] = v
 
     return log_data, msg

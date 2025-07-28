@@ -72,6 +72,8 @@ class RegionTileLoader():
       xmax = reader.getReadWidth()
     if ymax <= 0:
       ymax = reader.getReadHeight()
+
+    print_log("🔥 Reading tile from file: {}".format(file), main_process_only=False)
     
     if self.num_threads:
       tile = self.read_roi_async(reader, xmin, ymin, xmax, ymax, self.num_threads)
@@ -81,15 +83,18 @@ class RegionTileLoader():
     if self.cache:
       h, w = tile.shape[:2] # type: ignore
       if h >= 65536 or w >= 65536:
+        print_log("✅ Large tile detected, skipping compression and cache", main_process_only=False)
         return tile # skip large tiles
       data = tile
       if self.compressed:
+        print_log("🕒 Compressing tile to {}".format(cache_file), main_process_only=False)
         status, data = cv2.imencode(".jpg", data) # type: ignore
         if status:
           data = data.tobytes()
           mmengine.dump(data, cache_file)
+          print_log("✅ Tile compressed and cached to {}".format(cache_file), main_process_only=False)
         else:
-          print_log("[XX] Failed to compress tile from file: {}".format(file), 
+          print_log("⚠️ Failed to compress tile from file: {}".format(file), 
                     main_process_only=False, 
                     level="WARNING")
 

@@ -33,7 +33,6 @@ class DetectionArch(BaseArch):
       batch_data = batch_data["head"]
       
     cls_logits, bbox_logits = batch_data
-    bbox_logits = bbox_logits.sigmoid()
 
     cls_dist, pred_scores, pred_labels, fg_mask \
       = self.loss.parse_logits(cls_logits, bbox_logits) # type: ignore

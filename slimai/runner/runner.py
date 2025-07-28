@@ -256,7 +256,7 @@ class Runner(object):
         # after forward step # save checkpoint and evaluate by step strategy
         self.arch.step_succeed_hooks(runner=self)
 
-      # after epoch # save checkpoint and evaluate by epoch strategy, reset avg loss
+      # after epoch # save checkpoint and evaluate by epoch strategy, reset avg loss and step
       self.arch.epoch_succeed_hooks(runner=self)
     return
   
