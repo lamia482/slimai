@@ -6,6 +6,7 @@ and finally mmengine components.
 """
 import torch
 from PIL import Image
+from pathlib import Path
 from typing import Callable, List, Any
 from torch.utils.data.distributed import DistributedSampler
 from mmengine.dataset import Compose as ComposeTransform
@@ -15,7 +16,27 @@ LOADERS = Registry("loaders")
 SOURCES = Registry("sources")
 VISUALIZERS = Registry("visualizers")
 from slimai.helper.help_utils import print_log, get_dist_env
+from slimai.helper.common import TORCH_HUB_DIR
 
+
+def load_from_torch_hub(repo: str, model: str, **kwargs) -> Callable:
+  """Load a model from torch hub or local cache.
+  
+  This function first tries to load the model from the local cache, and if it fails, 
+  it will try to load the model from the torch hub and save it to the local cache.
+  
+  Args:
+    repo: str, the repo of the model to load.
+    model: str, the name of the model to load.
+    **kwargs: the kwargs to pass to the model.
+  """
+  pretrained = kwargs.pop("pretrained", True)
+  try:
+    local_dir = Path(TORCH_HUB_DIR, repo.replace("/", "_")).as_posix()
+    network = torch.hub.load(local_dir, model, pretrained=pretrained, source="local", **kwargs) # type: ignore
+  except FileNotFoundError as ex:
+    network = torch.hub.load(repo, model, pretrained=pretrained, **kwargs) # type: ignore
+  return network # type: ignore
 
 def compose_components(components, 
                        *, 

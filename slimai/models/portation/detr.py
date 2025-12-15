@@ -4,10 +4,9 @@ import torchvision
 import torch.nn.functional as F
 from typing import Dict, List, Tuple
 from scipy.optimize import linear_sum_assignment
-from slimai.helper.help_build import MODELS
+from slimai.helper.help_build import MODELS, load_from_torch_hub
 from slimai.helper.utils import box_ops
 from slimai.helper import Distributed
-from slimai.helper.common import TORCH_HUB_DIR
 
 
 __all__ = [
@@ -24,17 +23,15 @@ class DETR(torch.nn.Module):
                *, 
                num_classes, 
                num_query=100, 
+               model="detr_resnet50",
+               **kwargs,
                ):
     super().__init__()
 
     num_classes += 1 # add background class for future loss
     self.num_classes = num_classes
 
-    try:
-      model = torch.hub.load(str(Path(TORCH_HUB_DIR, "facebookresearch_detr")), 
-                             "detr_resnet50", pretrained=True, source="local")
-    except FileNotFoundError as ex:
-      model = torch.hub.load("facebookresearch/detr", "detr_resnet50", pretrained=True)
+    model = load_from_torch_hub("facebookresearch/detr", model, pretrained=True, **kwargs)
 
     self.model = model
     self.in_features = model.class_embed.in_features

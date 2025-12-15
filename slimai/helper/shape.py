@@ -5,22 +5,29 @@ import torch
 from .utils import scale_image
 
 
-def segment_foreground_mask(image, 
-                            speed_up: float=1.0, 
-                            kernel_size: int=5, 
-                            iterations: int=3, 
-                            return_vis: bool=False):
+def segment_mask(image, 
+                 speed_up: float=1.0, 
+                 kernel_size: int=5, 
+                 iterations: int=3, 
+                 target="foreground",
+                 return_vis: bool=False):
   """
   Args:
     wsi: numpy like or tensor like image
     speed_up: float, speed up the process by this ratio
     kernel_size: int, the size of the kernel
     iterations: int, the number of iterations
+    target: str, "foreground" or "background"
     return_vis: bool, whether to return the visualization image
 
   Returns:
     mask: numpy like or tensor like image, in dtype=bool
   """
+  valid_targets = ["foreground", "background", "tissue"]
+  assert (
+    target in valid_targets
+  ), f"Invalid target: {target}, valid targets: {valid_targets}"
+
   ratio = 1/speed_up
 
   wsi = scale_image.to_batch_numpy_image(image)[0] # make it to [H, W, ?C] in dtype=uint8
@@ -30,6 +37,9 @@ def segment_foreground_mask(image,
   kernel = np.ones((kernel_size, kernel_size), np.uint8)
   mask = cv2.dilate(binary, kernel, iterations=iterations)
   mask = cv2.erode(mask, kernel, iterations=iterations)
+
+  if target == "background":
+    mask = 255 - mask
 
   vis = None
   if return_vis:
@@ -46,17 +56,28 @@ def segment_foreground_mask(image,
     return mask, vis
   return mask
 
+def segment_foreground_mask(image, 
+                            speed_up: float=1.0, 
+                            kernel_size: int=5, 
+                            iterations: int=3, 
+                            return_vis: bool=False):
+  return segment_mask(image, speed_up, kernel_size, iterations, "foreground", return_vis)
 
-def segment_background_mask(wsi, speed_up=1, kernel_size=5, iterations=3):
-  return ~segment_foreground_mask(wsi, speed_up, kernel_size, iterations, return_vis=False)
 
-def find_patch_region_from_mask(foregroun_mask, 
+def segment_background_mask(image, 
+                            speed_up: float=1.0, 
+                            kernel_size: int=5, 
+                            iterations: int=3, 
+                            return_vis: bool=False):
+  return segment_mask(image, speed_up, kernel_size, iterations, "background", return_vis)
+
+def find_patch_region_from_mask(mask, 
                                 patch_size, 
                                 patch_stride=None, 
-                                min_foreground_ratio=0.05):
+                                min_ratio=0.05):
   """
   Args:
-    foregroun_mask: numpy like or tensor like image, in dtype=bool
+    mask: numpy like or tensor like image, in dtype=bool
     patch_size: int or tuple, the size of the patch in (H, W)
     patch_stride: int or tuple, the stride of the patch in (H, W)
 
@@ -74,16 +95,16 @@ def find_patch_region_from_mask(foregroun_mask,
     patch_stride = (patch_stride, patch_stride)
   patch_stride_height, patch_stride_width = patch_stride
 
-  foregroun_mask = foregroun_mask * 1.0
-  mask_height, mask_width = foregroun_mask.shape[:2]
+  mask = mask * 1.0
+  mask_height, mask_width = mask.shape[:2]
   patch_region = []
   mask_xy_list = list(itertools.product(
     range(0, mask_width, patch_stride_width), 
     range(0, mask_height, patch_stride_height)
   ))
   for x, y in mask_xy_list:
-    m = foregroun_mask[y:y+patch_height, x:x+patch_width]
-    if m.mean() >= min_foreground_ratio:
+    m = mask[y:y+patch_height, x:x+patch_width]
+    if m.mean() >= min_ratio:
       patch_region.append((x, y, patch_width, patch_height))
 
   patch_region = np.array(patch_region).reshape(-1, 4)

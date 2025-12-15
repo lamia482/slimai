@@ -1,7 +1,7 @@
 from pathlib import Path
+from .utils.cache import CACHE_ROOT_DIR
 
 ##### ENVIRONMENT VARIABLES #####
-CACHE_ROOT_DIR = "/.slimai/cache"
 TORCH_HUB_DIR = Path(CACHE_ROOT_DIR, "torch", "hub")
 
 ##### REQUIRMENTS #####

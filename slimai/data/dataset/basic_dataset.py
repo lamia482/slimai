@@ -10,7 +10,7 @@ from torchvision import tv_tensors
 from pathlib import Path
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import DATASETS, build_transform, build_loader, build_source
-from slimai.helper.common import CACHE_ROOT_DIR
+from slimai.helper.utils.cache import get_cacher
 
 
 __all__ = ["BasicDataset"]
@@ -34,16 +34,18 @@ class BasicDataset(torch.utils.data.Dataset):
                cache=False, 
                max_loader_cache_size=0,
                **kwargs):
+
+    self.cacher = get_cacher()
     self.dataset_file = "Not file"
 
-    cache_file = Path(CACHE_ROOT_DIR, "dataset", self.__class__.__name__, "{}.pkl".format(
-      hashlib.md5("+".join(map(str, [dataset, desc])).encode(encoding="UTF-8")
-    ).hexdigest()))
+    cache_key = "+".join(map(str, [
+      "dataset", self.__class__.__name__, 
+      dataset, desc
+    ]))
 
-    if cache_file.exists() and cache:
-      dataset = mmengine.load(cache_file)
-      print_log(f"Dataset loaded from cache<{cache_file}>")
-      self.dataset_file, dataset = dataset
+    if cache and (data := self.cacher.get(cache_key)) is not None:
+      self.dataset_file, dataset = data
+      print_log(f"Dataset loaded from cache<{cache_key}>")
     else:
       print_log(f"Building dataset from scratch")
       if isinstance(dataset, str):
@@ -53,8 +55,8 @@ class BasicDataset(torch.utils.data.Dataset):
         dataset_fn = build_source(dataset)
         dataset = dataset_fn()
     
-      print_log(f"Build dataset done, save cache to: {cache_file}")
-      mmengine.dump((self.dataset_file, dataset), cache_file)
+      print_log(f"Build dataset done, save cache to: '{cache_key}'")
+      self.cacher.put(cache_key, (self.dataset_file, dataset))
       
     if std_func is not None:
       if isinstance(std_func, str):

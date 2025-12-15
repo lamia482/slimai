@@ -1,14 +1,11 @@
 import cv2
-import hashlib
-import mmengine
 import numpy as np
 from typing import Dict
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sdk.reader import get_reader_by_file
 from slimai.helper.help_build import LOADERS
-from slimai.helper.common import CACHE_ROOT_DIR
 from slimai.helper.help_utils import print_log
+from slimai.helper.utils.cache import get_cacher
 
 
 @LOADERS.register_module()
@@ -35,26 +32,25 @@ class RegionTileLoader():
     self.compressed = False if cache_mode == "raw" else True
     self.num_threads = num_threads
     self.padding_value = padding_value
+    self.cacher = get_cacher()
     return
   
   def __call__(self, file):
-    cache_file = Path(CACHE_ROOT_DIR, "loader", self.__class__.__name__, "{}-{}.pkl".format(
-      hashlib.md5("+".join(map(str, [self.magnification, self.region, self.padding_value])
-      ).encode(encoding="UTF-8")).hexdigest(), 
-      hashlib.md5(file.encode(encoding="UTF-8")).hexdigest() + ("" if self.compressed == "raw" else "-compressed")
-    ))
-
-    if self.cache and cache_file.exists():
-      try:
-        data = mmengine.load(cache_file)
-        if self.compressed:
-          data = cv2.imdecode(np.frombuffer(data, "uint8"), cv2.IMREAD_COLOR)
-        return data
-      except Exception as ex:
-        pass
-    
     wsi_file_path = file
 
+    cache_key = "+".join(map(str, [
+      "loader", self.__class__.__name__, 
+      self.magnification, self.region, self.padding_value, 
+      wsi_file_path, ("-compressed" if self.compressed else "")
+    ]))
+
+    if self.cache:
+      data = self.cacher.get(cache_key)
+      if data is not None:
+        if self.compressed:
+          data = cv2.imdecode(np.frombuffer(data, "uint8"), cv2.IMREAD_COLOR)
+        return data # type: ignore
+    
     reader = get_reader_by_file(wsi_file_path, scale=self.magnification)
     if not reader.status:
       return None
@@ -73,7 +69,7 @@ class RegionTileLoader():
     if ymax <= 0:
       ymax = reader.getReadHeight()
 
-    print_log("🔥 Reading tile from file: {}".format(file), main_process_only=False)
+    print_log("🔥 Reading tile from file: {}".format(wsi_file_path), main_process_only=False)
     
     if self.num_threads:
       tile = self.read_roi_async(reader, xmin, ymin, xmax, ymax, self.num_threads)
@@ -81,22 +77,16 @@ class RegionTileLoader():
       tile = reader.ReadRoi(xmin, ymin, xmax-xmin, ymax-ymin, scale=reader.getReadScale()) # type: ignore
 
     if self.cache:
-      h, w = tile.shape[:2] # type: ignore
-      if h >= 65536 or w >= 65536:
-        print_log("✅ Large tile detected, skipping compression and cache", main_process_only=False)
-        return tile # skip large tiles
       data = tile
       if self.compressed:
-        print_log("🕒 Compressing tile to {}".format(cache_file), main_process_only=False)
+        print_log("🌈 Compressing tile to '{}'".format(cache_key), main_process_only=False)
         status, data = cv2.imencode(".jpg", data) # type: ignore
         if status:
-          data = data.tobytes()
-          mmengine.dump(data, cache_file)
-          print_log("✅ Tile compressed and cached to {}".format(cache_file), main_process_only=False)
+          self.cacher.put(cache_key, data)
+          print_log("✅ Tile compressed and cached to '{}'".format(cache_key), main_process_only=False)
         else:
-          print_log("⚠️ Failed to compress tile from file: {}".format(file), 
-                    main_process_only=False, 
-                    level="WARNING")
+          print_log("⚠️ Failed to compress tile from file: '{}'".format(file), 
+                    main_process_only=False, level="WARNING")
 
     return tile
 

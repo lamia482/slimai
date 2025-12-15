@@ -21,21 +21,23 @@ RUN curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.s
 RUN bash Miniconda3-latest-Linux-x86_64.sh -b -p /opt/conda && rm -f Miniconda3-latest-Linux-x86_64.sh
 
 ENV PATH=${PATH}:/opt/conda/bin
+ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=TRUE
 
 # Configure conda to use Tsinghua mirror for faster downloads in China
-RUN conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free/ &&\
-    conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/ &&\
+RUN conda config --add channels https://mirrors.ustc.edu.cn/anaconda/pkgs/free &&\
+    conda config --add channels https://mirrors.ustc.edu.cn/anaconda/pkgs/main &&\
     conda config --set show_channel_urls yes
 
 # Install Python and basic scientific packages
 RUN conda clean -ya &&\
     conda install -y python=${PYTHON_VERSION} conda-build &&\
     conda install -y -n base ipykernel --update-deps --force-reinstall &&\
-    conda install -y pyyaml numpy pillow ipython cython typing typing_extensions mkl mkl-include ninja &&\
-    pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+    conda install -y pyyaml numpy pillow ipython cython typing typing_extensions mkl mkl-include ninja
 
 # Install specialized packages for image processing
 RUN conda install -y conda-forge::pydensecrf conda-forge::ncurses conda-forge::openslide-python
+
+RUN pip config set global.index-url https://pypi.mirrors.ustc.edu.cn/simple
 
 # Install utility and ML packages
 RUN pip install dill pika paramiko parse openpyxl loguru pandas &&\
@@ -46,7 +48,7 @@ RUN pip install dill pika paramiko parse openpyxl loguru pandas &&\
 RUN pip install --upgrade torch torchvision torchaudio xformers
 
 # Install model optimization and deployment tools
-RUN pip install tensorrt onnx onnxscript onnxruntime-gpu onnxsim &&\
+RUN pip install torch-tensorrt tensorrt onnx onnxscript onnxruntime-gpu onnxsim &&\
     pip install omegaconf fvcore submitit tensorboard kornia
 
 # Install Hugging Face and DeepSpeed for transformer models and distributed training

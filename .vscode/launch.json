@@ -5,6 +5,14 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Python Debugger: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
       "name": "RUN",
       "type": "debugpy",
       "request": "launch",
@@ -13,13 +21,15 @@
         "PYTHONPATH": "/hzztai/slimai:$PYTHONPATH",
         "CUDA_VISIBLE_DEVICES": "0",
         "PYDEVD_WARN_SLOW_RESOLVE": "0",
-        "CUDA_LAUNCH_BLOCKING": "1"
+        "CUDA_LAUNCH_BLOCKING": "1",
+        "OPENCV_IO_MAX_IMAGE_PIXELS": "1099511627776",
       },
       "program": "/hzztai/slimai/tools/run.py",
       "console": "integratedTerminal",
       "args": [
         "--config=/hzztai/slimai/_debug_/debug.py",
         "--work-dir=/hzztai/experiments/debug",
+        "--action=evaluate",
       ],
       "justMyCode": false
     },
@@ -66,15 +76,6 @@
       ]
     },
     {
-      "name": "ALIGN",
-      "type": "debugpy",
-      "request": "launch",
-      "cwd": "/hzztai/projects/tct/flu_app/jupyter",
-      "program": "wsi_align.py",
-      "console": "integratedTerminal",
-      "justMyCode": false
-    },
-    {
       "name": "Python Debugger: Current File",
       "type": "debugpy",
       "request": "launch",
@@ -104,16 +105,42 @@
         "--use-amp",
         "--seed=10086"
       ]
-    }, 
+    },
     {
       "name": "READER",
       "type": "debugpy",
       "request": "launch",
       "cwd": "/hzztai/sdk",
       "program": "reader/test.py",
-      "console": "integratedTerminal", 
-      "justMyCode": false
-    }, 
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "ENABLE_SLIDE_MPP_UNIFY": "1",
+        "ENABLE_PYRAMID_RESAMPLE": "1",
+        "ENABLE_SHRINK_ON_BOUNDARY": "1",
+        "ENV_SLIDE_UNIFY_MPP_RESOLUTION": "0.5, 0.5",
+        "ENV_SLIDE_UNIFY_MPP_MAGNIFICATION": "20",
+        "READER_LICENSE": "/hzztai/sdk/reader/license.dat",
+      }
+    },
+    {
+      "name": "READER-HTTP",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai/sdk/reader-service",
+      "program": "service.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "ENABLE_SLIDE_MPP_UNIFY": "1",
+        "ENABLE_PYRAMID_RESAMPLE": "True",
+        "ENABLE_SHRINK_ON_BOUNDARY": "True",
+        "ENV_SLIDE_UNIFY_MPP_RESOLUTION": "0.5, 0.5",
+        "ENV_SLIDE_UNIFY_MPP_MAGNIFICATION": "20",
+        "READER_LICENSE": "/hzztai/sdk/reader/license.dat",
+        "BASE_SLICE_DIR": "/mnt/wangqiang/server/10.168.100.21/ai/VAI",
+      }
+    },
     {
       "name": "SERVE TB",
       "type": "debugpy",
@@ -121,6 +148,39 @@
       "cwd": "/hzztai/slimai/_debug_/alias/projects/mtb/app/serve",
       "program": "reader/build.sh",
       "console": "integratedTerminal",
+    },
+    {
+      "name": "ALIGN",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai/projects/tct/flu_app/jupyter",
+      "program": "wsi_align.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "ENABLE_SLIDE_MPP_UNIFY": "False",
+        "ENABLE_PYRAMID_RESAMPLE": "True",
+        "ENABLE_SHRINK_ON_BOUNDARY": "True",
+        "ENV_SLIDE_UNIFY_MPP_RESOLUTION": "0.5",
+        "ENV_SLIDE_UNIFY_MPP_MAGNIFICATION": "20",
+        "READER_LICENSE": "/hzztai/sdk/reader/license.dat",
+      }
+    }, 
+    {
+      "name": "THCA",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai/thca/HZZT-AI/laMia-DL", 
+      "program": "workflow.py",
+      "console": "integratedTerminal",
+      "justMyCode": false, 
+      "args": [
+        "-f", "./tasks/thyroid_liquidbase/workflow.json", 
+        "-l", "bbb6d837", 
+      ], 
+      "env": {
+        "PYTHONPATH": "/hzztai/thca/HZZT-AI/mmdetection:/hzztai/thca/HZZT-AI/laMia-DL:/hzztai/thca/HZZT-AI/hzzt_file_mapping:/hzztai/thca/HZZT-AI/laMia-DL/modules/custom_pkgs:$PYTHONPATH",
+      }
     }
   ]
 }

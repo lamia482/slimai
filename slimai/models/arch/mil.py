@@ -3,7 +3,7 @@ import mmengine
 from typing import Union, Dict, List, Tuple
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import MODELS, build_model
-from slimai.helper.utils import PytorchNetworkUtils
+from slimai.helper.utils import PytorchNetworkUtils, get_cacher
 from slimai.helper import DataSample
 from .cls_arch import ClassificationArch
 
@@ -44,6 +44,7 @@ class MIL(ClassificationArch):
       print_log("Freezing backbone.")
       PytorchNetworkUtils.freeze(self.model.backbone)
     self.embedding_group_size = embedding_group_size
+    self.cacher = get_cacher()
     return
 
   def init_layers(self, backbone, neck, head) -> torch.nn.Module:
@@ -109,23 +110,24 @@ class MIL(ClassificationArch):
       return torch.cat(output, dim=0)
 
     meta = getattr(self, "meta")
-    backbone = meta.pop("embeddings", None) # pop out to save memory
 
-    if backbone is None:
-      # batch_data in shape (B, ~N, C, H, W)
-      backbone = list(map(forward_backbone, batch_data)) # (B, ~N, D)
-      if cache_embedding_list := meta.get("cache_embedding", None):
+    embedding_list = []
+    for vis_image, use_cache, embedding, embedding_key, visual_key in zip(
+      batch_data, meta["use_cache"], 
+      meta.pop("embedding"), # pop embedding from meta to avoid swanlab error
+      meta["embedding_key"], meta["visual_key"]
+    ):
+      if (not use_cache) or (embedding is None):
+        embedding = forward_backbone(vis_image)
+      embedding_list.append(embedding)
+      if not use_cache:
+        continue
+      if not self.cacher.has(embedding_key):
+        self.cacher.put(embedding_key, embedding)
+      if not self.cacher.has(visual_key):
+        self.cacher.put(visual_key, vis_image)
 
-        for vis_image, embedding, cache_embedding, cache_file, visual_file in zip(
-          batch_data, backbone, cache_embedding_list, 
-          meta.get("cache_file", []), meta.get("visual_file", [])):
-          if not cache_embedding:
-            continue
-          embeddings = self.dist.copy_cpu_offload_tensor(embedding)
-          mmengine.dump(dict(meta=dict(embeddings=embeddings)), cache_file)
-          vis_image = self.dist.copy_cpu_offload_tensor(vis_image)
-          mmengine.dump(dict(meta=dict(visual_image=vis_image)), visual_file, protocol=4)
-
+    backbone = embedding_list
     neck, atten_weights = self.model.neck(backbone) # type: ignore # (B, D)
     head = self.model.head(neck) # type: ignore # (B, C)
 

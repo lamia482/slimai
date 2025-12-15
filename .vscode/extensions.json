@@ -1,3 +1,6 @@
 {
-  "recommendations": []
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.debugpy"
+  ]
 }

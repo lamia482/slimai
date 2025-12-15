@@ -1,6 +1,5 @@
 import torch
 import cv2
-import mmengine
 from pathlib import Path
 from .visulizer import Visualizer
 from ..utils.scale_image import to_batch_numpy_image
@@ -12,10 +11,9 @@ from ..help_build import VISUALIZERS
 class MILVisualizer(Visualizer):
   def _visualize(self, image, target, output, class_names):
     if isinstance(image, (str, Path)):
-      image = mmengine.load(image) # cache from meta.visual_file
-      image = image["meta"]["visual_image"]
+      image = self.cacher.get(str(image))
 
-    patch_imgs = image
+    patch_imgs: torch.Tensor = image # type: ignore
     label = target["label"]
     pred_score = output["scores"]
     pred_label = output["labels"]

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "Hugging Face": {
+      "url": "https://hf.co/mcp",
+      "headers": {}
+    },
+    "Postman": {
+      "url": "https://mcp.postman.com/minimal",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    },
+    "Notion": {
+      "url": "https://mcp.notion.com/mcp",
+      "headers": {}
+    }
+  }
+}

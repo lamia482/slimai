@@ -1,17 +1,16 @@
-import hashlib
 import time
-import mmengine
-from pathlib import Path
 from .supervised_dataset import SupervisedDataset
 from slimai.helper.help_build import DATASETS
-from slimai.helper.common import CACHE_ROOT_DIR
+from slimai.helper.help_utils import print_log
+from slimai.helper.utils.cache import get_cacher
 
 
 @DATASETS.register_module()
 class MILDataset(SupervisedDataset):
   def __init__(self, *args, 
-               cache_embedding=False, 
-               cache_embedding_key="embeddings", 
+               use_cache=False, 
+               cache_embedding_key="embedding", 
+               cache_visual_key="visual",
                **kwargs):
     """
     Args:
@@ -19,8 +18,10 @@ class MILDataset(SupervisedDataset):
       cache_embedding_key: The key of the embedding in the data.
     """
     super().__init__(*args, **kwargs)
-    self.cache_embedding = cache_embedding
+    self.use_cache = use_cache
     self.cache_embedding_key = cache_embedding_key
+    self.cache_visual_key = cache_visual_key
+    self.cacher = get_cacher()
     return
 
   def select_sample(self, item):
@@ -29,9 +30,8 @@ class MILDataset(SupervisedDataset):
     {
       "image": None, 
       "meta": {
-        "embeddings": [
-          (B, D),
-        ]
+        "embedding": (B, D),
+        "visual": (H, W, 3),
       }, 
       "latency": {
         "embedding_cache_latency": latency,
@@ -39,43 +39,46 @@ class MILDataset(SupervisedDataset):
     }
     """
     file = self.files[item]
-    cache_file = Path(CACHE_ROOT_DIR, "dataset", self.__class__.__name__, "{}-{}.pkl".format(
-      hashlib.md5(file.encode(encoding="UTF-8")).hexdigest(), 
-      hashlib.md5(str(self.transform).encode(encoding="UTF-8")).hexdigest(), 
-    ))
-    vis_cache_file = Path(cache_file.as_posix().replace(".pkl", "_vis.pkl"))
+    embedding_cache_key = "+".join(map(str, [
+      "dataset", self.__class__.__name__, 
+      file, str(self.transform), self.cache_embedding_key
+    ]))
+    visual_cache_key = "+".join(map(str, [
+      "dataset", self.__class__.__name__, 
+      file, str(self.transform), self.cache_visual_key
+    ]))
 
-    if self.cache_embedding and cache_file.exists() and vis_cache_file.exists():
+    if self.use_cache and self.cacher.has(embedding_cache_key) and self.cacher.has(visual_cache_key):
       st = time.time()
-      data = mmengine.load(cache_file)
+      embedding = self.cacher.get(embedding_cache_key)
       latency = time.time() - st
       
-      assert (
-        self.cache_embedding_key in data["meta"]
-      ), f"Cache embedding key {self.cache_embedding_key} not found in data['meta']"
-      
-      data.update(dict(
+      data = dict(
         indice=item,
         image=None, 
         latency=dict(
           embedding_cache_latency=latency,
         ), 
-      ))
-      data["meta"].update(dict(
-        wsi_shrink=None, 
-        patch_num=-1, 
-        cache_embedding=self.cache_embedding,
-        visual_file=vis_cache_file.as_posix(),
-        cache_file=cache_file.as_posix(),
-      ))
+        meta=dict(
+          wsi_shrink=None, 
+          patch_num=-1, 
+          use_cache=self.use_cache,
+          visual_file=visual_cache_key,
+          embedding=embedding, 
+          embedding_key=embedding_cache_key,
+          visual_key=visual_cache_key,
+        )
+      )
       self.load_extra_keys(data, item)
     
     else:
       data = super().select_sample(item)
       data["meta"].update(dict(
-        cache_embedding=self.cache_embedding,
-        visual_file=vis_cache_file.as_posix(),
-        cache_file=cache_file.as_posix(),
+        use_cache=self.use_cache,
+        visual_file=visual_cache_key,
+        embedding=None, 
+        embedding_key=embedding_cache_key,
+        visual_key=visual_cache_key,
       ))
 
     return data

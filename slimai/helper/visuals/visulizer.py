@@ -2,10 +2,17 @@ from abc import abstractmethod
 from typing import Dict, Any, List
 from functools import partial
 from ..utils.select import recursive_select
-from ..help_utils import ProgressBar, get_dist_env
+from ..help_utils import ProgressBar
+from ..utils.cache import get_cacher
+from ..distributed import Distributed
 
 
 class Visualizer(object):
+  def __init__(self):
+    self.cacher = get_cacher()
+    self.dist = Distributed()
+    return
+
   @abstractmethod
   def _visualize(self, image, instance, output, class_names):
     raise NotImplementedError("Subclass of Visualizer must implement '_visualize' method")

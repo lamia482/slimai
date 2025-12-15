@@ -56,7 +56,12 @@ class KMIL(torch.nn.Module):
     weights = self.atten_weight(x) # [N, D] -> [N, 1]
     weights = weights.squeeze().sigmoid() # [N]
 
-    topk = max(1, int(weights.shape[0] * self.topk_percent))
+    # determine topk
+    if self.topk_percent >= 1 and isinstance(self.topk_percent, int):
+      topk = self.topk_percent
+    else:
+      topk = max(1, int(weights.shape[0] * self.topk_percent))
+    
     topk_scores, topk_indices = weights.topk(k=topk, dim=-1, largest=True) # select topk(maximum) indices
 
     x = x[topk_indices] * topk_scores.unsqueeze(-1) # [topk, D] # type: ignore

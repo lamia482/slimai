@@ -6,7 +6,21 @@
 * Email    :  wangqiang482@icloud.com
 * License  :  (C)Copyright 2024-2027, KFBIO
 """
-import os.path as osp
+
+### Set extra environment variables
+_EXTRA_ENV_ = {
+  "OPENCV_IO_MAX_IMAGE_PIXELS": "1099511627776", 
+}
+
+import os, os.path as osp
+
+for key, value in _EXTRA_ENV_.items():
+  if key in os.environ:
+    continue
+  os.environ[key] = value
+
+### Import slimai modules
+
 from . import (
   data, helper, models, runner
 )
@@ -32,7 +46,6 @@ def get_version():
   return version
 
 __version__ = get_version()
-__path__ = get_path()
 
 def check_env():
   import importlib
