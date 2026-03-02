@@ -19,14 +19,14 @@ class Record(object):
   Uses swanlab for experiment tracking and ensures only one process records data.
   """
 
-  def __init__(self, *, cfg: Optional[mmengine.Config] = None):
+  def __init__(self, *, cfg: Optional[mmengine.Config] = None, no_record: bool = False):
     """ no attribute will be changed after initialization, so it is safe to use singleton wrapper without classproperty
     Initialize the Record instance with configuration.
     
     Args:
       cfg: Configuration object containing experiment settings
     """
-    self._swanlab_ok = True
+    self._swanlab_ok = (not no_record)
 
     assert (
       cfg is not None
@@ -39,14 +39,14 @@ class Record(object):
       self.work_dir is not None
     ), "work_dir is not specified in config, please specify '_WORK_DIR_' in the config file or set 'work_dir' in CLI"
 
-    self.project_name = config.get("_PROJECT_", None)
+    self.project_name = config.get("project_name", config.get("_PROJECT_", None))
     assert (
       self.project_name is not None
     ), "project name is not specified in config, please specify '_PROJECT_' in the config file"
 
-    self.workspace = config.get("_WORKSPACE_", None)
+    self.workspace = config.get("workspace", config.get("_WORKSPACE_", None))
 
-    self.experiment_name = config.get("_EXPERIMENT_", None)
+    self.experiment_name = config.get("experiment_name", config.get("_EXPERIMENT_", None))
     assert (
       self.experiment_name is not None
     ), "experiment name is not specified in config, please specify '_EXPERIMENT_' in the config file or set 'config' in CLI"

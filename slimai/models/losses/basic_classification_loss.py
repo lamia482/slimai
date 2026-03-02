@@ -9,10 +9,13 @@ class BasicClassificationLoss(torch.nn.Module):
                cls_loss=dict(
                   type="torch.nn.CrossEntropyLoss",
                   label_smoothing=0.1,
-               )):
+               ), **kwargs):
     super().__init__()
     # Initialize classification loss
     self.cls_loss = build_loss(cls_loss)
+    self.extra_loss = {}
+    for k, v in kwargs.items():
+      self.extra_loss[k] = build_loss(v)
     return
   
   def forward(self, 
@@ -20,4 +23,7 @@ class BasicClassificationLoss(torch.nn.Module):
               targets: torch.Tensor) -> Dict[str, torch.Tensor]:
     # Compute classification loss
     cls_loss = self.cls_loss(logits, targets)
-    return dict(cls_loss=cls_loss)
+    result = dict(cls_loss=cls_loss)
+    for k, v in self.extra_loss.items():
+      result[k] = v(logits, targets)
+    return result

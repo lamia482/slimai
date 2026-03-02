@@ -8,19 +8,23 @@ from slimai.helper.help_build import MODELS
 
 @MODELS.register_module()
 class UMAP(torch.nn.Module):
-  def __init__(self, color_map):
+  def __init__(self, color_map, num_classs=2, **kwargs):
     super().__init__()
     self.color_map = color_map
+    self.num_classs = num_classs
+    self.kwargs = {
+      "n_neighbors": 200,
+      "min_dist": 0.5,
+      "random_state": 10482, 
+      "metric": "cosine", 
+      **kwargs
+    }
     return
   
   def forward(self, 
               embeddings: torch.Tensor, 
-              targets: torch.Tensor) -> matplotlib.figure.Figure: # type: ignore
-    obj = umap.UMAP(n_components=2, 
-                           n_neighbors=200,
-                           min_dist=0.5,
-                           random_state=10482, 
-                           metric='cosine')
+              targets: torch.Tensor) -> matplotlib.figure.Figure: # type: ignore    
+    obj = umap.UMAP(n_components=self.num_classs, **self.kwargs)
     result = obj.fit_transform(embeddings)
     result = torch.tensor(result)
 

@@ -4,13 +4,19 @@
   // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
+
     {
       "name": "Python Debugger: Current File",
       "type": "debugpy",
       "request": "launch",
       "program": "${file}",
       "console": "integratedTerminal",
-      "justMyCode": false
+      "justMyCode": false, 
+      "env": {
+        "ENABLE_SLIDE_MPP_UNIFY": "0",
+        "ENABLE_PYRAMID_RESAMPLE": "1",
+        "ENABLE_SHRINK_ON_BOUNDARY": "1",
+      }
     },
     {
       "name": "RUN",
@@ -158,9 +164,9 @@
       "console": "integratedTerminal",
       "justMyCode": false,
       "env": {
-        "ENABLE_SLIDE_MPP_UNIFY": "False",
-        "ENABLE_PYRAMID_RESAMPLE": "True",
-        "ENABLE_SHRINK_ON_BOUNDARY": "True",
+        "ENABLE_SLIDE_MPP_UNIFY": "1",
+        "ENABLE_PYRAMID_RESAMPLE": "1",
+        "ENABLE_SHRINK_ON_BOUNDARY": "1",
         "ENV_SLIDE_UNIFY_MPP_RESOLUTION": "0.5",
         "ENV_SLIDE_UNIFY_MPP_MAGNIFICATION": "20",
         "READER_LICENSE": "/hzztai/sdk/reader/license.dat",
@@ -180,6 +186,23 @@
       ], 
       "env": {
         "PYTHONPATH": "/hzztai/thca/HZZT-AI/mmdetection:/hzztai/thca/HZZT-AI/laMia-DL:/hzztai/thca/HZZT-AI/hzzt_file_mapping:/hzztai/thca/HZZT-AI/laMia-DL/modules/custom_pkgs:$PYTHONPATH",
+      }
+    }, 
+    {
+      "name": "THCA-MIL-Current",
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "/hzztai/slimai/_debug_/thca", 
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": false, 
+      "env": {
+        "ENABLE_SLIDE_MPP_UNIFY": "False",
+        "ENABLE_PYRAMID_RESAMPLE": "True",
+        "ENABLE_SHRINK_ON_BOUNDARY": "True",
+        "ENV_SLIDE_UNIFY_MPP_RESOLUTION": "0.5",
+        "ENV_SLIDE_UNIFY_MPP_MAGNIFICATION": "20",
+        "READER_LICENSE": "/hzztai/sdk/reader/license.dat",
       }
     }
   ]

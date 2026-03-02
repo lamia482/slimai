@@ -20,6 +20,7 @@ class ABMIL(torch.nn.Module):
   """
   def __init__(self, *, input_dim, hidden_dim, 
                dropout=0.1, attention=None, 
+               keep_size_hat=False, attention_temperature=1.0,
                **kwargs):
     """
     Initialize the ABMIL module.
@@ -32,13 +33,14 @@ class ABMIL(torch.nn.Module):
       **kwargs: Additional arguments
     """
     super().__init__()
+    self.keep_size_hat = keep_size_hat
+    self.attention_temperature = attention_temperature
     self.input_dim = input_dim
     self.dropout = torch.nn.Dropout(dropout)
     assert (
       attention in [None, "gated"]
     ), "attention must be None or 'gated', but got {}".format(attention)
     self.attention = attention
-    
     # Attention mechanism - V branch (tanh activation)
     self.attention_V = torch.nn.Sequential(
         torch.nn.Linear(input_dim, hidden_dim), 
@@ -77,6 +79,7 @@ class ABMIL(torch.nn.Module):
 
     for _x in x:
       _x = _x.view(-1, self.input_dim) # convert [N*K] or [N, K] to [N, K]
+      N = len(_x)
       embeddings = _x.unsqueeze(0) # [1, N, K]
       
       # Compute attention scores
@@ -91,14 +94,23 @@ class ABMIL(torch.nn.Module):
       # Compute final attention weights
       A_W = self.attention_W(A) # [1, N, 1]
       A_W = self.dropout(A_W)
-      A_W = A_W.transpose(1, 2).softmax(-1) # [1, 1, N] - normalize with softmax
+      A_W = A_W.transpose(1, 2)
+      if self.attention_temperature is not None:
+        A_W = A_W / self.attention_temperature # scale by temperature
+        A_W = A_W.softmax(-1) # [1, 1, N] - normalize with softmax
+      else:
+        A_W = A_W.sigmoid() # [1, 1, N] - sigmoid activation
+        
       batch_attentions_weights.append(A_W.squeeze())
       
       # Compute weighted average of embeddings
       Z = torch.bmm(A_W, embeddings) # [1, 1, K] - batch matrix multiplication
       Z = Z.squeeze() # [K]
+      if self.keep_size_hat:
+        size_feat = torch.log10(torch.tensor([N]).float()).to(Z.device)  # [1]
+        Z = torch.cat([Z, size_feat], dim=0)    # [K+1]
       batch_embeddings.append(Z)
 
-    batch_embeddings = torch.stack(batch_embeddings) # [B, K]
+    batch_embeddings = torch.stack(batch_embeddings) # [B, K(+1)]
 
     return batch_embeddings, batch_attentions_weights
