@@ -3,7 +3,7 @@ from .vit import ViT
 from .mlp import MLP
 from .plugin import Plugin
 from .abmil import ABMIL
-from .kmil import KMIL, WMIL, SortWMIL, THCAHeadC3, THCAHeadM3
+from .kmil import KMIL, WMIL, SortWMIL, THCAHeadC3, THCAHeadC3BRAF
 
 
 __all__ = [
@@ -15,5 +15,5 @@ __all__ = [
   "KMIL",
   "WMIL", 
   "SortWMIL", 
-  "THCAHeadC3", "THCAHeadM3", 
+  "THCAHeadC3", "THCAHeadC3BRAF", 
 ]

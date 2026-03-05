@@ -161,26 +161,20 @@ class MIL(ClassificationArch):
       atten_weights, cls_logits = batch_data
     
     super()._postprocess(cls_logits, batch_info)
-    
-    topk = 8*8 # topk indices to visualize
-    atten_topk = [
-      al.topk(k=topk, dim=-1, largest=True) # select topk(maximum) indices
-      for al in atten_weights
-    ]
-    atten_tailk = [
-      al.topk(k=topk, dim=-1, largest=False) # select tailk(minimum) indices
-      for al in atten_weights
-    ]
 
-    topk_scores, topk_indices = list(map(list, zip(*atten_topk)))
-    tailk_scores, tailk_indices = list(map(list, zip(*atten_tailk)))
-
-    batch_info.output.update(dict(
-      topk_atten_indices=topk_indices, # [B, topk]
-      topk_atten_scores=topk_scores, # [B, topk]
-      tailk_atten_indices=tailk_indices, # [B, tailk]
-      tailk_atten_scores=tailk_scores, # [B, tailk]
-    ))
+    # Only compute topk/tailk when attention weights are tensors (e.g. ABMIL); WMIL returns list of lists
+    if atten_weights and all(torch.is_tensor(al) for al in atten_weights):
+      topk = 8*8
+      atten_topk = [al.topk(k=min(topk, al.shape[-1]), dim=-1, largest=True) for al in atten_weights]
+      atten_tailk = [al.topk(k=min(topk, al.shape[-1]), dim=-1, largest=False) for al in atten_weights]
+      topk_scores, topk_indices = list(map(list, zip(*atten_topk)))
+      tailk_scores, tailk_indices = list(map(list, zip(*atten_tailk)))
+      batch_info.output.update(dict(
+        topk_atten_indices=topk_indices,
+        topk_atten_scores=topk_scores,
+        tailk_atten_indices=tailk_indices,
+        tailk_atten_scores=tailk_scores,
+      ))
 
     return batch_info
   

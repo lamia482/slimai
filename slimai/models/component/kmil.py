@@ -283,7 +283,7 @@ class THCAHeadC3(torch.nn.Module):
 
 
 @MODELS.register_module()
-class THCAHeadM3(torch.nn.Module):
+class THCAHeadC3BRAF(THCAHeadC3):
   """ THCAHeadC3: A head for THCA classification with 3 classes (C0, C1, C2)
   The head consists of two separate MLPs:
   - cls_head: for classifying into 3 classes (C0, C1, C2)
@@ -295,30 +295,18 @@ class THCAHeadM3(torch.nn.Module):
   def __init__(self, *, 
                input_dim, output_dim, hidden_dim=2048, bottleneck_dim=512, 
                n_layer=3, act="gelu", norm=None, dropout=None):
-    assert (
-      output_dim == 3
-    ), "output_dim must be 3 for THCAHeadC3, but got {}".format(output_dim)
-    super().__init__()
-    self.c0_head = self.MLP(input_dim=input_dim, output_dim=1, 
-                            hidden_dim=hidden_dim, bottleneck_dim=bottleneck_dim, 
-                            n_layer=n_layer, act=act, norm=norm, dropout=dropout)
-    self.c1_head = self.MLP(input_dim=input_dim, output_dim=1, 
-                            hidden_dim=hidden_dim, bottleneck_dim=bottleneck_dim, 
-                            n_layer=n_layer, act=act, norm=norm, dropout=dropout)
-    self.c2_head = self.MLP(input_dim=input_dim, output_dim=1, 
-                            hidden_dim=hidden_dim, bottleneck_dim=bottleneck_dim, 
-                            n_layer=n_layer, act=act, norm=norm, dropout=dropout)
-    self.cls_head = self.MLP(input_dim=input_dim, output_dim=3, 
-                             hidden_dim=hidden_dim, bottleneck_dim=bottleneck_dim, 
-                             n_layer=n_layer, act=act, norm=norm, dropout=dropout)
+    super().__init__(input_dim=input_dim, output_dim=output_dim, 
+                     hidden_dim=hidden_dim, bottleneck_dim=bottleneck_dim, 
+                     n_layer=n_layer, act=act, norm=norm, dropout=dropout)
+    self.braf_head = self.MLP(input_dim=input_dim, output_dim=2, 
+                              hidden_dim=hidden_dim, bottleneck_dim=bottleneck_dim, 
+                              n_layer=n_layer, act=act, norm=norm, dropout=dropout)
     return
   
   def forward(self, x):
-    c0_logits = self.c0_head(x) # [B, 1]
-    c1_logits = self.c1_head(x) # [B, 1]
-    c2_logits = self.c2_head(x) # [B, 1]
-
-    cls_logits = torch.cat([c0_logits, c1_logits, c2_logits], dim=-1) # [B, 3]
-    cls_prob = cls_logits.sigmoid() # [B, 3]
-
-    return cls_logits
+    braf_logits = self.braf_head(x) # [B, 2]
+    c3_logits = super().forward(x) # [B, 3]
+    return dict(
+      c3_logits=c3_logits,
+      braf_logits=braf_logits,
+    )

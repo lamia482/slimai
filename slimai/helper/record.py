@@ -69,6 +69,9 @@ class Record(object):
     self.log_loss_precision = logger.get("log_loss_precision", self.log_precision)
     self.log_latency_precision = logger.get("log_latency_precision", self.log_precision)
 
+    # keys that caused swanlab chart error (e.g. None / invalid type); skip in subsequent steps
+    self._swanlab_skip_keys = set()
+
     # only one process across all nodes&ranks should record
     if not self.should_record:
       return
@@ -158,12 +161,20 @@ class Record(object):
 
     return log_data, msg
   
+  def _swanlab_value_ok(self, value: Any) -> bool:
+    """Return True if value is a type swanlab charts accept (int, float, bool, str, Image, Text)."""
+    if value is None:
+      return False
+    if isinstance(value, (int, float, bool, str)):
+      return True
+    if type(value).__name__ in ("Image", "Text") and getattr(value, "__module__", "").startswith("swanlab"):
+      return True
+    return False
+
   def log_step_data(self, data: Dict[str, Any], phase: Optional[str] = None, step: Optional[int] = None):
     """
     Log metrics and other data to swanlab.
-    
-    Args:
-      data: Dictionary of metrics to log
+    Keys that cause chart errors (e.g. None or invalid type) are recorded and skipped in subsequent steps.
     """
     if not self.should_record:
       return
@@ -175,7 +186,24 @@ class Record(object):
 
     data, _ = self.format(data) # type: ignore
 
-    return swanlab.log(data, step=step) # type: ignore
+    filtered = {}
+    newly_skipped = []
+    for key, value in data.items():
+      if key in self._swanlab_skip_keys:
+        continue
+      if not self._swanlab_value_ok(value):
+        self._swanlab_skip_keys.add(key)
+        newly_skipped.append(key)
+        continue
+      filtered[key] = value
+    if newly_skipped and not getattr(self, "_swanlab_skip_keys_logged", False):
+      display = newly_skipped if len(newly_skipped) <= 20 else newly_skipped[:20] + [f"... and {len(newly_skipped) - 20} more"]
+      print_log(f"swanlab: skip keys (invalid type or None), will skip in subsequent steps: {display}", level="WARNING")
+      self._swanlab_skip_keys_logged = True
+
+    if not filtered:
+      return
+    return swanlab.log(filtered, step=step) # type: ignore
   
   def check_visualize_batch(self, output, step):
     if not self.should_record:

@@ -121,7 +121,7 @@
       "console": "integratedTerminal",
       "justMyCode": false,
       "env": {
-        "ENABLE_SLIDE_MPP_UNIFY": "1",
+        "ENABLE_SLIDE_MPP_UNIFY": "0",
         "ENABLE_PYRAMID_RESAMPLE": "1",
         "ENABLE_SHRINK_ON_BOUNDARY": "1",
         "ENV_SLIDE_UNIFY_MPP_RESOLUTION": "0.5, 0.5",

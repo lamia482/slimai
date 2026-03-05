@@ -32,7 +32,7 @@ def parse_args():
   parser.add_argument("--device", type=str, default="cuda", help="the device to use")
   parser.add_argument("--timeout", type=int, default=3600, 
                       help="the timeout of the distributed environment")
-  parser.add_argument("--seed", type=int, default=None, 
+  parser.add_argument("--seed", type=int, default=10482, 
                       help="the seed to use")
   # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
   # will pass the `--local-rank` parameter instead of `--local_rank`.

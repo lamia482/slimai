@@ -404,14 +404,14 @@ class Runner(object):
     help_utils.print_log(f"Parsed Config: \n{self.cfg.dump()}")
     help_utils.print_log(f"Dumped config to: {dst_config_file}")
 
-    # archive source code
+    # archive source code (exclude experiments so we do not copy work_dir into itself)
     try:
       source_code_dir = slimai.get_package_path()
       dst_source_code_dir = self.work_dir / "code"
-      shutil.copytree(source_code_dir, dst_source_code_dir, 
+      shutil.copytree(source_code_dir, dst_source_code_dir,
                       dirs_exist_ok=True,
                       ignore=shutil.ignore_patterns(
-                        "*.pyc", ".git*", "._*", "_debug_" # ignore git and python cache
+                        "*.pyc", ".git*", "._*", "_debug_", "experiments", "swanlog"
                       ))
     except Exception as e:
       help_utils.print_log(f"Error archiving source code: {e}", level="ERROR")
