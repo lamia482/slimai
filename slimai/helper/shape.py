@@ -73,7 +73,7 @@ def segment_background_mask(image,
 
 def find_patch_region_from_mask(mask, 
                                 patch_size, 
-                                patch_stride=None, 
+                                patch_stride=0.8, 
                                 min_ratio=0.05):
   """
   Args:
@@ -90,10 +90,16 @@ def find_patch_region_from_mask(mask,
 
   if patch_stride is None:
     patch_stride = patch_size
+  elif isinstance(patch_stride, float):
+    patch_stride = (patch_stride * patch_height, patch_stride * patch_width)
 
   if not isinstance(patch_stride, (tuple, list)):
     patch_stride = (patch_stride, patch_stride)
   patch_stride_height, patch_stride_width = patch_stride
+
+  patch_height, patch_width, patch_stride_height, patch_stride_width = list(
+    map(int, [patch_height, patch_width, patch_stride_height, patch_stride_width])
+  )
 
   mask = mask * 1.0
   mask_height, mask_width = mask.shape[:2]

@@ -310,3 +310,63 @@ class THCAHeadC3BRAF(THCAHeadC3):
       c3_logits=c3_logits,
       braf_logits=braf_logits,
     )
+
+@MODELS.register_module()
+class THCAHeadC3BRAFAware(THCAHeadC3BRAF):
+  def forward(self, x):
+    """
+    基于条件概率融合BRAF预测与C3三分类预测：
+      - C3分类: C0, C1, C2
+      - BRAF分类: BRAF-, BRAF+
+      新策略：
+        P(C2|X) = P(C2|X) * P(BRAF+|X)
+        P(C0|X) = P(C0|X) * P(BRAF-|X)
+        （P(C1|X)可直接用原始C1概率，或做归一化）
+      最终归一化得到调整后的三分类概率。
+    """
+    rst = super().forward(x)
+    braf_logits = rst["braf_logits"]    # [B, 2]
+    c3_logits = rst["c3_logits"]        # [B, 3]
+
+    braf_prob = braf_logits.softmax(dim=-1)  # [B, 2]
+    c3_prob = c3_logits.softmax(dim=-1)      # [B, 3]
+
+    # 条件概率融合
+    new_c3_prob = c3_prob.clone()
+    new_c3_prob[:, 0] = c3_prob[:, 0] * braf_prob[:, 0]  # C0 × BRAF-
+    new_c3_prob[:, 2] = c3_prob[:, 2] * braf_prob[:, 1]  # C2 × BRAF+
+    # 可选地，C1不结合BRAF，仅靠自身置信
+    new_c3_prob[:, 1] = c3_prob[:, 1] * braf_prob[:, 0]
+    # 最终归一化
+    new_c3_prob = new_c3_prob / (new_c3_prob.sum(dim=-1, keepdim=True) + 1e-8)
+    new_c3_logits = torch.log(new_c3_prob + 1e-8)
+
+    return dict(
+      c3_logits=new_c3_logits,
+      braf_logits=braf_logits,
+    )
+
+
+# ✅ 解决方案：动态权重（Dynamic Weighting）
+# 参考：Multi-Task Learning Using Uncertainty to Weigh Losses (CVPR 2018)
+@MODELS.register_module()
+class DynamicWeighting(torch.nn.Module):
+  """ DynamicWeighting: A module for dynamically weighting the loss of two tasks
+  The loss of two tasks are weighted by the precision of the loss, which is estimated by the variance of the loss.
+  The precision is estimated by the variance of the loss, which is estimated by the variance of the loss.
+  The precision is estimated by the variance of the loss, which is estimated by the variance of the loss.
+  """
+  def __init__(self):
+    super().__init__()
+    self.log_var_A = torch.nn.Parameter(torch.tensor(0.))
+    self.log_var_B = torch.nn.Parameter(torch.tensor(0.))
+    return
+  
+  def forward(self, loss_A, loss_B):
+    precision_A = torch.exp(-self.log_var_A)
+    precision_B = torch.exp(-self.log_var_B)
+    
+    weighted_loss_A = precision_A * loss_A + 0.5 * self.log_var_A
+    weighted_loss_B = precision_B * loss_B + 0.5 * self.log_var_B
+    
+    return weighted_loss_A + weighted_loss_B
