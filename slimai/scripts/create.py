@@ -355,11 +355,14 @@ def main():
     # write to h5 file
     logger.info(f"Write to h5 file...")
     with h5py.File(out_path, "w") as fp:
-      fp.create_dataset("features", data=embeddings, dtype=np.float32)
-      fp.create_dataset("coords", data=coords, dtype=np.float32)
-      fp.create_dataset("vis", data=vis, dtype=np.uint8)
       fp.attrs["wsi_file"] = wsi_file
       fp.attrs["wsi_md5"] = hashlib.md5(wsi_file.encode()).hexdigest()
+      fp.attrs["embedding_model"] = args.model_name
+      fp.attrs["embedding_tag"] = embedding_tag
+      fp.create_dataset("tissue", data=vis, dtype=np.uint8)
+      fp.create_dataset("embeddings", data=embeddings, dtype=np.float32)
+      fp.create_dataset("coords", data=coords, dtype=np.float32)
+      fp.create_dataset("attentions", data=np.zeros(0), dtype=np.float32)
 
     pbar.update()
 
