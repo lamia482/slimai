@@ -208,6 +208,24 @@ def _resolve_out_path(out_dir, wsi_file, embedding_tag):
   stem = Path(wsi_file).stem
   return (out_dir_path / f"{stem}.wsi_feat_{embedding_tag}.h5").as_posix()
 
+def _append_record_to_xlsx(output_file, *, wsi_file, wsi_md5, h5_path):
+  output_path = Path(output_file)
+  output_path.parent.mkdir(parents=True, exist_ok=True)
+  columns = ["wsi_file", "wsi_md5", "h5_path"]
+
+  if output_path.exists():
+    df = pd.read_excel(output_path)
+    for col in columns:
+      if col not in df.columns:
+        df[col] = ""
+    df = df[columns]
+  else:
+    df = pd.DataFrame(columns=columns) # type: ignore
+
+  df.loc[len(df)] = [wsi_file, wsi_md5, h5_path]
+  df.to_excel(output_path, index=False)
+  return
+
 def _worker_run(
   *,
   task,
@@ -261,6 +279,7 @@ def parse_args():
   parser.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
   parser.add_argument("--min-tissue-ratio", type=float, default=0.05, help="Minimum tissue ratio for tissue shrink.")
   parser.add_argument("--tissue-shrink", type=str, default="tissue", help="Tissue shrink method.")
+  parser.add_argument("--output", default=None, help="Path to xlsx record file, e.g. record.xlsx.")
   return parser.parse_args()
 
 @dataclass(frozen=True)
@@ -356,13 +375,23 @@ def main():
     logger.info(f"Write to h5 file...")
     with h5py.File(out_path, "w") as fp:
       fp.attrs["wsi_file"] = wsi_file
-      fp.attrs["wsi_md5"] = hashlib.md5(wsi_file.encode()).hexdigest()
+      with open(wsi_file, "rb") as f:
+        wsi_md5 = hashlib.md5(f.read()).hexdigest()
+      fp.attrs["wsi_md5"] = wsi_md5
       fp.attrs["embedding_model"] = args.model_name
       fp.attrs["embedding_tag"] = embedding_tag
       fp.create_dataset("tissue", data=vis, dtype=np.uint8)
       fp.create_dataset("embeddings", data=embeddings, dtype=np.float32)
       fp.create_dataset("coords", data=coords, dtype=np.float32)
       fp.create_dataset("attentions", data=np.zeros(0), dtype=np.float32)
+
+    if args.output is not None:
+      _append_record_to_xlsx(
+        args.output,
+        wsi_file=wsi_file,
+        wsi_md5=wsi_md5,
+        h5_path=out_path,
+      )
 
     pbar.update()
 
@@ -372,7 +401,7 @@ if __name__ == "__main__":
 
   if len(sys.argv) == 1:
     sys.argv.extend([
-      "--input-file", "/.slimai/cache/wsi-group-in-multiple-formats/goods/B2025049786A.sdpc", 
+      "--input-file", "/.slimai/cache/wsi-group-in-multiple-formats/goods/T2020-14513-20X-KFB.kfb", 
       "--model-name", "UNI", 
       "--tag", "debug", 
       "--out-dir", "/hzztai/slimai/_debug_/rst", 
