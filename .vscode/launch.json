@@ -17,6 +17,7 @@
         "ENABLE_SLIDE_MPP_UNIFY": "0",
         "ENABLE_PYRAMID_RESAMPLE": "1",
         "ENABLE_SHRINK_ON_BOUNDARY": "1",
+        "HF_ENDPOINT": "https://hf-mirror.com", 
       }
     },
     {

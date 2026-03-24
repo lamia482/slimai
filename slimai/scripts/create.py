@@ -1,7 +1,6 @@
 import argparse
 import hashlib
 import concurrent.futures
-import importlib
 import os.path as osp
 import sys
 import cv2
@@ -10,6 +9,9 @@ import pandas as pd
 import h5py
 import numpy as np
 import torch
+import timm
+from timm.data.config import resolve_data_config
+from timm.data.transforms_factory import create_transform
 from loguru import logger
 from typing import Callable
 from dataclasses import dataclass
@@ -67,25 +69,50 @@ class PatchDataset(Dataset):
     patch = Image.fromarray(patch[..., ::-1])
     return self.transform(patch)
 
-def build_inference_model(model_name, model_repo, *, device_id):
-  MODEL_IMPORT_DICT = {
+def build_encoder(patch_encoder_name, slide_encoder_name, *, device_id):
+  PATCH_ENCODER_DICT = {
     "UNI": dict(
-      repo="/hzztai/projects/research/aigc/jupyter/pathology_fms",
-      module="uni",
-      helper="UNIHelper",
-      k_dim=1024,
+      name="hf_hub:MahmoodLab/UNI", 
+      kwargs=dict(
+        init_values=1e-5,
+        dynamic_img_size=True,
+      )
+    ), 
+    "UNI2": dict(
+      name="hf_hub:MahmoodLab/UNI2-h", 
+      kwargs=dict(
+        img_size=224,
+        patch_size=14,
+        depth=24,
+        num_heads=24,
+        init_values=1e-5,
+        embed_dim=1536,
+        mlp_ratio=2.66667*2,
+        num_classes=0,
+        no_embed_class=True,
+        mlp_layer=timm.layers.SwiGLUPacked, # type: ignore
+        act_layer=torch.nn.SiLU,
+        reg_tokens=8,
+        dynamic_img_size=True,
+      )
     )
   }
-  model_info: dict = MODEL_IMPORT_DICT[model_name]
-  if model_repo is None:
-    model_repo = model_info["repo"]
-  if model_repo not in sys.path:
-    sys.path.append(model_repo)
-  ModelHelper = getattr(importlib.import_module(model_info["module"]), model_info["helper"])
-  torch.get_device_module(accelerator).set_device(device_id) # bind device to accelerator
-  logger.info(f"Build {model_name} model on device: {accelerator}:{device_id}")
-  feature_extractor, transform = ModelHelper.build_model() # type: ignore
-  return feature_extractor.to(f"{accelerator}:{device_id}").eval(), transform, model_info["k_dim"]
+
+  def _build_encoder_from_huggingface(name, kwargs, cache_dir="/.slimai/cache/huggingface/hub"):
+    model = timm.create_model(name, pretrained=True, **kwargs, cache_dir=cache_dir) # type: ignore
+    transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
+    model.eval()
+    num_features = model.num_features
+    return model, transform, num_features
+
+  patch_encoder, transform, k_dim = _build_encoder_from_huggingface(PATCH_ENCODER_DICT[patch_encoder_name]["name"], PATCH_ENCODER_DICT[patch_encoder_name]["kwargs"])
+  slide_encoder = None
+
+  patch_encoder = patch_encoder.to(f"{accelerator}:{device_id}").eval()
+  if slide_encoder is not None:
+    slide_encoder = slide_encoder.to(f"{accelerator}:{device_id}").eval()
+
+  return patch_encoder, transform, k_dim, slide_encoder
 
 def get_tissue_region(wsi_file, *, read_scale=20, operate_scale=1.25, 
                       patch_size_h=224, patch_size_w=224, 
@@ -131,7 +158,7 @@ def get_tissue_region(wsi_file, *, read_scale=20, operate_scale=1.25,
     output["vis"] = vis # commit vis to vis_scale
   return output
 
-def run_inference(model, transform, wsi_file, coords, args, *, device):
+def run_inference(patch_encoder, slide_encoder, transform, wsi_file, coords, args, *, device):
   dataset = PatchDataset(
     wsi_file=wsi_file,
     coords=coords,
@@ -151,7 +178,11 @@ def run_inference(model, transform, wsi_file, coords, args, *, device):
   for batch in tqdm(loader, desc=f"Infer<{Path(wsi_file).stem}> on {device}", leave=False):
     batch = batch.to(device)
     with torch.inference_mode():
-      output = model(batch).cpu()
+      output = patch_encoder(batch).cpu()
+    outputs.append(output)
+  if slide_encoder is not None:
+    with torch.inference_mode():
+      output = slide_encoder(torch.cat(outputs, dim=0).to(device)).cpu()
     outputs.append(output)
   return outputs
 
@@ -178,10 +209,11 @@ def _read_wsi_files(input_file, wsi_col):
   except:
     pass
 
-  if suffix == ".csv":
-    df = pd.read_csv(input_path)
-  elif suffix in [".xlsx", ".xls"]:
-    df = pd.read_excel(input_path)
+  *sheet_name, wsi_col = wsi_col.rsplit(":", 1)
+  sheet_name = None if len(sheet_name) == 0 else sheet_name[0]
+
+  if suffix in [".xlsx", ".xls"]:
+    df = pd.read_excel(input_path, sheet_name=sheet_name)
   else:
     raise ValueError(f"Unsupported --input-file suffix: {suffix}")
 
@@ -211,7 +243,7 @@ def _resolve_out_path(out_dir, wsi_file, embedding_tag):
 def _append_record_to_xlsx(output_file, *, wsi_file, wsi_md5, h5_path):
   output_path = Path(output_file)
   output_path.parent.mkdir(parents=True, exist_ok=True)
-  columns = ["wsi_file", "wsi_md5", "h5_path"]
+  columns = ["wsi_file", "wsi_md5", "h5_path", "patch_num"]
 
   if output_path.exists():
     df = pd.read_excel(output_path)
@@ -250,21 +282,27 @@ def _worker_run(
   )
 
   outputs = run_inference(
-    task.model, task.transform, task.wsi_file, task.coords_chunk, args, device=device
+    task.patch_encoder, task.slide_encoder, task.transform, 
+    task.wsi_file, task.coords_chunk, args, device=device
   )
   return torch.cat(outputs, dim=0).numpy() if len(outputs) > 0 else np.zeros([0, task.k_dim])
 
 def parse_args():
   parser = argparse.ArgumentParser(description="Create WSI embedding h5 files.")
-  parser.add_argument("--input-file", required=True, help="WSI file or Path to input csv/xlsx.")
+  parser.add_argument("--input-file", required=True, help="WSI file or Path to input xlsx/xls.")
   parser.add_argument("--wsi-col", dest="wsi_col", default="wsi_file", help="Column name for wsi file path.")
   parser.add_argument(
-    "--model-name",
-    required=True,
-    choices=["UNI", "CytoKD", "CervicalKF"],
-    help="Foundation model name.",
+    "--patch-encoder", required=True, help="Patch encoder name.",
+    choices=[
+      "UNI", "UNI2", "CONCH", "CONCHV1_5", 
+    ]
   )
-  parser.add_argument("--model-repo", default=None, help="External repository path for model helper.")
+  parser.add_argument(
+    "--slide-encoder", required=False, help="Slide encoder name.",
+    choices=[
+      "TITAN", 
+    ] 
+  )
   parser.add_argument("--tag", required=True, help="User-specified embedding tag.")
   parser.add_argument("--out-dir", required=True, help="Output directory (flat outputs).")
   parser.add_argument("--devices", default=None, help="Comma-separated device ids, e.g. 0,1,2,3")
@@ -287,7 +325,8 @@ class _ChunkTask:
   wsi_file: str
   coords_chunk: np.ndarray
   chunk_index: int
-  model: torch.nn.Module
+  slide_encoder: torch.nn.Module
+  patch_encoder: torch.nn.Module
   transform: Callable
   k_dim: int
 
@@ -295,8 +334,6 @@ def main():
   args = parse_args()
 
   embedding_tag = args.tag
-  if args.to_gray:
-    embedding_tag = embedding_tag + "_GRAY"
 
   # extract wsi file list from input file or excel file
   wsi_files = _read_wsi_files(args.input_file, args.wsi_col)
@@ -307,14 +344,15 @@ def main():
   devices = _parse_devices(args.devices)
   if len(devices) == 0:
     raise ValueError("No devices specified. Use --devices 0 or --devices 0,1,...")
-  model_engines = []
+  model_engines = dict()
   for device_id in devices:
-    model, transform, k_dim = build_inference_model(args.model_name, args.model_repo, device_id=device_id)
-    model_engines.append(dict(model=model, transform=transform, k_dim=k_dim))
+    patch_encoder, transform, k_dim, slide_encoder = build_encoder(args.patch_encoder, args.slide_encoder, device_id=device_id)
+    model_engines[device_id] = dict(slide_encoder=slide_encoder, patch_encoder=patch_encoder, transform=transform, k_dim=k_dim)
 
   pbar = tqdm(wsi_files)
   for wsi_file in wsi_files:
-    pbar.set_description("Inference {} as tag: '{}' by {}".format(osp.basename(wsi_file), embedding_tag, args.model_name))
+    pbar.set_description("Inference {} as tag: '{}' by '{}+{}'".format(
+      osp.basename(wsi_file), embedding_tag, args.patch_encoder, args.slide_encoder))
     out_path = _resolve_out_path(args.out_dir, wsi_file, embedding_tag)
     if args.skip_existing and osp.exists(out_path):
       pbar.update()
@@ -342,7 +380,7 @@ def main():
     coords, vis = output["coords"], output["vis"]
     chunks = [c for c in np.array_split(coords, len(devices)) if len(c) > 0]
     for chunk_index, coords_chunk in enumerate(chunks):
-      device_id = chunk_index % len(devices)
+      device_id = devices[chunk_index % len(devices)]
       buckets[device_id] = _ChunkTask(
         wsi_file=wsi_file, coords_chunk=coords_chunk, chunk_index=chunk_index, 
         **model_engines[device_id])
@@ -350,8 +388,10 @@ def main():
     # submit tasks
     logger.info(f"Submit tasks...")
     futures = []
-    ctx = torch.multiprocessing.get_context("spawn")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=len(devices), mp_context=ctx) as ex:
+    with concurrent.futures.ThreadPoolExecutor(
+      max_workers=len(devices), 
+      # mp_context=torch.multiprocessing.get_context("spawn")
+      ) as ex:
       for device_id, device_task in buckets.items():
         fut = ex.submit(_worker_run,
           task=device_task,
@@ -378,12 +418,13 @@ def main():
       with open(wsi_file, "rb") as f:
         wsi_md5 = hashlib.md5(f.read()).hexdigest()
       fp.attrs["wsi_md5"] = wsi_md5
-      fp.attrs["embedding_model"] = args.model_name
-      fp.attrs["embedding_tag"] = embedding_tag
+      fp.attrs["patch_encoder"] = args.patch_encoder
+      fp.attrs["slide_encoder"] = args.slide_encoder
+      fp.attrs["patch_embedding_tag"] = embedding_tag
       fp.create_dataset("tissue", data=vis, dtype=np.uint8)
-      fp.create_dataset("embeddings", data=embeddings, dtype=np.float32)
-      fp.create_dataset("coords", data=coords, dtype=np.float32)
-      fp.create_dataset("attentions", data=np.zeros(0), dtype=np.float32)
+      fp.create_dataset("patch_coords", data=coords, dtype=np.float32)
+      fp.create_dataset("patch_embeddings", data=embeddings, dtype=np.float32)
+      fp.create_dataset("patch_attentions", data=np.zeros(0), dtype=np.float32)
 
     if args.output is not None:
       _append_record_to_xlsx(
@@ -400,12 +441,25 @@ def main():
 if __name__ == "__main__":
 
   if len(sys.argv) == 1:
+    # sys.argv.extend([
+    #   "--input-file", "/.slimai/cache/wsi-group-in-multiple-formats/goods/T2020-14513-20X-KFB.kfb", 
+    #   "--patch-encoder", "UNI", 
+    #   "--slide-encoder", "TITAN", 
+    #   "--tag", "debug", 
+    #   "--out-dir", "/hzztai/slimai/_debug_/rst", 
+    #   "--devices", "1",
+    #   "--operate-scale", "1.25",
+    # ])
     sys.argv.extend([
-      "--input-file", "/.slimai/cache/wsi-group-in-multiple-formats/goods/T2020-14513-20X-KFB.kfb", 
-      "--model-name", "UNI", 
-      "--tag", "debug", 
-      "--out-dir", "/hzztai/slimai/_debug_/rst", 
-      "--devices", "0",
+      "--input-file", "/hzztai/slimai/_debug_/thca/embeddings/merged_dataset_by_center.xlsx", 
+      "--wsi-col", "厦大中山:wsi_file", 
+      "--patch-encoder", "UNI", 
+      "--slide-encoder", "TITAN", 
+      "--tag", "UNI_GRAY",
+      "--to-gray", 
+      "--out-dir", "/hzztai/slimai/_debug_/thca/embeddings/xiamen", 
+      "--output", "/hzztai/slimai/_debug_/thca/embeddings/xiamen/record.xlsx", 
+      "--devices", "1",
       "--operate-scale", "1.25",
     ])
 
