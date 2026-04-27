@@ -60,12 +60,16 @@ class Checkpoint(object):
     self.keep_latest = keep_latest
     self.record_file = self.save_dir / "stat.pkl"
     self.min_loss = float("inf")  # will be updated in `load`
-    self.best_path = self.save_dir / "best.pth"
+    self.best_path = self.save_dir / "best_train.pth"
     self.latest_path = self.save_dir / "latest.pth"
     self.save_on_rank_0 = save_on_rank_0
+    self.legacy_best_path = self.save_dir / "best.pth"
     
     # Create checkpoint directory if it doesn't exist
     self.save_dir.mkdir(parents=True, exist_ok=True)
+    # Remove legacy train-best name to avoid confusion with valid-best checkpoint.
+    if self.legacy_best_path.exists() and self.legacy_best_path != self.best_path:
+      self.legacy_best_path.unlink(missing_ok=True)
     return
 
   def __repr__(self):

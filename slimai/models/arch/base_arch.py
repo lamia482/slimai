@@ -136,7 +136,7 @@ class BaseArch(object):
 
     global_step = runner.global_step + 1 # for better mod
 
-    runner.checkpoint.save(
+    ckpt_path = runner.checkpoint.save(
       runner.model, 
       runner.solver, 
       runner.scheduler,
@@ -146,6 +146,7 @@ class BaseArch(object):
       loss=runner.train_avg_loss,
       cfg=runner.cfg.MODEL,
     )
+    runner.last_step_ckpt_path = ckpt_path
 
     runner.evaluate_by_strategy(runner.valid_dataloader, phase="valid", 
                                 epoch=-1, step=global_step)
@@ -161,7 +162,7 @@ class BaseArch(object):
 
     epoch = runner.epoch + 1 # for better mod
 
-    runner.checkpoint.save(
+    ckpt_path = runner.checkpoint.save(
       runner.model, 
       runner.solver, 
       runner.scheduler,
@@ -171,6 +172,7 @@ class BaseArch(object):
       loss=runner.train_avg_loss,
       cfg=runner.cfg.MODEL,
     )
+    runner.last_epoch_ckpt_path = ckpt_path
 
     runner.train_avg_loss = 0.0 # reset avg loss every epoch
     runner.step = 0 # reset step every epoch

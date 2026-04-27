@@ -174,22 +174,29 @@ class DistEnv(object):
     return data
   
   @classmethod
-  def sync(cls, data=None, tensor_op=dist.ReduceOp.AVG):
+  def sync(cls, data=None, tensor_op="avg"):
     """Reduce data (Tensor or Dict of Tensor) across all processes."""
     if not cls.is_dist_initialized():
       return data
     
-    def _sync_all_types(_data):
+    def _sync_all_types(_data, toper):
       if isinstance(_data, torch.Tensor):
-        dist.all_reduce(_data, op=tensor_op)
+        toper = dict(
+          avg=dist.ReduceOp.AVG,
+          sum=dist.ReduceOp.SUM,
+          max=dist.ReduceOp.MAX,
+          min=dist.ReduceOp.MIN,
+        )[toper.lower()]
+
+        dist.all_reduce(_data, op=toper)
         return _data
       elif isinstance(_data, Dict):
-        return {k: _sync_all_types(v) for k, v in _data.items()}
+        return {k: _sync_all_types(v, tensor_op) for k, v in _data.items()}
       else:
         raise ValueError(f"Unsupported data type: {type(_data)}")
 
     if data is not None:
-      data = _sync_all_types(data)
+      data = _sync_all_types(data, tensor_op)
 
     if work := dist.barrier(async_op=True):
       work.wait(timeout=cls.timeout)

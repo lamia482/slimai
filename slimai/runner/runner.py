@@ -12,6 +12,7 @@ from slimai.helper import (
 )
 from slimai.helper.utils import PytorchNetworkUtils, recursive_apply
 from torch.distributed.elastic.multiprocessing.errors import record
+from .report import ExperimentReporter
 
 
 class Runner(object):
@@ -63,6 +64,13 @@ class Runner(object):
     self.eval_every_n_steps = ckpt.get("eval_every_n_steps", None)
     self.eval_every_n_epochs = self.eval_every_n_epochs or 1
     self.eval_every_n_steps = self.eval_every_n_steps or 0
+    self.epoch_records = []
+    self.best_valid_loss = float("inf")
+    self.best_valid_epoch = None
+    self.best_valid_ckpt_path = self.checkpoint.save_dir / "best_valid.pth"
+    self.best_train_ckpt_path = self.checkpoint.best_path
+    self.last_epoch_ckpt_path = None
+    self.last_step_ckpt_path = None
 
     # Dump config to work_dir
     self.archive_env_for_reproducibility()
@@ -90,6 +98,14 @@ class Runner(object):
     self.arch, self.model, self.solver, self.scheduler, self.loss, self.metric = \
       self.dist.prepare_for_distributed(train_dataloader, valid_dataloader, test_dataloader, \
                                         arch, model, solver, scheduler, loss, metric)
+    self.reporter = ExperimentReporter(
+      work_dir=self.work_dir,
+      cfg=self.cfg,
+      train_dataloader=self.train_dataloader,
+      valid_dataloader=self.valid_dataloader,
+      test_dataloader=self.test_dataloader,
+      model_desc=self.model_desc,
+    )
     return
   
   def build_components(self, cfg):
@@ -109,8 +125,9 @@ class Runner(object):
     model, solver, scheduler, loss = arch.extract() # type: ignore
 
     # Log model parameter size
+    self.model_desc = PytorchNetworkUtils.desc(model)
     help_utils.print_log(f"Model({arch.__class__.__name__}) built successfully, "
-                         f"{PytorchNetworkUtils.desc(model)}")
+                         f"{self.model_desc}")
 
     metric = help_build.build_metric(cfg.get("METRIC", dict()))
 
@@ -258,6 +275,7 @@ class Runner(object):
 
       # after epoch # save checkpoint and evaluate by epoch strategy, reset avg loss and step
       self.arch.epoch_succeed_hooks(runner=self)
+    self.evaluate_test_with_best_valid()
     return
   
   @torch.inference_mode()
@@ -293,11 +311,72 @@ class Runner(object):
     results = dict(batch_info=results)
 
     if self.dist.env.is_main_process():
+      Path(result_file).parent.mkdir(parents=True, exist_ok=True)
       help_utils.print_log(f"Dump infer result into: {result_file}")
       mmengine.dump(results, result_file)
 
     self.dist.env.sync()
     return results
+
+  def _tensor_to_python(self, value):
+    if isinstance(value, torch.Tensor):
+      value = value.detach().cpu()
+      if value.numel() == 1:
+        return float(value.item())
+      return value.tolist()
+    if isinstance(value, dict):
+      return {k: self._tensor_to_python(v) for k, v in value.items()}
+    return value
+
+  @torch.inference_mode()
+  def evaluate_loss(self, dataloader) -> Dict[str, torch.Tensor]:
+    assert (
+      dataloader is not None
+    ), "dataloader must be provided for evaluate_loss"
+    self.model.eval()
+
+    total_samples = torch.tensor(0.0, device=self.dist.env.device)
+    loss_sums: Dict[str, torch.Tensor] = {}
+
+    loss_forward_func = partial(self.arch, mode="loss")
+    for batch_info in dataloader:
+      batch_info = self.dist.prepare_for_distributed(batch_info)
+      batch_info = DataSample(**batch_info).to(self.dist.env.device)
+      batch_data, batch_meta, batch_latency = self.extract_batch_info(batch_info)
+      self.arch.set_extra_attributes(meta=batch_meta, latency=batch_latency)
+      with torch.autocast(device_type=self.dist.env.accelerator,
+                          enabled=self.gradient.amp, dtype=self.dist.mix_dtype):
+        _, loss_dict = loss_forward_func(batch_data, batch_info)
+
+      labels = getattr(batch_info, "label", None)
+      if labels is None:
+        batch_size = len(batch_data)
+      else:
+        batch_size = int(torch.as_tensor(labels).shape[0])
+      batch_size_tensor = torch.tensor(float(batch_size), device=self.dist.env.device)
+      total_samples += batch_size_tensor
+
+      total_loss = torch.zeros((), device=self.dist.env.device, dtype=torch.float32)
+      for name, value in loss_dict.items():
+        loss_value = value.detach().to(device=self.dist.env.device, dtype=torch.float32)
+        total_loss += loss_value
+        if name not in loss_sums:
+          loss_sums[name] = torch.zeros_like(loss_value)
+        loss_sums[name] += loss_value * batch_size_tensor
+      if "loss" not in loss_sums:
+        loss_sums["loss"] = torch.zeros_like(total_loss)
+      loss_sums["loss"] += total_loss * batch_size_tensor
+
+    if self.dist.env.is_dist_initialized():
+      total_samples = self.dist.env.sync(total_samples, tensor_op="sum")
+      if len(loss_sums) > 0:
+        loss_sums = self.dist.env.sync(loss_sums, tensor_op="sum")
+
+    if total_samples.item() <= 0:
+      return {}
+
+    loss_metrics = {key: value / total_samples for key, value in loss_sums.items()}
+    return loss_metrics
   
   @torch.inference_mode()
   def evaluate(self, dataloader, result_file, 
@@ -311,6 +390,7 @@ class Runner(object):
       results = mmengine.load(result_file)
 
     metrics = {}
+    loss_metrics = self.evaluate_loss(dataloader)
 
     if self.dist.env.is_main_process():
       help_utils.print_log("Evaluating...")
@@ -321,6 +401,7 @@ class Runner(object):
       output = merge_result.output # type: ignore
       targets = {key: getattr(merge_result, key) for key in dataloader.dataset.ann_keys}
       metrics = self.metric(output, targets)
+      metrics.update(loss_metrics)
 
       # split figure and metric
       msg_list = []
@@ -368,6 +449,9 @@ class Runner(object):
 
   def evaluate_by_strategy(self, dataloader, phase: str = "test", 
                            epoch: int = -1, step: int = -1):
+    if dataloader is None:
+      return None
+
     def is_positive(x):
       return (x is not None and x > 0)
 
@@ -383,11 +467,88 @@ class Runner(object):
       return
 
     if eval_by_epoch:
-      phase, index = f"{phase}_by_epoch", epoch - 1
+      eval_phase, index = f"{phase}_by_epoch", epoch - 1
     elif eval_by_step:
-      phase, index = f"{phase}_by_step", step - 1
+      eval_phase, index = f"{phase}_by_step", step - 1
 
-    return self.evaluate(dataloader, result_file, phase=phase, step=index)
+    metrics = self.evaluate(dataloader, result_file, phase=eval_phase, step=index)
+
+    if not eval_by_epoch:
+      return metrics
+
+    metric_plain = self._tensor_to_python(metrics)
+    valid_loss = metric_plain.get("loss", None)
+    ckpt_path = getattr(self, "last_epoch_ckpt_path", None)
+    if isinstance(ckpt_path, Path):
+      ckpt_path = ckpt_path.resolve()
+
+    if isinstance(valid_loss, (int, float)):
+      if valid_loss <= self.best_valid_loss:
+        self.best_valid_loss = float(valid_loss)
+        self.best_valid_epoch = int(epoch)
+        if self.dist.env.is_main_process() and isinstance(ckpt_path, Path) and ckpt_path.exists():
+          self.best_valid_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+          shutil.copy2(ckpt_path, self.best_valid_ckpt_path)
+          help_utils.print_log(f"Update best valid checkpoint: {self.best_valid_ckpt_path}")
+
+    epoch_record = dict(
+      epoch=int(epoch),
+      valid_loss=(float(valid_loss) if isinstance(valid_loss, (int, float)) else None),
+      metrics=metric_plain,
+      checkpoint=(str(ckpt_path) if ckpt_path is not None else None),
+      result_file=str(result_file),
+    )
+    self.epoch_records.append(epoch_record)
+
+    if self.dist.env.is_main_process():
+      self.reporter.write_epoch_report(
+        epoch=int(epoch),
+        phase=eval_phase,
+        metrics=metric_plain,
+        result_file=Path(result_file),
+        checkpoint_file=ckpt_path if isinstance(ckpt_path, Path) else None,
+        best_valid_epoch=self.best_valid_epoch,
+      )
+    self.dist.env.sync()
+    return metrics
+
+  def evaluate_test_with_best_valid(self):
+    if self.test_dataloader is None:
+      return None
+    best_ckpt = None
+    if self.best_valid_ckpt_path.exists():
+      best_ckpt = self.best_valid_ckpt_path
+    elif self.best_train_ckpt_path.exists():
+      best_ckpt = self.best_train_ckpt_path
+
+    if best_ckpt is None:
+      help_utils.print_log("No best checkpoint found, skip final test evaluation", level="WARNING")
+      return None
+
+    help_utils.print_log(f"Load best checkpoint for test: {best_ckpt}")
+    ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=False)
+    model = self.dist.get_summon_module(self.model)
+    model.load_state_dict(ckpt["weight"], strict=True)
+    self.dist.env.sync()
+
+    best_epoch = self.best_valid_epoch
+    if best_epoch is None:
+      best_epoch = ckpt.get("epoch", "unknown")
+    test_result_file = self.work_dir / "results" / f"test_best_epoch_{best_epoch}.pkl"
+    test_metrics = self.evaluate(self.test_dataloader, test_result_file, phase="test_best", step=None)
+    test_metrics_plain = self._tensor_to_python(test_metrics)
+
+    if self.dist.env.is_main_process():
+      self.reporter.write_final_report(
+        epoch_records=self.epoch_records,
+        best_valid_epoch=self.best_valid_epoch,
+        best_valid_loss=(None if self.best_valid_epoch is None else self.best_valid_loss),
+        best_valid_ckpt=best_ckpt,
+        test_result_file=test_result_file,
+        test_metrics=test_metrics_plain,
+      )
+    self.dist.env.sync()
+    return test_metrics
 
   def archive_env_for_reproducibility(self):
     """Archive config and source code under work dir for reproducibility."""
