@@ -36,7 +36,7 @@ class Distributed(object):
       parallel_mode in ["auto", "ddp", "fsdp"]
     ), "parallel_mode must be 'auto' or 'ddp' or 'fsdp', but got {}".format(parallel_mode)
     if parallel_mode == "auto":
-      parallel_mode = "fsdp"
+      parallel_mode = "ddp" # TODO: currently, only ddp is supported, use ddp instead
 
     if self.env.global_world_size == 1:
       print_log("Cast Distributed to DDP because global world size is 1", level="WARNING")

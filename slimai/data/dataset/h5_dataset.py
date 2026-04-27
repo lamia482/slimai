@@ -6,9 +6,10 @@ import mmengine
 import torch
 from tqdm import tqdm
 
-from slimai.helper.help_build import DATASETS, build_transform
+from slimai.helper.help_build import DATASETS, build_source, build_transform
 from slimai.helper.help_utils import print_log
 from slimai.helper.utils.cache import get_cacher
+from slimai.helper.utils.load_pkl_from_npu import load_torch_pickle_compat
 
 from .mil_dataset import MILDataset
 from .sample_strategy import SampleStrategy
@@ -228,3 +229,194 @@ class H5Dataset(MILDataset):
       ),
     )
     return data
+
+
+@DATASETS.register_module()
+class TorchEmbeddingDataset(H5Dataset):
+  def __init__(
+    self,
+    records=None,
+    *,
+    label_mapping: Optional[Dict[LabelType, int]] = None,
+    balance: bool = False,
+    sample_strategy: Optional[str] = None,
+    preload: bool = False,
+    augmenter=None,
+    embedding_tag: str = "",
+    use_cache: bool = True,
+    cache_embedding_key: str = "embedding",
+    cache_visual_key: str = "visual",
+    max_sample_num: Optional[int] = None,
+    repeat: int = 1,
+    desc: Optional[str] = None,
+    embedding_key: str = "embedding",
+    coords_key: str = "x1_y1_dict",
+    embedding_magnification: Optional[Union[int, str]] = None,
+    expected_embedding_dim: Optional[int] = None,
+    source=None,
+    split: Optional[str] = None,
+    **kwargs,
+  ):
+    self.pkl_file = "<in-memory-records>"
+    self.key = kwargs.pop("key", "excel")
+    self.desc = desc or "TorchEmbeddingDataset<excel>"
+    self.label_mapping = self._normalize_label_mapping(label_mapping)
+    self.embedding_tag = embedding_tag
+    self.use_cache = use_cache
+    self.cache_embedding_key = cache_embedding_key
+    self.cache_visual_key = cache_visual_key
+    self.max_sample_num = max_sample_num
+    self.repeat = repeat
+    self.cacher = get_cacher()
+    self.embeddings = {}
+
+    self.embedding_key = embedding_key
+    self.coords_key = coords_key
+    self.embedding_magnification = embedding_magnification
+    self.expected_embedding_dim = expected_embedding_dim
+    self.split = split
+    self.source = source
+    self.split_file = None
+    self.split_stat = None
+
+    if augmenter is None:
+      self.augmenter = None
+    elif callable(augmenter):
+      self.augmenter = augmenter
+    else:
+      self.augmenter = build_transform(augmenter)
+
+    if records is None:
+      if source is None:
+        raise ValueError("Either records or source must be provided for TorchEmbeddingDataset.")
+      source_fn = build_source(source)
+      source_data = source_fn()
+      if split is None:
+        raise ValueError("split must be provided when source is used.")
+      if split not in source_data:
+        raise KeyError(f"Split '{split}' not found in source output. Available keys: {list(source_data.keys())}")
+      records = source_data[split]
+      self.split_file = source_data.get("split_file", None)
+      self.split_stat = source_data.get("split_stat", None)
+
+    valid_records: List[RecordType] = self.filter_invalid_records(records)
+    self.files = [self.to_embedding_path(embed_path) for embed_path, _ in valid_records]
+    self.ann_keys = ["label"]
+    self.annotations = dict(
+      label=[self.map_label(label) for _, label in valid_records],
+    )
+    self.indices = list(range(len(self.files)))
+    if sample_strategy is None and balance:
+      sample_strategy = "balance"
+    if sample_strategy is not None:
+      self.indices = SampleStrategy.update_indices(
+        self.annotations,
+        self.ann_keys,
+        sample_strategy,
+        self.indices,
+      )
+    self.class_names = self._infer_class_names()
+
+    if preload:
+      for embed_path in tqdm(self.files, desc=f"Preloading<{self.key}>"):
+        self.get_embedding(embed_path)
+
+    print_log(f"Dataset {self}", level="INFO")
+    return
+
+  def __str__(self):
+    return (
+      f"Total {len(self)} samples(selected from {len(self.files)} files, "
+      f"max_sample_num={self.max_sample_num}, repeat={self.repeat})\n"
+      f"\tDataset file: {self.pkl_file}\n"
+      f"\tKey: {self.key}\n"
+      f"\tEmbedding tag: {self.embedding_tag}\n"
+      f"\tEmbedding key: {self.embedding_key}\n"
+      f"\tCoordinates key: {self.coords_key}\n"
+      f"\tEmbedding magnification: {self.embedding_magnification}\n"
+      f"\tExpected embedding dim: {self.expected_embedding_dim}\n"
+      f"\tSplit: {self.split}\n"
+      f"\tSplit file: {self.split_file}\n"
+      f"\tSplit stat: {self.split_stat}\n"
+      f"\tDescription: {self.desc}\n"
+    )
+
+  __repr__ = __str__
+
+  def _select_group_data(self, data, data_name):
+    if not isinstance(data, dict):
+      return data
+
+    if len(data) == 0:
+      raise ValueError(f"{data_name} dict is empty.")
+
+    if self.embedding_magnification is None:
+      key = list(data.keys())[0]
+    elif self.embedding_magnification in data:
+      key = self.embedding_magnification
+    elif str(self.embedding_magnification) in data:
+      key = str(self.embedding_magnification)
+    else:
+      raise KeyError(
+        f"{data_name} magnification {self.embedding_magnification} not found. Available keys: {list(data.keys())[:20]}"
+      )
+    return data[key]
+
+  def _extract_embedding_and_coords(self, payload, embed_path: str):
+    if not isinstance(payload, dict):
+      raise ValueError(f"Embedding payload must be dict, but got {type(payload)} from {embed_path}.")
+
+    if self.embedding_key not in payload:
+      raise KeyError(
+        f"Embedding key '{self.embedding_key}' not found in {embed_path}. "
+        f"Available keys: {list(payload.keys())[:20]}"
+      )
+
+    embedding = self._select_group_data(payload[self.embedding_key], "embedding")
+    coords = payload.get(self.coords_key, None)
+    if coords is not None:
+      coords = self._select_group_data(coords, "coords")
+    return embedding, coords
+
+  def _normalize_coords(self, coords, embedding: torch.Tensor, embed_path: str) -> torch.Tensor:
+    if coords is None:
+      return torch.zeros((embedding.shape[0], 2), dtype=torch.float32)
+
+    coords = torch.as_tensor(coords).float()
+    if coords.dim() == 1:
+      coords = coords.unsqueeze(-1)
+
+    if coords.shape[0] != embedding.shape[0]:
+      print_log(
+        f"Coordinates number mismatch in {embed_path}: coords={coords.shape[0]} vs embedding={embedding.shape[0]}. "
+        "Fallback to zeros coordinates.",
+        level="WARNING",
+      )
+      coords = torch.zeros((embedding.shape[0], max(2, coords.shape[-1])), dtype=torch.float32)
+    return coords
+
+  def get_embedding(self, embed_path: str):
+    if embed_path in self.embeddings:
+      return self.embeddings[embed_path]
+
+    payload = load_torch_pickle_compat(
+      embed_path,
+      map_location="cpu",
+      weights_only=False,
+    )
+    embedding, coords = self._extract_embedding_and_coords(payload, embed_path)
+    embedding = torch.as_tensor(embedding).float()
+    if embedding.dim() != 2:
+      raise ValueError(f"Embedding tensor must be 2D [N, K], got {tuple(embedding.shape)} from {embed_path}.")
+
+    if self.expected_embedding_dim is not None and embedding.shape[-1] != self.expected_embedding_dim:
+      raise ValueError(
+        "Embedding dim mismatch in {}: got {}, expected {}. "
+        "Please check EMBEDDING_DIM in config.".format(
+          embed_path, embedding.shape[-1], self.expected_embedding_dim
+        )
+      )
+
+    coords = self._normalize_coords(coords, embedding, embed_path)
+    self.embeddings[embed_path] = (embedding, coords)
+    return self.embeddings[embed_path]

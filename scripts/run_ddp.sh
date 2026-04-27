@@ -1,5 +1,7 @@
 #!/bin/bash
 
+LAUNCH_DIR="/hzztai"
+
 ##### define user args
 CONFIG_FILE="$1"
 
@@ -22,6 +24,9 @@ export GLOO_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}
 ##### Add working path to PYTHONPATH
 TOOLBOX_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
 export PYTHONPATH="${TOOLBOX_ROOT_DIR}":"${PYTHONPATH}"
+
+cd ${LAUNCH_DIR}
+echo "Entering directory: ${LAUNCH_DIR}"
 
 ##### define nodes number for jobs
 NNODES=${NNODES:-1}
