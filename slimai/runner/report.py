@@ -22,6 +22,7 @@ class ExperimentReporter(object):
     train_dataloader=None,
     valid_dataloader=None,
     test_dataloader=None,
+    external_test_dataloaders=None,
     model_desc: Optional[str] = None,
   ):
     self.work_dir = Path(work_dir).resolve()
@@ -29,12 +30,14 @@ class ExperimentReporter(object):
     self.results_dir.mkdir(parents=True, exist_ok=True)
     self.cfg = cfg
     self.model_desc = model_desc or ""
+    self.signature = str(self.cfg.get("signature", "N/A"))
     self.chart_counter = 0
     self.dataset_info = {
       "train": self._collect_dataset_info(train_dataloader),
       "valid": self._collect_dataset_info(valid_dataloader),
       "test": self._collect_dataset_info(test_dataloader),
     }
+    self.external_dataset_info = self._collect_external_dataset_info(external_test_dataloaders)
     self.class_names = self._resolve_class_names()
     self.display_class_names = self._resolve_display_class_names(self.class_names)
     return
@@ -181,6 +184,16 @@ class ExperimentReporter(object):
       info["raw_label_distribution"] = raw_dist
       info["sampled_label_distribution"] = sampled_dist
     return info
+
+  def _collect_external_dataset_info(self, external_test_dataloaders):
+    if not isinstance(external_test_dataloaders, dict):
+      return {}
+    external_info = {}
+    for external_name, external_loader in external_test_dataloaders.items():
+      info = self._collect_dataset_info(external_loader)
+      if info is not None:
+        external_info[str(external_name)] = info
+    return external_info
 
   def _resolve_class_names(self):
     for key in ["valid", "test", "train"]:
@@ -585,12 +598,67 @@ class ExperimentReporter(object):
       + "".join(rows)
       + "</table>"
     )
+    external_cards = []
+    for external_name, info in self.external_dataset_info.items():
+      external_cards.append(
+        "<div class='split-card'>"
+        f"<h4>{html.escape(external_name.upper())}</h4>"
+        f"<p><span class='k'>size</span><span class='v'>{self._render_value_html(info.get('size', 'N/A'))}</span></p>"
+        f"<p><span class='k'>desc</span><span class='v'>{self._render_value_html(info.get('desc', 'N/A'))}</span></p>"
+        f"<p><span class='k'>split_file</span><span class='v'>{self._render_value_html(info.get('split_file', 'N/A'))}</span></p>"
+        f"<p><span class='k'>split_stat</span><span class='v'>{self._render_value_html(info.get('split_stat', 'N/A'))}</span></p>"
+        "</div>"
+      )
+
+    external_compare_table = ""
+    if len(self.external_dataset_info) > 0:
+      external_labels = sorted(
+        set(
+          key
+          for info in self.external_dataset_info.values()
+          for key in (info.get("raw_label_distribution", {}) or {}).keys()
+        )
+      )
+      external_rows = []
+      external_names = list(self.external_dataset_info.keys())
+      for label in external_labels:
+        cols = [f"<td>{html.escape(label)}</td>"]
+        for external_name in external_names:
+          info = self.external_dataset_info.get(external_name, {}) or {}
+          raw = info.get("raw_label_distribution", {}) or {}
+          sampled = info.get("sampled_label_distribution", {}) or {}
+          raw_total = sum(raw.values()) if len(raw) > 0 else 0
+          sampled_total = sum(sampled.values()) if len(sampled) > 0 else 0
+          raw_count = int(raw.get(label, 0))
+          sampled_count = int(sampled.get(label, 0))
+          raw_ratio = (100.0 * raw_count / raw_total) if raw_total > 0 else 0.0
+          sampled_ratio = (100.0 * sampled_count / sampled_total) if sampled_total > 0 else 0.0
+          cols.append(
+            "<td>"
+            f"<div class='ratio-line'><b>raw</b>: {raw_count} ({self._format_float(raw_ratio)}%)</div>"
+            f"<div class='ratio-line'><b>sampled</b>: {sampled_count} ({self._format_float(sampled_ratio)}%)</div>"
+            "</td>"
+          )
+        external_rows.append("<tr>" + "".join(cols) + "</tr>")
+      external_headers = "".join([f"<th>{html.escape(name)}</th>" for name in external_names])
+      external_compare_table = (
+        "<h4>External Label Distribution</h4>"
+        "<table class='compare-table'>"
+        f"<tr><th>label</th>{external_headers}</tr>"
+        + "".join(external_rows)
+        + "</table>"
+      )
+
     return (
       "<div class='dataset-grid'>"
       f"{''.join(split_cards)}"
       "</div>"
+      "<div class='dataset-grid'>"
+      f"{''.join(external_cards)}"
+      "</div>"
       "<div class='scroll-x'>"
       f"{compare_table}"
+      f"{external_compare_table}"
       "</div>"
     )
 
@@ -730,11 +798,12 @@ class ExperimentReporter(object):
       "</div>"
     )
 
-  def _render_header(self, *, title: str, subtitle: str):
+  def _render_header(self, *, title: str, subtitle: str, signature: Optional[str] = None):
+    signature_text = html.escape(str(signature if signature is not None else self.signature))
     return (
       "<header class='hero'>"
       f"<h1>{html.escape(title)}</h1>"
-      f"<p>{html.escape(subtitle)}</p>"
+      f"<p>{html.escape(subtitle)} | signature={signature_text}</p>"
       "</header>"
       "<nav class='report-nav'>"
       "<a href='#summary'>Summary</a>"
@@ -907,6 +976,7 @@ class ExperimentReporter(object):
     header = self._render_header(
       title=f"Epoch {epoch} Report",
       subtitle=f"phase={phase} | best_valid_epoch={best_valid_epoch}",
+      signature=self.signature,
     )
     body = (
       f"{header}"
@@ -938,30 +1008,133 @@ class ExperimentReporter(object):
     best_valid_ckpt: Optional[Path],
     test_result_file: Optional[Path] = None,
     test_metrics: Optional[Dict[str, Any]] = None,
+    external_result_files: Optional[Dict[str, Path]] = None,
+    external_test_metrics: Optional[Dict[str, Dict[str, Any]]] = None,
   ):
+    def _normalize_epoch_records_for_trend(records: List[Dict[str, Any]]):
+      normalized = []
+      for item in records:
+        epoch = item.get("epoch", None)
+        if not isinstance(epoch, int):
+          continue
+        metrics_plain = self._to_plain(item.get("metrics", {}) or {})
+        valid_loss = item.get("valid_loss", None)
+        if isinstance(valid_loss, torch.Tensor):
+          valid_loss = self._to_plain(valid_loss)
+        if isinstance(valid_loss, list):
+          valid_loss = valid_loss[0] if len(valid_loss) > 0 else None
+        if not isinstance(valid_loss, (int, float)):
+          valid_loss = metrics_plain.get("loss", None)
+          if isinstance(valid_loss, list):
+            valid_loss = valid_loss[0] if len(valid_loss) > 0 else None
+        normalized.append(
+          dict(
+            epoch=epoch,
+            valid_loss=(float(valid_loss) if isinstance(valid_loss, (int, float)) else None),
+            metrics=metrics_plain,
+            checkpoint=item.get("checkpoint", None),
+            result_file=item.get("result_file", None),
+          )
+        )
+      return normalized
+
+    def _load_epoch_records_from_results():
+      records = []
+      for result_file in sorted(self.results_dir.glob("epoch_*.pkl")):
+        stem = result_file.stem
+        epoch_text = stem.replace("epoch_", "")
+        if not epoch_text.isdigit():
+          continue
+        epoch = int(epoch_text)
+        payload = mmengine.load(result_file)
+        payload_metrics = payload.get("metrics", {}) if isinstance(payload, dict) else {}
+        payload_metrics = self._to_plain(payload_metrics or {})
+        valid_loss = payload_metrics.get("loss", None)
+        if isinstance(valid_loss, list):
+          valid_loss = valid_loss[0] if len(valid_loss) > 0 else None
+        records.append(
+          dict(
+            epoch=epoch,
+            valid_loss=(float(valid_loss) if isinstance(valid_loss, (int, float)) else None),
+            metrics=payload_metrics,
+            checkpoint=None,
+            result_file=str(result_file),
+          )
+        )
+      return records
+
+    def _render_metric_value_table(title: str, metric_items: Dict[str, Any]):
+      rows = []
+      for key, value in metric_items.items():
+        rows.append(
+          "<tr>"
+          f"<th>{html.escape(str(key))}</th>"
+          f"<td>{self._render_value_html(value)}</td>"
+          "</tr>"
+        )
+      return (
+        f"<h4>{html.escape(title)}</h4>"
+        "<table class='flat-table'>"
+        + "".join(rows)
+        + "</table>"
+      )
+
+    def _render_external_summary_table(metrics_by_external: Dict[str, Dict[str, Any]]):
+      columns = ["loss", "acc", "auc", "kappa", "f1"]
+      if len(metrics_by_external) == 0:
+        return "<h4>External Test</h4><p>N/A</p>"
+      header = "<tr><th>dataset</th>" + "".join([f"<th>{c}</th>" for c in columns]) + "</tr>"
+      rows = []
+      for external_name, metrics in metrics_by_external.items():
+        plain = self._to_plain(metrics or {})
+        cells = [f"<td>{html.escape(str(external_name))}</td>"]
+        for col in columns:
+          cells.append(f"<td>{self._render_value_html(plain.get(col, 'N/A'))}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+      return (
+        "<h4>External Test</h4>"
+        "<table class='flat-table'>"
+        + header
+        + "".join(rows)
+        + "</table>"
+      )
+
+    epoch_records = _normalize_epoch_records_for_trend(epoch_records)
+    if len(epoch_records) == 0:
+      epoch_records = _load_epoch_records_from_results()
+
     test_metrics_plain = self._to_plain(test_metrics or {})
+    external_result_files = external_result_files or {}
+    external_test_metrics = external_test_metrics or {}
     valid_loss_chart = self._build_valid_loss_chart(epoch_records)
     epoch_metric_chart = self._build_epoch_metric_chart(epoch_records)
     test_figures = {}
     if test_result_file is not None and Path(test_result_file).exists():
       test_figures = self.build_eval_figures(result_file=test_result_file, file_prefix="test_best")
 
-    summary_cards = []
-    summary_items = {
+    def _build_metric_cards(items: Dict[str, Any]):
+      cards = []
+      for key, value in items.items():
+        cards.append(
+          f"<div class='metric'><div class='label'>{html.escape(str(key))}</div>"
+          f"<div class='value'>{self._render_value_html(value)}</div></div>"
+        )
+      return "".join(cards)
+
+    run_summary_items = {
       "best_valid_epoch": best_valid_epoch,
       "best_valid_loss": best_valid_loss,
       "best_ckpt": str(best_valid_ckpt) if best_valid_ckpt else "N/A",
-      "test_loss": test_metrics_plain.get("loss", "N/A"),
-      "test_acc": test_metrics_plain.get("acc", "N/A"),
-      "test_auc": test_metrics_plain.get("auc", "N/A"),
-      "test_kappa": test_metrics_plain.get("kappa", "N/A"),
-      "test_f1": test_metrics_plain.get("f1", "N/A"),
     }
-    for key, value in summary_items.items():
-      summary_cards.append(
-        f"<div class='metric'><div class='label'>{html.escape(str(key))}</div>"
-        f"<div class='value'>{self._render_value_html(value)}</div></div>"
-      )
+    inner_test_summary_items = {
+      "loss": test_metrics_plain.get("loss", "N/A"),
+      "acc": test_metrics_plain.get("acc", "N/A"),
+      "auc": test_metrics_plain.get("auc", "N/A"),
+      "kappa": test_metrics_plain.get("kappa", "N/A"),
+      "f1": test_metrics_plain.get("f1", "N/A"),
+    }
+    inner_test_summary_table = _render_metric_value_table("Inner Test", inner_test_summary_items)
+    external_summary_table = _render_external_summary_table(external_test_metrics)
 
     trend_blocks = []
     if valid_loss_chart is not None:
@@ -973,21 +1146,45 @@ class ExperimentReporter(object):
     for key in ["roc", "pr", "cm"]:
       if key in test_figures:
         eval_blocks.append(f"<h4>{key.upper()}</h4>{test_figures[key]}")
+    external_eval_blocks = []
+    for external_name, external_result_file in external_result_files.items():
+      if not Path(external_result_file).exists():
+        continue
+      external_figures = self.build_eval_figures(
+        result_file=external_result_file,
+        file_prefix=f"external_{external_name}_best",
+      )
+      external_blocks = []
+      for key in ["roc", "pr", "cm"]:
+        if key in external_figures:
+          external_blocks.append(f"<h5>{key.upper()}</h5>{external_figures[key]}")
+      metrics_table = self._render_dict_as_table(self._to_plain(external_test_metrics.get(external_name, {})))
+      external_eval_blocks.append(
+        "<div class='card'>"
+        f"<h4>{html.escape(external_name)}</h4>"
+        f"{''.join(external_blocks) if len(external_blocks) > 0 else '<p>No figures generated.</p>'}"
+        f"<h5>Metrics</h5>{metrics_table}"
+        "</div>"
+      )
 
     header = self._render_header(
       title="BREXI Experiment Report",
       subtitle=f"best_epoch={best_valid_epoch} | generated_by=slimai.runner.report",
+      signature=self.signature,
     )
     body = (
       f"{header}"
       "<section class='card' id='summary'>"
       "<h3>Summary</h3>"
-      f"<div class='metric-grid'>{''.join(summary_cards)}</div>"
+      "<h4>Run</h4>"
+      f"<div class='metric-grid'>{_build_metric_cards(run_summary_items)}</div>"
+      f"{inner_test_summary_table}"
+      f"{external_summary_table}"
       "</section>"
       f"<section class='card' id='trend'><h3>Trend Analysis</h3>{''.join(trend_blocks) if len(trend_blocks) > 0 else '<p>N/A</p>'}</section>"
       f"<section class='card'><h3>Epoch Metrics Table</h3>{self._render_epoch_table(epoch_records)}</section>"
-      f"<section class='card' id='figures'><h3>Test Eval Figures</h3>{''.join(eval_blocks) if len(eval_blocks) > 0 else '<p>No figures generated.</p>'}</section>"
-      f"<section class='card'><h3>Test Metrics</h3>{self._render_dict_as_table(test_metrics_plain)}</section>"
+      f"<section class='card' id='figures'><h3>Inner Test Eval Figures</h3>{''.join(eval_blocks) if len(eval_blocks) > 0 else '<p>No figures generated.</p>'}<h4>Test Metrics</h4>{self._render_dict_as_table(test_metrics_plain)}</section>"
+      f"<section class='card'><h3>External Test Eval Figures</h3>{''.join(external_eval_blocks) if len(external_eval_blocks) > 0 else '<p>No external figures generated.</p>'}</section>"
       f"<section class='card' id='dataset'><h3>Dataset Distribution</h3>{self._render_dataset_section()}</section>"
       f"{self._build_conclusion_section(epoch_records=epoch_records, best_valid_epoch=best_valid_epoch, best_valid_loss=best_valid_loss, test_metrics=test_metrics_plain, test_result_file=test_result_file)}"
     )

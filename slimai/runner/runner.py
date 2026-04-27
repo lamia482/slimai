@@ -76,7 +76,7 @@ class Runner(object):
     self.archive_env_for_reproducibility()
 
     # Build components like dataloaders, model, solver, and metric
-    train_dataloader, valid_dataloader, test_dataloader, \
+    train_dataloader, valid_dataloader, test_dataloader, external_test_dataloaders, \
       arch, model, solver, scheduler, loss, metric = self.build_components(self.cfg)
     
     # Initialize epoch and load checkpoint if needed
@@ -94,9 +94,9 @@ class Runner(object):
     self.train_avg_loss = ckpt.get("loss", None) or 0.0
 
     # prepare model and solver for distributed training
-    self.train_dataloader, self.valid_dataloader, self.test_dataloader, \
+    self.train_dataloader, self.valid_dataloader, self.test_dataloader, self.external_test_dataloaders, \
     self.arch, self.model, self.solver, self.scheduler, self.loss, self.metric = \
-      self.dist.prepare_for_distributed(train_dataloader, valid_dataloader, test_dataloader, \
+      self.dist.prepare_for_distributed(train_dataloader, valid_dataloader, test_dataloader, external_test_dataloaders, \
                                         arch, model, solver, scheduler, loss, metric)
     self.reporter = ExperimentReporter(
       work_dir=self.work_dir,
@@ -104,6 +104,7 @@ class Runner(object):
       train_dataloader=self.train_dataloader,
       valid_dataloader=self.valid_dataloader,
       test_dataloader=self.test_dataloader,
+      external_test_dataloaders=self.external_test_dataloaders,
       model_desc=self.model_desc,
     )
     return
@@ -117,6 +118,15 @@ class Runner(object):
       cfg.get("VALID_LOADER", cfg.get("VAL_LOADER", dict())), 
       cfg.get("TEST_LOADER", dict())
     ]))
+    external_loader_cfgs = cfg.get("EXTERNAL_TEST_LOADERS", None)
+    external_test_loaders = {}
+    if isinstance(external_loader_cfgs, dict):
+      for external_name, external_loader_cfg in external_loader_cfgs.items():
+        if external_loader_cfg is None:
+          continue
+        external_loader = help_build.build_dataloader(external_loader_cfg)
+        if external_loader is not None:
+          external_test_loaders[external_name] = external_loader
 
     arch = help_build.build_model(cfg.MODEL)
     arch.compile(cfg.RUNNER.get("compile", False))
@@ -135,7 +145,7 @@ class Runner(object):
     help_utils.print_log("Created runner, desc: {}, {}".format(
       self.dist, self.dist.env.desc), main_process_only=False)
       
-    return train_loader, valid_loader, test_loader, \
+    return train_loader, valid_loader, test_loader, external_test_loaders, \
            arch, model, solver, scheduler, loss, metric
   
   @record
@@ -537,6 +547,22 @@ class Runner(object):
     test_result_file = self.work_dir / "results" / f"test_best_epoch_{best_epoch}.pkl"
     test_metrics = self.evaluate(self.test_dataloader, test_result_file, phase="test_best", step=None)
     test_metrics_plain = self._tensor_to_python(test_metrics)
+    external_result_files = {}
+    external_test_metrics = {}
+    for external_name, external_loader in getattr(self, "external_test_dataloaders", {}).items():
+      if external_loader is None:
+        continue
+      external_result_file = (
+        self.work_dir / "results" / f"external_{external_name}_best_epoch_{best_epoch}.pkl"
+      )
+      external_metrics = self.evaluate(
+        external_loader,
+        external_result_file,
+        phase=f"external_{external_name}_best",
+        step=None,
+      )
+      external_result_files[external_name] = external_result_file
+      external_test_metrics[external_name] = self._tensor_to_python(external_metrics)
 
     if self.dist.env.is_main_process():
       self.reporter.write_final_report(
@@ -546,6 +572,8 @@ class Runner(object):
         best_valid_ckpt=best_ckpt,
         test_result_file=test_result_file,
         test_metrics=test_metrics_plain,
+        external_result_files=external_result_files,
+        external_test_metrics=external_test_metrics,
       )
     self.dist.env.sync()
     return test_metrics

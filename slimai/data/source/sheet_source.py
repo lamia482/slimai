@@ -115,14 +115,14 @@ class StratifiedSheetSource(object):
       path = path.replace(src_prefix, dst_prefix, 1)
     return path
 
-  def _read_sheet(self):
+  def _read_sheet_from(self, sheet_file, sheet_name=None):
     source = SheetSource(
-      sheet_file=self.sheet_file,
+      sheet_file=sheet_file,
       col_mapping={
         self.file_col: "raw_file",
         self.label_col: "label_name",
       },
-      sheet_name=self.sheet_name,
+      sheet_name=self.sheet_name if sheet_name is None else sheet_name,
       filter=None,
       apply=None,
     )
@@ -130,22 +130,22 @@ class StratifiedSheetSource(object):
     df = pd.DataFrame(data)
     return df
 
-  def _validate_ratio(self):
-    train_ratio = self.split_ratio.get("train", 0.0)
-    valid_ratio = self.split_ratio.get("valid", 0.0)
-    test_ratio = self.split_ratio.get("test", 0.0)
-    ratio_sum = train_ratio + valid_ratio + test_ratio
-    assert abs(ratio_sum - 1.0) < 1e-8, (
-      f"split_ratio must sum to 1.0, but got {self.split_ratio}"
+  def _read_sheet(self):
+    return self._read_sheet_from(self.sheet_file, self.sheet_name)
+
+  def _prepare_dataframe(self, df: Optional[pd.DataFrame] = None, *, center_name: Optional[str] = None, center_col: str = "center"):
+    df = (self._read_sheet() if df is None else df).copy()
+    if center_name is not None:
+      df[center_col] = center_name
+
+    df["label_idx"] = (
+      df["label_name"].map(self.label_mapping)
+      if self.label_mapping is not None
+      else df["label_name"]
     )
-    return train_ratio, valid_ratio, test_ratio
-
-  def __call__(self):
-    train_ratio, valid_ratio, test_ratio = self._validate_ratio()
-    df = self._read_sheet().copy()
-
-    df["label_idx"] = df["label_name"].map(self.label_mapping) if self.label_mapping is not None else df["label_name"]
-    df[self.mapped_file_col] = df["raw_file"].apply(lambda x: self.map_path(x) if pd.notna(x) else x)
+    df[self.mapped_file_col] = df["raw_file"].apply(
+      lambda x: self.map_path(x) if pd.notna(x) else x
+    )
     df[self.split_col] = "ignored"
     df["ignore_reason"] = ""
 
@@ -159,6 +159,47 @@ class StratifiedSheetSource(object):
     df.loc[df[self.mapped_file_col].isna(), "ignore_reason"] = "invalid_mapped_path"
 
     usable_df = df[valid_mask].copy()
+    return df, usable_df, valid_mask
+
+  def _validate_ratio(self):
+    train_ratio = self.split_ratio.get("train", 0.0)
+    valid_ratio = self.split_ratio.get("valid", 0.0)
+    test_ratio = self.split_ratio.get("test", 0.0)
+    ratio_sum = train_ratio + valid_ratio + test_ratio
+    assert abs(ratio_sum - 1.0) < 1e-8, (
+      f"split_ratio must sum to 1.0, but got {self.split_ratio}"
+    )
+    return train_ratio, valid_ratio, test_ratio
+
+  def _dump_split_file(self, df: pd.DataFrame):
+    if self.output_split_file is None:
+      return None
+    output_path = Path(self.output_split_file)
+    os.makedirs(output_path.parent, exist_ok=True)
+    output_sheet_name = (
+      f"{self.sheet_name}_split"
+      if isinstance(self.sheet_name, str)
+      else "split"
+    )
+    df.to_excel(output_path, sheet_name=output_sheet_name, index=False)
+    return output_path.as_posix()
+
+  def _to_records(self, df: pd.DataFrame):
+    return list(zip(df[self.mapped_file_col].tolist(), df["label_name"].tolist()))
+
+  def _build_split_stat(self, df: pd.DataFrame, usable_df: pd.DataFrame, **split_counts):
+    stat = dict(
+      total=int(len(df)),
+      usable=int(len(usable_df)),
+      ignored=int(len(df) - len(usable_df)),
+    )
+    for split_name, split_count in split_counts.items():
+      stat[split_name] = int(split_count)
+    return stat
+
+  def __call__(self):
+    train_ratio, valid_ratio, test_ratio = self._validate_ratio()
+    df, usable_df, _ = self._prepare_dataframe()
 
     train_df, temp_df = train_test_split(
       usable_df,
@@ -178,29 +219,85 @@ class StratifiedSheetSource(object):
     df.loc[valid_df.index, self.split_col] = "valid"
     df.loc[test_df.index, self.split_col] = "test"
 
-    if self.output_split_file is not None:
-      output_path = Path(self.output_split_file)
-      os.makedirs(output_path.parent, exist_ok=True)
-      output_sheet_name = f"{self.sheet_name}_split" if isinstance(self.sheet_name, str) else "split"
-      df.to_excel(output_path, sheet_name=output_sheet_name, index=False)
-      split_file = output_path.as_posix()
-    else:
-      split_file = None
-
-    def to_records(_df):
-      return list(zip(_df[self.mapped_file_col].tolist(), _df["label_name"].tolist()))
+    split_file = self._dump_split_file(df)
 
     return dict(
-      train=to_records(train_df),
-      valid=to_records(valid_df),
-      test=to_records(test_df),
+      train=self._to_records(train_df),
+      valid=self._to_records(valid_df),
+      test=self._to_records(test_df),
       split_file=split_file,
-      split_stat=dict(
-        total=int(len(df)),
-        usable=int(len(usable_df)),
-        ignored=int((~valid_mask).sum()),
-        train=int(len(train_df)),
-        valid=int(len(valid_df)),
-        test=int(len(test_df)),
+      split_stat=self._build_split_stat(
+        df,
+        usable_df,
+        train=len(train_df),
+        valid=len(valid_df),
+        test=len(test_df),
       ),
+    )
+
+
+@SOURCES.register_module()
+class ExternalSheetSource(StratifiedSheetSource):
+  def __init__(self, *args, center_name: str = "external", center_col: str = "center", **kwargs):
+    super().__init__(*args, **kwargs)
+    self.center_name = center_name
+    self.center_col = center_col
+    return
+
+  def _normalize_external_inputs(self):
+    if isinstance(self.sheet_file, dict):
+      return [(str(k), v) for k, v in self.sheet_file.items()]
+    if isinstance(self.sheet_file, (tuple, list)):
+      items = []
+      for index, item in enumerate(self.sheet_file):
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+          items.append((str(item[0]), item[1]))
+        else:
+          items.append((f"{self.center_name}_{index}", item))
+      return items
+    return [(self.center_name, self.sheet_file)]
+
+  def __call__(self):
+    center_inputs = self._normalize_external_inputs()
+
+    center_frames: List[pd.DataFrame] = []
+    center_usable_frames: List[pd.DataFrame] = []
+    split_stat_by_center = {}
+
+    for center_name, sheet_file in center_inputs:
+      sheet_df = self._read_sheet_from(sheet_file, self.sheet_name)
+      df, usable_df, _ = self._prepare_dataframe(
+        sheet_df,
+        center_name=center_name,
+        center_col=self.center_col,
+      )
+      df.loc[usable_df.index, self.split_col] = "test"
+      center_frames.append(df)
+      center_usable_frames.append(usable_df)
+      split_stat_by_center[center_name] = self._build_split_stat(
+        df,
+        usable_df,
+        test=len(usable_df),
+      )
+
+    if len(center_frames) == 0:
+      full_df = pd.DataFrame(columns=["raw_file", "label_name", self.mapped_file_col, self.split_col])
+      split_file = self._dump_split_file(full_df)
+      return dict(
+        test=[],
+        split_file=split_file,
+        split_stat=dict(total=0, usable=0, ignored=0, test=0),
+        split_stat_by_center=split_stat_by_center,
+      )
+
+    full_df = pd.concat(center_frames, ignore_index=True)
+    usable_df = pd.concat(center_usable_frames, ignore_index=True)
+
+    split_file = self._dump_split_file(full_df)
+
+    return dict(
+      test=self._to_records(usable_df),
+      split_file=split_file,
+      split_stat=self._build_split_stat(full_df, usable_df, test=len(usable_df)),
+      split_stat_by_center=split_stat_by_center,
     )
