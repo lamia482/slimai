@@ -322,5 +322,5 @@ _COMMENT_ = """
 1. Excel-driven MIL training for brexi.
 2. Runtime path mapping for EMBEDDING field via configurable PATH_MAPPING.
 3. Stratified 80/10/10 split exported to output sheet.
-4. TorchEmbeddingDataset reads NPU-compatible pickles via load_torch_pickle_compat.
+4. TorchEmbeddingDataset reads embedding payloads directly via torch.load.
 """

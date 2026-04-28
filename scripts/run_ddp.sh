@@ -16,10 +16,14 @@ if [ -z "${CUDA_VISIBLE_DEVICES}" ]; then
   export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(($(eval $GPU_NUM)-1)))
 fi
 
-export OMP_NUM_THREADS=1
-export NCCL_DEBUG=INFO
-export NCCL_SOCKET_IFNAME=eth0
-export GLOO_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}
+##### set environment variables for distributed training
+
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+export NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
+export NCCL_DEBUG=${NCCL_DEBUG:-INFO}
+export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-eth0}
+export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-${NCCL_SOCKET_IFNAME}}
 
 ##### Add working path to PYTHONPATH
 TOOLBOX_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"

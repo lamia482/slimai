@@ -12,7 +12,7 @@ then
   exit 1
 fi
 
-WORKING_PATH="/hzztai"
+WORKING_PATH=${WORKING_PATH:-"/hzztai"}
 
 CREATE_DIR="${WORKING_PATH}/projects"
 

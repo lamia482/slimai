@@ -9,7 +9,6 @@ from tqdm import tqdm
 from slimai.helper.help_build import DATASETS, build_source, build_transform
 from slimai.helper.help_utils import print_log
 from slimai.helper.utils.cache import get_cacher
-from slimai.helper.utils.load_pkl_from_npu import load_torch_pickle_compat
 
 from .mil_dataset import MILDataset
 from .sample_strategy import SampleStrategy
@@ -399,7 +398,7 @@ class TorchEmbeddingDataset(H5Dataset):
     if embed_path in self.embeddings:
       return self.embeddings[embed_path]
 
-    payload = load_torch_pickle_compat(
+    payload = torch.load(
       embed_path,
       map_location="cpu",
       weights_only=False,

@@ -338,6 +338,16 @@ class Runner(object):
       return {k: self._tensor_to_python(v) for k, v in value.items()}
     return value
 
+  @staticmethod
+  def _update_symlink(link_path: Path, target_path: Path) -> None:
+    link_path = Path(link_path)
+    target_path = Path(target_path).resolve()
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    if link_path.exists() or link_path.is_symlink():
+      link_path.unlink(missing_ok=True)
+    link_path.symlink_to(target_path)
+    return
+
   @torch.inference_mode()
   def evaluate_loss(self, dataloader) -> Dict[str, torch.Tensor]:
     assert (
@@ -497,8 +507,7 @@ class Runner(object):
         self.best_valid_loss = float(valid_loss)
         self.best_valid_epoch = int(epoch)
         if self.dist.env.is_main_process() and isinstance(ckpt_path, Path) and ckpt_path.exists():
-          self.best_valid_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-          shutil.copy2(ckpt_path, self.best_valid_ckpt_path)
+          self._update_symlink(self.best_valid_ckpt_path, ckpt_path)
           help_utils.print_log(f"Update best valid checkpoint: {self.best_valid_ckpt_path}")
 
     epoch_record = dict(

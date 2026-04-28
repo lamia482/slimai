@@ -84,6 +84,15 @@ class Checkpoint(object):
             f")")
   __str__ = __repr__
 
+  def _update_symlink(self, link_path: Path, target_path: Path) -> None:
+    link_path = Path(link_path)
+    target_path = Path(target_path).resolve()
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    if link_path.exists() or link_path.is_symlink():
+      link_path.unlink(missing_ok=True)
+    link_path.symlink_to(target_path)
+    return
+
   def save(
     self,
     model: torch.nn.Module,
@@ -151,11 +160,10 @@ class Checkpoint(object):
       _save(ckpt_path, export=export)
 
       if self.keep_latest:
-        self.latest_path.unlink(missing_ok=True)
-        self.latest_path.symlink_to(ckpt_path)
+        self._update_symlink(self.latest_path, ckpt_path)
 
       if update_best:
-        _save(self.best_path, export=export)
+        self._update_symlink(self.best_path, ckpt_path)
 
       if not self.record_file.exists():
         mmengine.dump([], self.record_file)
