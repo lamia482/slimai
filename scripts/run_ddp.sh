@@ -41,7 +41,7 @@ NPROC_PER_NODE=$(python -c "import torch; print(torch.cuda.device_count())")
 free_port=$(python -c "from slimai.helper.utils.dist_env import get_dist_env; print(get_dist_env().get_free_port())")
 MASTER_ADDR=${MASTER_ADDR:-localhost}
 MASTER_PORT=${MASTER_PORT:-${free_port}}
-MAX_RESTARTS=${MAX_RESTARTS:-3} # 0 for no restart, set default to 3 for 3 times restart
+MAX_RESTARTS=${MAX_RESTARTS:-0} # 0 for no restart, set default to 3 for 3 times restart
 JOB_ID=${JOB_ID:-${MASTER_PORT}}
 
 ##### print job info
