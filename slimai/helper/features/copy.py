@@ -900,6 +900,7 @@ def create_valid_symlinks(
   valid_root: Path,
   dry_run: bool,
   replace: bool,
+  skip_existing_valid: bool,
 ) -> int:
   counters = dict(
     records=len(records),
@@ -923,6 +924,11 @@ def create_valid_symlinks(
     source_path = cache_root / relative
     link_path = valid_root / relative
 
+    if link_points_to(link_path=link_path, source_path=source_path):
+      counters["already_linked"] += 1
+      if skip_existing_valid:
+        continue
+
     if not is_size_matched_cached_file(source_path=source_path, record=record):
       counters["missing_or_invalid"] += 1
       continue
@@ -932,10 +938,6 @@ def create_valid_symlinks(
       counters["load_failed"] += 1
       if len(load_errors) < 10:
         load_errors.append(f"{relative}: {load_error}")
-      continue
-
-    if link_points_to(link_path=link_path, source_path=source_path):
-      counters["already_linked"] += 1
       continue
 
     if link_path.exists() or link_path.is_symlink():
@@ -963,6 +965,7 @@ def create_valid_symlinks(
   print(f"load_failed: {counters['load_failed']}")
   print(f"cache_root: {cache_root.as_posix()}")
   print(f"valid_root: {valid_root.as_posix()}")
+  print(f"skip_existing_valid: {skip_existing_valid}")
   print(f"mode: {'dry-run' if dry_run else 'real link'}")
   if load_errors:
     print("first_load_errors:")
@@ -1074,6 +1077,7 @@ def run_link_valid(args: argparse.Namespace) -> int:
     valid_root=valid_root,
     dry_run=args.dry_run,
     replace=args.replace,
+    skip_existing_valid=args.skip_existing_valid,
   )
 
 
@@ -1228,6 +1232,25 @@ def build_parser(defaults: Optional[CliDefaults] = None) -> argparse.ArgumentPar
     "--replace",
     action="store_true",
     help="Replace wrong existing symlinks. Regular files/directories are never overwritten.",
+  )
+  link_parser.add_argument(
+    "--skip-existing-valid",
+    dest="skip_existing_valid",
+    action="store_true",
+    default=True,
+    help=(
+      "Skip files already linked correctly under --valid-root. "
+      "Enabled by default for faster incremental runs."
+    ),
+  )
+  link_parser.add_argument(
+    "--no-skip-existing-valid",
+    dest="skip_existing_valid",
+    action="store_false",
+    help=(
+      "Do not skip already-correct symlinks; re-run size and torch.load checks "
+      "for those entries."
+    ),
   )
   link_parser.add_argument(
     "--dry-run",
