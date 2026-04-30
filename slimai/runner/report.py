@@ -40,6 +40,8 @@ class ExperimentReporter(object):
     self.external_dataset_info = self._collect_external_dataset_info(external_test_dataloaders)
     self.class_names = self._resolve_class_names()
     self.display_class_names = self._resolve_display_class_names(self.class_names)
+    self.secondary_class_names = self._resolve_secondary_class_names_from_cfg()
+    self.display_secondary_class_names = self._resolve_display_class_names(self.secondary_class_names)
     return
 
   def _next_chart_id(self, prefix: str):
@@ -127,6 +129,33 @@ class ExperimentReporter(object):
       return [inv.get(i, str(i)) for i in range(num_classes)]
     return None
 
+  def _resolve_secondary_class_names_from_cfg(self):
+    loader_keys = ["VALID_LOADER", "VAL_LOADER", "TEST_LOADER", "TRAIN_LOADER"]
+    for key in loader_keys:
+      loader_cfg = self.cfg.get(key, None)
+      if not isinstance(loader_cfg, dict):
+        continue
+      dataset_cfg = loader_cfg.get("dataset", None)
+      if not isinstance(dataset_cfg, dict):
+        continue
+      label_mapping = dataset_cfg.get("secondary_label_mapping", None)
+      if isinstance(label_mapping, str):
+        try:
+          label_mapping = ast.literal_eval(label_mapping)
+        except Exception:
+          label_mapping = None
+      if not isinstance(label_mapping, dict) or len(label_mapping) == 0:
+        continue
+      inv = {}
+      for name, index in label_mapping.items():
+        if isinstance(index, (int, np.integer)):
+          inv[int(index)] = str(name)
+      if len(inv) == 0:
+        continue
+      max_index = max(inv.keys())
+      return [inv.get(i, str(i)) for i in range(max_index + 1)]
+    return []
+
   def _is_long_text(self, text: str):
     return (len(text) > 48) or ("/" in text) or ("\\" in text)
 
@@ -154,6 +183,8 @@ class ExperimentReporter(object):
       class_names=list(getattr(dataset, "class_names", [])),
       split_stat=self._to_plain(getattr(dataset, "split_stat", None)),
       split_file=getattr(dataset, "split_file", None),
+      split_diag=self._to_plain(getattr(dataset, "split_diag", None)),
+      split_diag_file=getattr(dataset, "split_diag_file", None),
     )
 
     labels = None
@@ -219,7 +250,7 @@ class ExperimentReporter(object):
       return []
     return [str(i) for i in range(int(num_classes))]
 
-  def _extract_eval_arrays(self, result_file: Path):
+  def _extract_eval_arrays(self, result_file: Path, task_key: Optional[str] = None):
     if not Path(result_file).exists():
       return None, None, None
     result = mmengine.load(result_file)
@@ -230,13 +261,19 @@ class ExperimentReporter(object):
     for item in batch_info:
       label = item.get("label", None) if isinstance(item, dict) else getattr(item, "label", None)
       output = item.get("output", None) if isinstance(item, dict) else getattr(item, "output", None)
+      if isinstance(task_key, str) and task_key != "label":
+        label = item.get(task_key, None) if isinstance(item, dict) else getattr(item, task_key, None)
       if output is None:
         continue
+      if isinstance(task_key, str) and isinstance(output, dict) and task_key in output and isinstance(output[task_key], dict):
+        output = output[task_key]
       softmax = output.get("softmax", None) if isinstance(output, dict) else getattr(output, "softmax", None)
       pred = output.get("labels", None) if isinstance(output, dict) else getattr(output, "labels", None)
       if label is None or softmax is None or pred is None:
         continue
       label = int(torch.as_tensor(label).cpu().item())
+      if label < 0:
+        continue
       pred = int(torch.as_tensor(pred).cpu().item())
       softmax = torch.as_tensor(softmax).detach().cpu().float().numpy()
       labels.append(label)
@@ -516,17 +553,19 @@ class ExperimentReporter(object):
       y_range=(0.0, 1.0),
     )
 
-  def build_eval_figures(self, *, result_file: Path, file_prefix: str):
+  def build_eval_figures(self, *, result_file: Path, file_prefix: str, task_key: Optional[str] = None, class_names: Optional[List[str]] = None):
     _ = file_prefix
-    labels, preds, probs = self._extract_eval_arrays(result_file)
+    labels, preds, probs = self._extract_eval_arrays(result_file, task_key=task_key)
     if labels is None or preds is None or probs is None:
       return {}
+    if class_names is None:
+      class_names = self.display_class_names
     output = dict()
-    if roc_html := self._plot_roc_curve(labels, probs, self.display_class_names):
+    if roc_html := self._plot_roc_curve(labels, probs, class_names):
       output["roc"] = roc_html
-    if pr_html := self._plot_pr_curve(labels, probs, self.display_class_names):
+    if pr_html := self._plot_pr_curve(labels, probs, class_names):
       output["pr"] = pr_html
-    output["cm"] = self._chart_confusion_matrix(labels, preds, self.display_class_names)
+    output["cm"] = self._chart_confusion_matrix(labels, preds, class_names)
     return output
 
   def _render_dict_as_table(self, data: Dict[str, Any]):
@@ -560,6 +599,7 @@ class ExperimentReporter(object):
         f"<p><span class='k'>desc</span><span class='v'>{self._render_value_html(info.get('desc', 'N/A'))}</span></p>"
         f"<p><span class='k'>split_file</span><span class='v'>{self._render_value_html(info.get('split_file', 'N/A'))}</span></p>"
         f"<p><span class='k'>split_stat</span><span class='v'>{self._render_value_html(info.get('split_stat', 'N/A'))}</span></p>"
+        f"<p><span class='k'>split_diag</span><span class='v'>{self._render_value_html(info.get('split_diag', 'N/A'))}</span></p>"
         "</div>"
       )
 
@@ -607,6 +647,7 @@ class ExperimentReporter(object):
         f"<p><span class='k'>desc</span><span class='v'>{self._render_value_html(info.get('desc', 'N/A'))}</span></p>"
         f"<p><span class='k'>split_file</span><span class='v'>{self._render_value_html(info.get('split_file', 'N/A'))}</span></p>"
         f"<p><span class='k'>split_stat</span><span class='v'>{self._render_value_html(info.get('split_stat', 'N/A'))}</span></p>"
+        f"<p><span class='k'>split_diag</span><span class='v'>{self._render_value_html(info.get('split_diag', 'N/A'))}</span></p>"
         "</div>"
       )
 
@@ -734,6 +775,48 @@ class ExperimentReporter(object):
     return self._chart_svg_line(
       chart_id=chart_id,
       title="Epoch Metrics Trend",
+      x_label="Epoch",
+      y_label="Metric Value",
+      x_values=[float(v) for v in epochs],
+      series_list=series,
+    )
+
+  def _build_prefixed_epoch_metric_chart(
+    self,
+    *,
+    epoch_records: List[Dict[str, Any]],
+    metric_prefix: str,
+    title: str,
+  ):
+    points = sorted(epoch_records, key=lambda x: x.get("epoch", -1))
+    epochs = [int(v["epoch"]) for v in points if isinstance(v.get("epoch", None), int)]
+    if len(epochs) == 0:
+      return None
+    metrics_to_show = [
+      ("loss", "#f59e0b"),
+      ("acc", "#10b981"),
+      ("auc", "#ef4444"),
+      ("kappa", "#8b5cf6"),
+      ("f1", "#0ea5e9"),
+    ]
+    series = []
+    for key, color in metrics_to_show:
+      values = []
+      full_key = f"{metric_prefix}{key}"
+      for item in points:
+        if not isinstance(item.get("epoch", None), int):
+          continue
+        metric_item = item.get("metrics", {}) or {}
+        value = metric_item.get(full_key, None)
+        values.append(float(value) if isinstance(value, (int, float)) else None)
+      if any(v is not None for v in values):
+        series.append(dict(name=key, color=color, y=values))
+    if len(series) == 0:
+      return None
+    chart_id = self._next_chart_id(f"epoch_metric_{metric_prefix.strip('_')}")
+    return self._chart_svg_line(
+      chart_id=chart_id,
+      title=title,
       x_label="Epoch",
       y_label="Metric Value",
       x_values=[float(v) for v in epochs],
@@ -920,6 +1003,23 @@ class ExperimentReporter(object):
     table {{ border-collapse: collapse; width: 100%; }}
     .flat-table th, .flat-table td {{ border-bottom: 1px solid #e2e8f0; padding: 8px; text-align: left; vertical-align: top; }}
     .flat-table th {{ background: #f8fafc; min-width: 120px; }}
+    .analysis-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }}
+    .analysis-card {{
+      border: 1px solid #d7e4fb;
+      border-radius: 12px;
+      padding: 12px;
+      background: #fbfdff;
+    }}
+    .analysis-card h4 {{ margin: 0 0 8px; font-size: 17px; color: #1d4ed8; }}
+    .table-scroll-y {{
+      max-height: 420px;
+      overflow-y: auto;
+      overflow-x: auto;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #ffffff;
+    }}
+    .table-scroll-y .flat-table th {{ position: sticky; top: 0; z-index: 2; }}
     .dataset-grid {{ display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }}
     .split-card {{ border: 1px solid #d7e4fb; border-radius: 12px; padding: 10px; background: #fbfdff; }}
     .split-card h4 {{ margin: 0 0 8px; font-size: 17px; color: #1d4ed8; }}
@@ -936,6 +1036,7 @@ class ExperimentReporter(object):
     .insight-list {{ margin: 0; padding-left: 18px; display: grid; gap: 8px; }}
     @media (max-width: 980px) {{
       .dataset-grid {{ grid-template-columns: 1fr; }}
+      .analysis-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -961,6 +1062,36 @@ class ExperimentReporter(object):
     best_valid_epoch: Optional[int] = None,
   ):
     metrics_plain = self._to_plain(metrics)
+    if any(key.startswith("label_") for key in metrics_plain.keys()):
+      self._write_epoch_task_report(
+        epoch=epoch,
+        phase=phase,
+        metrics_plain=metrics_plain,
+        result_file=result_file,
+        checkpoint_file=checkpoint_file,
+        best_valid_epoch=best_valid_epoch,
+        task_name="level1",
+        metric_prefix="label_",
+        task_key="label",
+        class_names=self.display_class_names,
+      )
+      self._write_epoch_task_report(
+        epoch=epoch,
+        phase=phase,
+        metrics_plain=metrics_plain,
+        result_file=result_file,
+        checkpoint_file=checkpoint_file,
+        best_valid_epoch=best_valid_epoch,
+        task_name="level2",
+        metric_prefix="label_secondary_",
+        task_key="label_secondary",
+        class_names=self.display_secondary_class_names,
+      )
+      return dict(
+        level1=self.results_dir / f"epoch{epoch}_level1.html",
+        level2=self.results_dir / f"epoch{epoch}_level2.html",
+      )
+
     figures = self.build_eval_figures(result_file=result_file, file_prefix=f"epoch{epoch}_{phase}")
     metric_cards = []
     for key, value in metrics_plain.items():
@@ -999,6 +1130,68 @@ class ExperimentReporter(object):
     self._save_html(report_file, body)
     return report_file
 
+  def _write_epoch_task_report(
+    self,
+    *,
+    epoch: int,
+    phase: str,
+    metrics_plain: Dict[str, Any],
+    result_file: Path,
+    checkpoint_file: Optional[Path],
+    best_valid_epoch: Optional[int],
+    task_name: str,
+    metric_prefix: str,
+    task_key: str,
+    class_names: List[str],
+  ):
+    task_metrics = {}
+    for key, value in metrics_plain.items():
+      if key.startswith(metric_prefix):
+        task_metrics[key[len(metric_prefix):]] = value
+    if len(task_metrics) == 0:
+      return None
+    figures = self.build_eval_figures(
+      result_file=result_file,
+      file_prefix=f"epoch{epoch}_{phase}_{task_name}",
+      task_key=task_key,
+      class_names=class_names,
+    )
+    metric_cards = []
+    for key, value in task_metrics.items():
+      metric_cards.append(
+        f"<div class='metric'><div class='label'>{html.escape(str(key))}</div>"
+        f"<div class='value'>{self._render_value_html(value)}</div></div>"
+      )
+    eval_blocks = []
+    for key in ["roc", "pr", "cm"]:
+      if key in figures:
+        eval_blocks.append(f"<h4>{key.upper()}</h4>{figures[key]}")
+    header = self._render_header(
+      title=f"Epoch {epoch} Report ({task_name})",
+      subtitle=f"phase={phase} | best_valid_epoch={best_valid_epoch}",
+      signature=self.signature,
+    )
+    body = (
+      f"{header}"
+      "<section class='card' id='summary'>"
+      "<h3>Summary</h3>"
+      f"<div class='metric-grid'>{''.join(metric_cards)}</div>"
+      "</section>"
+      "<section class='card'>"
+      "<h3>Artifacts</h3>"
+      f"{self._render_dict_as_table(dict(result_file=str(result_file), checkpoint_file=str(checkpoint_file) if checkpoint_file else 'N/A', best_valid_epoch=best_valid_epoch, task=task_name))}"
+      "</section>"
+      f"<section class='card' id='figures'><h3>Eval Figures</h3>{''.join(eval_blocks) if len(eval_blocks) > 0 else '<p>No figures generated.</p>'}</section>"
+      f"<section class='card' id='dataset'><h3>Dataset Distribution</h3>{self._render_dataset_section()}</section>"
+      f"<section class='card'><h3>Model</h3><pre>{html.escape(self.model_desc)}</pre></section>"
+      f"<section class='card'><h3>MODEL Config</h3>{self._json_block(self.cfg.MODEL)}</section>"
+      f"<section class='card'><h3>RUNNER Config</h3>{self._json_block(self.cfg.RUNNER)}</section>"
+      f"<section class='card'><h3>METRIC Config</h3>{self._json_block(self.cfg.METRIC)}</section>"
+    )
+    report_file = self.results_dir / f"epoch{epoch}_{task_name}.html"
+    self._save_html(report_file, body)
+    return report_file
+
   def write_final_report(
     self,
     *,
@@ -1006,11 +1199,26 @@ class ExperimentReporter(object):
     best_valid_epoch: Optional[int],
     best_valid_loss: Optional[float],
     best_valid_ckpt: Optional[Path],
+    analysis_result_files: Optional[Dict[str, Path]] = None,
+    analysis_metrics: Optional[Dict[str, Dict[str, Any]]] = None,
     test_result_file: Optional[Path] = None,
     test_metrics: Optional[Dict[str, Any]] = None,
     external_result_files: Optional[Dict[str, Path]] = None,
     external_test_metrics: Optional[Dict[str, Dict[str, Any]]] = None,
   ):
+    test_metrics_probe = self._to_plain(test_metrics or {})
+    if any(key.startswith("label_") for key in test_metrics_probe.keys()):
+      return self._write_final_report_multitask(
+        epoch_records=epoch_records,
+        best_valid_epoch=best_valid_epoch,
+        best_valid_loss=best_valid_loss,
+        best_valid_ckpt=best_valid_ckpt,
+        analysis_result_files=analysis_result_files or {},
+        analysis_metrics=analysis_metrics or {},
+        external_result_files=external_result_files or {},
+        external_test_metrics=external_test_metrics or {},
+      )
+
     def _normalize_epoch_records_for_trend(records: List[Dict[str, Any]]):
       normalized = []
       for item in records:
@@ -1192,3 +1400,251 @@ class ExperimentReporter(object):
     self._save_html(report_file, body)
     print_log(f"Saved final report to: {report_file}")
     return report_file
+
+  def _write_final_report_multitask(
+    self,
+    *,
+    epoch_records: List[Dict[str, Any]],
+    best_valid_epoch: Optional[int],
+    best_valid_loss: Optional[float],
+    best_valid_ckpt: Optional[Path],
+    analysis_result_files: Dict[str, Path],
+    analysis_metrics: Dict[str, Dict[str, Any]],
+    external_result_files: Dict[str, Path],
+    external_test_metrics: Dict[str, Dict[str, Any]],
+  ):
+    def _render_split_compare_table(metrics_by_split: Dict[str, Dict[str, Any]]):
+      split_order = ["train", "valid", "test"]
+      split_title_map = {
+        "train": "Train",
+        "valid": "Inner Valid",
+        "test": "Inner Test",
+      }
+      available_splits = [s for s in split_order if isinstance(metrics_by_split.get(s, None), dict) and len(metrics_by_split.get(s, {})) > 0]
+      if len(available_splits) == 0:
+        return "<p>N/A</p>"
+      preferred_rows = [
+        "loss", "acc", "auc", "kappa", "f1",
+        "precision_micro", "recall_micro", "f1_micro",
+        "f1_macro_valid",
+      ]
+      keys_union = []
+      seen = set()
+      for key in preferred_rows:
+        for split_name in available_splits:
+          if key in metrics_by_split[split_name]:
+            keys_union.append(key)
+            seen.add(key)
+            break
+      for split_name in available_splits:
+        for key in metrics_by_split[split_name].keys():
+          if key in seen:
+            continue
+          keys_union.append(key)
+          seen.add(key)
+      head_cells = "".join([f"<th>{html.escape(split_title_map.get(s, s.title()))}</th>" for s in available_splits])
+      rows = []
+      for metric_key in keys_union:
+        value_cells = []
+        for split_name in available_splits:
+          value = metrics_by_split[split_name].get(metric_key, "N/A")
+          value_cells.append(f"<td>{self._render_value_html(value)}</td>")
+        rows.append(
+          "<tr>"
+          f"<th>{html.escape(metric_key)}</th>"
+          + "".join(value_cells)
+          + "</tr>"
+        )
+      return (
+        "<div class='table-scroll-y'>"
+        "<table class='flat-table compare-table'>"
+        f"<tr><th>metric</th>{head_cells}</tr>"
+        + "".join(rows)
+        + "</table>"
+        "</div>"
+      )
+
+    def _render_external_summary_table(metrics_by_external: Dict[str, Dict[str, Any]]):
+      columns = ["loss", "acc", "auc", "kappa", "f1"]
+      if len(metrics_by_external) == 0:
+        return "<p>N/A</p>"
+      header = "<tr><th>dataset</th>" + "".join([f"<th>{c}</th>" for c in columns]) + "</tr>"
+      rows = []
+      for external_name, metrics in metrics_by_external.items():
+        plain = self._to_plain(metrics or {})
+        cells = [f"<td>{html.escape(str(external_name))}</td>"]
+        for col in columns:
+          cells.append(f"<td>{self._render_value_html(plain.get(col, 'N/A'))}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+      return (
+        "<div class='table-scroll-y'>"
+        "<table class='flat-table compare-table'>"
+        + header
+        + "".join(rows)
+        + "</table>"
+        "</div>"
+      )
+
+    task_defs = [
+      dict(name="level1", prefix="label_", task_key="label", class_names=self.display_class_names),
+      dict(name="level2", prefix="label_secondary_", task_key="label_secondary", class_names=self.display_secondary_class_names),
+    ]
+
+    def _pick_prefixed(metrics: Dict[str, Any], prefix: str):
+      plain = self._to_plain(metrics or {})
+      return {
+        key[len(prefix):]: value
+        for key, value in plain.items()
+        if key.startswith(prefix)
+      }
+
+    report_files = {}
+    for task in task_defs:
+      task_name = task["name"]
+      prefix = task["prefix"]
+      task_key = task["task_key"]
+      class_names = task["class_names"]
+      eval_blocks = []
+      summary_metrics_by_split: Dict[str, Dict[str, Any]] = {}
+      split_title_map = {
+        "train": "Train",
+        "valid": "Inner Valid",
+        "test": "Inner Test",
+      }
+      for split_name in ["train", "valid", "test"]:
+        result_file = analysis_result_files.get(split_name, None)
+        metric_dict = _pick_prefixed(analysis_metrics.get(split_name, {}), prefix)
+        if len(metric_dict) == 0:
+          continue
+        split_display_name = split_title_map.get(split_name, split_name.title())
+        if task_name == "level2":
+          conditional_dict = _pick_prefixed(
+            analysis_metrics.get(split_name, {}),
+            "label_secondary_conditional_",
+          )
+          if len(conditional_dict) > 0:
+            metric_dict.update(
+              {
+                f"conditional_{k}": v
+                for k, v in conditional_dict.items()
+              }
+            )
+        summary_metrics_by_split[split_name] = metric_dict
+        if result_file is None:
+          continue
+        figures = self.build_eval_figures(
+          result_file=Path(result_file),
+          file_prefix=f"{task_name}_{split_name}",
+          task_key=task_key,
+          class_names=class_names,
+        )
+        fig_html = "".join([f"<h5>{k.upper()}</h5>{v}" for k, v in figures.items()])
+        eval_blocks.append(
+          "<div class='card'>"
+          f"<h4>{html.escape(split_display_name)} Figures</h4>"
+          f"{fig_html if fig_html != '' else '<p>No figures generated.</p>'}"
+          "</div>"
+        )
+
+      external_blocks = []
+      external_summary_metrics: Dict[str, Dict[str, Any]] = {}
+      for external_name, external_result_file in external_result_files.items():
+        metric_dict = _pick_prefixed(external_test_metrics.get(external_name, {}), prefix)
+        external_summary_metrics[str(external_name)] = metric_dict
+        if len(metric_dict) == 0:
+          external_blocks.append(
+            "<div class='card'>"
+            f"<h4>{html.escape(external_name)}</h4>"
+            "<p>Skip this task because labels are missing.</p>"
+            "</div>"
+          )
+          continue
+        figures = self.build_eval_figures(
+          result_file=Path(external_result_file),
+          file_prefix=f"{task_name}_external_{external_name}",
+          task_key=task_key,
+          class_names=class_names,
+        )
+        fig_html = "".join([f"<h5>{k.upper()}</h5>{v}" for k, v in figures.items()])
+        external_blocks.append(
+          "<div class='card'>"
+          f"<h4>{html.escape(external_name)}</h4>"
+          f"{self._render_dict_as_table(metric_dict)}"
+          f"{fig_html if fig_html != '' else '<p>No figures generated.</p>'}"
+          "</div>"
+        )
+
+      valid_loss_chart = self._build_valid_loss_chart(epoch_records)
+      metric_chart = self._build_prefixed_epoch_metric_chart(
+        epoch_records=epoch_records,
+        metric_prefix=prefix,
+        title=f"Epoch Metrics Trend ({task_name})",
+      )
+      trend_blocks = []
+      if valid_loss_chart is not None:
+        trend_blocks.append("<h4>Valid Loss Trend</h4>" + valid_loss_chart)
+      if metric_chart is not None:
+        trend_blocks.append(f"<h4>{html.escape(task_name)} Metric Trend</h4>" + metric_chart)
+
+      header = self._render_header(
+        title=f"BREXI Experiment Report ({task_name})",
+        subtitle=f"best_epoch={best_valid_epoch} | generated_by=slimai.runner.report",
+        signature=self.signature,
+      )
+      leakage_warning = (
+        "<section class='card'>"
+        "<h3>Data Leakage Warning</h3>"
+        "<p>Current split is row-level and may contain patient-level leakage. "
+        "Metrics are for analysis and should not be treated as unbiased generalization estimates.</p>"
+        "</section>"
+      )
+      run_summary = dict(
+        best_valid_epoch=best_valid_epoch,
+        best_valid_loss=best_valid_loss,
+        best_ckpt=(str(best_valid_ckpt) if best_valid_ckpt else "N/A"),
+      )
+      body = (
+        f"{header}"
+        "<section class='card' id='summary'><h3>Summary</h3>"
+        "<h4>Run</h4>"
+        f"{self._render_dict_as_table(run_summary)}"
+        "<h4>Train / Inner Valid / Inner Test</h4>"
+        f"{_render_split_compare_table(summary_metrics_by_split)}"
+        "<h4>External Test</h4>"
+        f"{_render_external_summary_table(external_summary_metrics)}"
+        "</section>"
+        f"{leakage_warning}"
+        f"<section class='card' id='trend'><h3>Trend Analysis</h3>{''.join(trend_blocks) if len(trend_blocks) > 0 else '<p>N/A</p>'}</section>"
+        f"<section class='card'><h3>Epoch Metrics Table</h3>{self._render_epoch_table(epoch_records)}</section>"
+        "<section class='card' id='figures'><h3>Metrics Analysis</h3>"
+        f"{''.join(eval_blocks) if len(eval_blocks) > 0 else '<p>No figures generated.</p>'}"
+        "</section>"
+        "<section class='card'><h3>External Test Eval Figures</h3>"
+        f"{''.join(external_blocks) if len(external_blocks) > 0 else '<p>No external outputs.</p>'}"
+        "</section>"
+        f"<section class='card' id='dataset'><h3>Dataset Distribution</h3>{self._render_dataset_section()}</section>"
+      )
+      report_file = self.work_dir / f"report_{task_name}.html"
+      self._save_html(report_file, body)
+      report_files[task_name] = report_file
+
+    index_header = self._render_header(
+      title="BREXI Experiment Report",
+      subtitle=f"best_epoch={best_valid_epoch} | generated_by=slimai.runner.report",
+      signature=self.signature,
+    )
+    links = []
+    for task_name, report_file in report_files.items():
+      links.append(
+        f"<li><a href='{html.escape(report_file.name)}'>{html.escape(task_name)} report</a></li>"
+      )
+    index_body = (
+      f"{index_header}"
+      "<section class='card'><h3>Report Index</h3>"
+      f"<ul>{''.join(links)}</ul>"
+      "</section>"
+    )
+    index_file = self.work_dir / "report.html"
+    self._save_html(index_file, index_body)
+    print_log(f"Saved final report to: {index_file}")
+    return index_file

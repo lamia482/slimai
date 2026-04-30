@@ -54,6 +54,23 @@ class DataSample(BaseDataElement):
     """
 
     # Separate values into iterables and non-iterables
+    def _collect_batch_sizes(value):
+      if isinstance(value, (list, tuple, np.ndarray, torch.Tensor)):
+        return [len(value)]
+      if isinstance(value, dict):
+        sizes = []
+        for v in value.values():
+          sizes.extend(_collect_batch_sizes(v))
+        return sizes
+      return []
+
+    def _slice_value(value, index):
+      if isinstance(value, (list, tuple, np.ndarray, torch.Tensor)):
+        return value[index]
+      if isinstance(value, dict):
+        return {k: _slice_value(v, index) for k, v in value.items()}
+      return value
+
     batch_size = []
     non_iterable_data = {}
     array_keys, array_values = [], []
@@ -65,12 +82,9 @@ class DataSample(BaseDataElement):
         array_values.append(value)
         batch_size.append(len(value))
       elif isinstance(value, dict):
-        assert (
-          all(map(lambda x: (not isinstance(x, dict)), value.values()))
-        ), "dict_values cannot be a dict"
         dict_keys.append(key)
         dict_values.append(value)
-        batch_size.extend([len(v) for v in value.values()])
+        batch_size.extend(_collect_batch_sizes(value))
       else:
         non_iterable_data[key] = value
 
@@ -86,7 +100,7 @@ class DataSample(BaseDataElement):
         if key in array_keys:
           result[key] = value[i]
         elif key in dict_keys:
-          result[key] = {k: v[i] for k, v in value.items()}
+          result[key] = _slice_value(value, i)
         else:
           result[key] = value
 

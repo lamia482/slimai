@@ -1,6 +1,7 @@
 import torch
 import mmengine
-from typing import Union, Dict, List, Tuple
+import torch.nn.functional as F
+from typing import Any, Dict, List, Optional, Tuple, Union
 from slimai.helper.help_utils import print_log
 from slimai.helper.help_build import MODELS, build_model
 from slimai.helper.utils import PytorchNetworkUtils, get_cacher
@@ -10,6 +11,7 @@ from .cls_arch import ClassificationArch
 
 __all__ = [
   "MIL",
+  "HierarchicalMIL",
 ]
 
 @MODELS.register_module()
@@ -176,5 +178,289 @@ class MIL(ClassificationArch):
         tailk_atten_scores=tailk_scores,
       ))
 
+    return batch_info
+
+
+@MODELS.register_module()
+class HierarchicalMIL(MIL):
+  def __init__(
+    self,
+    *,
+    backbone=None,
+    neck=None,
+    primary_head=None,
+    secondary_heads: Optional[Dict[str, dict]] = None,
+    head=None,  # alias of primary_head
+    loss=None,
+    solver=None,
+    embedding_group_size=1,
+    freeze_backbone=False,
+    secondary_global_parent_idx: Optional[List[int]] = None,
+    secondary_global_local_idx: Optional[List[int]] = None,
+    primary_head_keys: Optional[List[str]] = None,
+  ):
+    self.secondary_heads_cfg = secondary_heads or {}
+    self.secondary_global_parent_idx = list(secondary_global_parent_idx or [])
+    self.secondary_global_local_idx = list(secondary_global_local_idx or [])
+    self.primary_head_keys = list(primary_head_keys or [])
+    self.global_secondary_num_classes = len(self.secondary_global_parent_idx)
+    if primary_head is None:
+      primary_head = head
+    super().__init__(
+      backbone=backbone,
+      neck=neck,
+      head=primary_head,
+      loss=loss,
+      solver=solver,
+      embedding_group_size=embedding_group_size,
+      freeze_backbone=freeze_backbone,
+    )
+    if len(self.primary_head_keys) == 0:
+      self.primary_head_keys = sorted(list(self.secondary_heads_cfg.keys()))
+    self._global_index_lookup = {
+      (int(parent), int(local)): int(global_idx)
+      for global_idx, (parent, local) in enumerate(
+        zip(self.secondary_global_parent_idx, self.secondary_global_local_idx)
+      )
+    }
+    return
+
+  def init_layers(self, backbone, neck, head) -> torch.nn.Module:
+    if head is None:
+      raise ValueError("`primary_head` (or `head`) must be provided for HierarchicalMIL.")
+    if len(self.secondary_heads_cfg) == 0:
+      raise ValueError("`secondary_heads` must be provided for HierarchicalMIL.")
+    backbone_module = build_model(backbone)
+    neck_module = build_model(neck)
+    primary_head = build_model(head)
+    secondary_heads = torch.nn.ModuleDict(
+      {name: build_model(cfg) for name, cfg in self.secondary_heads_cfg.items()}
+    )
+    return torch.nn.ModuleDict(
+      dict(
+        backbone=backbone_module,
+        neck=neck_module,
+        primary_head=primary_head,
+        secondary_heads=secondary_heads,
+      )
+    )
+
+  def _forward_tensor(
+    self,
+    batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]],
+    return_flow: bool = False
+  ) -> Union[Tuple[Any, ...], Dict[str, Any]]:
+    def forward_backbone(images, group_size=self.embedding_group_size):
+      if group_size <= 0:
+        group_size = len(images)
+      output = []
+      if self.freeze_backbone:
+        for i in range(0, len(images), group_size):
+          with torch.inference_mode():
+            embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
+          output.append(embedding)
+      else:
+        for i in range(0, len(images), group_size):
+          embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
+          output.append(embedding)
+      return torch.cat(output, dim=0)
+
+    meta = getattr(self, "meta")
+    embedding_list = []
+    for vis_image, use_cache, embedding, embedding_key, visual_key in zip(
+      batch_data, meta["use_cache"],
+      meta.pop("embedding"),
+      meta["embedding_key"], meta["visual_key"]
+    ):
+      if (not use_cache) or (embedding is None):
+        embedding = forward_backbone(vis_image)
+      embedding_list.append(embedding)
+      if not use_cache:
+        continue
+      if not self.cacher.has(embedding_key):
+        self.cacher.put(embedding_key, embedding)
+      if not self.cacher.has(visual_key):
+        self.cacher.put(visual_key, vis_image)
+
+    backbone = embedding_list
+    neck, atten_weights = self.model.neck(backbone) # type: ignore
+    primary_logits = self.model.primary_head(neck) # type: ignore
+    secondary_logits = {
+      name: head(neck)
+      for name, head in self.model.secondary_heads.items() # type: ignore
+    }
+
+    if return_flow:
+      return dict(
+        backbone=backbone,
+        atten_weights=atten_weights,
+        neck=neck,
+        primary_logits=primary_logits,
+        secondary_logits=secondary_logits,
+      )
+    return atten_weights, primary_logits, secondary_logits
+
+  def _compute_secondary_outputs(self, *, primary_logits, secondary_logits):
+    primary_probs = torch.softmax(primary_logits, dim=1)
+    batch_size = int(primary_probs.shape[0])
+    if self.global_secondary_num_classes <= 0:
+      zeros = torch.zeros((batch_size,), dtype=torch.int64, device=primary_probs.device)
+      return dict(
+        softmax=torch.zeros((batch_size, 0), dtype=primary_probs.dtype, device=primary_probs.device),
+        scores=torch.zeros((batch_size,), dtype=primary_probs.dtype, device=primary_probs.device),
+        labels=zeros,
+        conditional_labels=zeros,
+      )
+
+    secondary_probs = {
+      name: torch.softmax(logits, dim=1)
+      for name, logits in secondary_logits.items()
+    }
+    marginal = torch.zeros(
+      (batch_size, self.global_secondary_num_classes),
+      dtype=primary_probs.dtype,
+      device=primary_probs.device,
+    )
+    for global_idx, (parent_idx, local_idx) in enumerate(
+      zip(self.secondary_global_parent_idx, self.secondary_global_local_idx)
+    ):
+      parent_key = self.primary_head_keys[int(parent_idx)]
+      parent_prob = primary_probs[:, int(parent_idx)]
+      local_prob = secondary_probs[parent_key][:, int(local_idx)]
+      marginal[:, global_idx] = parent_prob * local_prob
+    marginal = marginal / marginal.sum(dim=1, keepdim=True).clamp_min(1e-12)
+
+    marginal_scores, marginal_labels = marginal.max(dim=1)
+    primary_labels = primary_probs.argmax(dim=1)
+    conditional_labels = torch.zeros_like(primary_labels)
+    for sample_idx in range(batch_size):
+      parent_idx = int(primary_labels[sample_idx].item())
+      parent_key = self.primary_head_keys[parent_idx]
+      local_idx = int(secondary_probs[parent_key][sample_idx].argmax().item())
+      conditional_labels[sample_idx] = int(
+        self._global_index_lookup.get((parent_idx, local_idx), -1)
+      )
+    return dict(
+      softmax=marginal,
+      scores=marginal_scores,
+      labels=marginal_labels,
+      conditional_labels=conditional_labels,
+    )
+
+  def _forward_loss(self, embedding_dict: Dict[str, Any], batch_info: DataSample) -> Dict[str, torch.Tensor]:
+    if not hasattr(self.loss, "primary_loss") or not hasattr(self.loss, "secondary_loss"):
+      raise ValueError("HierarchicalMIL requires HierarchicalMILLoss.")
+
+    primary_logits = embedding_dict["primary_logits"]
+    secondary_logits = embedding_dict["secondary_logits"]
+    primary_targets = batch_info.label # type: ignore
+    secondary_local_targets = getattr(batch_info, "label_secondary_local", None)
+    if secondary_local_targets is None:
+      secondary_local_targets = torch.full_like(primary_targets, fill_value=-1)
+
+    primary_loss_value = self.loss.primary_loss(primary_logits, primary_targets) # type: ignore
+
+    secondary_loss_sum = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
+    secondary_valid_num = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
+    secondary_valid_mask = torch.zeros_like(primary_targets, dtype=torch.bool)
+    for parent_idx, parent_key in enumerate(self.primary_head_keys):
+      parent_mask = (primary_targets == int(parent_idx))
+      local_targets = secondary_local_targets[parent_mask]
+      if local_targets.numel() == 0:
+        continue
+      logits = secondary_logits[parent_key][parent_mask]
+      if logits.shape[1] <= 1:
+        continue
+      valid_mask = (local_targets >= 0)
+      if not valid_mask.any():
+        continue
+      group_logits = logits[valid_mask]
+      group_targets = local_targets[valid_mask]
+      group_loss = self.loss.secondary_loss(group_logits, group_targets) # type: ignore
+      group_num = torch.tensor(float(group_targets.shape[0]), dtype=primary_logits.dtype, device=primary_logits.device)
+      secondary_loss_sum += group_loss * group_num
+      secondary_valid_num += group_num
+      parent_indices = parent_mask.nonzero(as_tuple=False).reshape(-1)
+      secondary_valid_mask[parent_indices[valid_mask]] = True
+    if secondary_valid_num.item() > 0:
+      secondary_loss_value = secondary_loss_sum / secondary_valid_num
+    else:
+      secondary_loss_value = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
+
+    secondary_output = self._compute_secondary_outputs(
+      primary_logits=primary_logits,
+      secondary_logits=secondary_logits,
+    )
+    secondary_parent_probs = torch.zeros_like(torch.softmax(primary_logits, dim=1))
+    for global_idx, parent_idx in enumerate(self.secondary_global_parent_idx):
+      secondary_parent_probs[:, int(parent_idx)] += secondary_output["softmax"][:, int(global_idx)]
+    primary_log_probs = torch.log_softmax(primary_logits, dim=1)
+    consistency_loss_value = F.kl_div(
+      primary_log_probs,
+      secondary_parent_probs.clamp_min(1e-12),
+      reduction="batchmean",
+    )
+
+    loss = self.loss( # type: ignore
+      primary_loss_value=primary_loss_value,
+      secondary_loss_value=secondary_loss_value,
+      secondary_valid_mask=secondary_valid_mask,
+      consistency_loss=consistency_loss_value,
+    )
+    return loss
+
+  def _postprocess(self, batch_data, batch_info: DataSample) -> DataSample:
+    if isinstance(batch_data, dict):
+      atten_weights = batch_data["atten_weights"]
+      primary_logits = batch_data["primary_logits"]
+      secondary_logits = batch_data["secondary_logits"]
+    else:
+      atten_weights, primary_logits, secondary_logits = batch_data
+
+    primary_softmax = torch.softmax(primary_logits, dim=1)
+    primary_scores = primary_softmax.max(dim=1).values
+    primary_labels = primary_softmax.argmax(dim=1)
+    secondary_output = self._compute_secondary_outputs(
+      primary_logits=primary_logits,
+      secondary_logits=secondary_logits,
+    )
+
+    batch_info.output = dict(
+      logits=primary_logits,
+      softmax=primary_softmax,
+      scores=primary_scores,
+      labels=primary_labels,
+      label=dict(
+        logits=primary_logits,
+        softmax=primary_softmax,
+        scores=primary_scores,
+        labels=primary_labels,
+      ),
+      label_secondary=dict(
+        logits=None,
+        softmax=secondary_output["softmax"],
+        scores=secondary_output["scores"],
+        labels=secondary_output["labels"],
+      ),
+      label_secondary_conditional=dict(
+        logits=None,
+        softmax=secondary_output["softmax"],
+        scores=secondary_output["scores"],
+        labels=secondary_output["conditional_labels"],
+      ),
+    )
+
+    if atten_weights and all(torch.is_tensor(al) for al in atten_weights):
+      topk = 8 * 8
+      atten_topk = [al.topk(k=min(topk, al.shape[-1]), dim=-1, largest=True) for al in atten_weights]
+      atten_tailk = [al.topk(k=min(topk, al.shape[-1]), dim=-1, largest=False) for al in atten_weights]
+      topk_scores, topk_indices = list(map(list, zip(*atten_topk)))
+      tailk_scores, tailk_indices = list(map(list, zip(*atten_tailk)))
+      batch_info.output.update(dict(
+        topk_atten_indices=topk_indices,
+        topk_atten_scores=topk_scores,
+        tailk_atten_indices=tailk_indices,
+        tailk_atten_scores=tailk_scores,
+      ))
     return batch_info
   

@@ -1,5 +1,5 @@
 import os.path as osp
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import h5py
 import mmengine
@@ -15,7 +15,8 @@ from .sample_strategy import SampleStrategy
 
 
 LabelType = Union[int, str]
-RecordType = Tuple[str, LabelType]
+RecordLabelType = Union[LabelType, Dict[str, Any]]
+RecordType = Tuple[str, RecordLabelType]
 
 
 @DATASETS.register_module()
@@ -26,6 +27,7 @@ class H5Dataset(MILDataset):
     key,
     *,
     label_mapping: Optional[Dict[LabelType, int]] = None,
+    secondary_label_mapping: Optional[Dict[LabelType, int]] = None,
     balance: bool = False,
     sample_strategy: Optional[str] = None,
     preload: bool = False,
@@ -101,6 +103,13 @@ class H5Dataset(MILDataset):
     max_label = max(labels)
     return [str(i) for i in range(int(max_label) + 1)]
 
+  def _infer_secondary_class_names(self):
+    if not self.annotations or not self.annotations.get("label_secondary"):
+      return []
+    labels = self.annotations["label_secondary"]
+    max_label = max(labels)
+    return [str(i) for i in range(int(max_label) + 1)]
+
   @property
   def length(self):
     size = len(self.indices)
@@ -138,9 +147,29 @@ class H5Dataset(MILDataset):
       return int(label)
     return int(self.label_mapping[label])
 
+  def map_secondary_label(self, label: Optional[LabelType]) -> int:
+    if label is None:
+      return -1
+    secondary_mapping = getattr(self, "secondary_label_mapping", None)
+    if secondary_mapping is None:
+      return int(label)
+    return int(secondary_mapping[label])
+
+  def _normalize_record(self, record: RecordType):
+    embed_path, labels = record
+    if isinstance(labels, dict):
+      label = labels.get("label", None)
+      label_secondary = labels.get("label_secondary", None)
+      label_secondary_local = labels.get("label_secondary_local", None)
+      if label_secondary_local is not None:
+        label_secondary_local = int(label_secondary_local)
+      return embed_path, label, label_secondary, label_secondary_local
+    return embed_path, labels, None, None
+
   def filter_invalid_records(self, records: List[RecordType]) -> List[RecordType]:
     valid_records = []
-    for h5_path, label in records:
+    for record in records:
+      h5_path, label, label_secondary, label_secondary_local = self._normalize_record(record)
       embed_path = self.to_embedding_path(h5_path)
       if not osp.exists(embed_path):
         print_log(f"Embedding file not found: {embed_path}. Skip this record.", level="WARNING")
@@ -149,7 +178,15 @@ class H5Dataset(MILDataset):
       if mapped_label < 0:
         print_log(f"Label is negative for {embed_path}. Skip this record.", level="WARNING")
         continue
-      valid_records.append((h5_path, label))
+      if label_secondary is not None:
+        mapped_secondary = self.map_secondary_label(label_secondary)
+        if mapped_secondary < 0:
+          print_log(f"Secondary label is negative for {embed_path}. Skip this record.", level="WARNING")
+          continue
+      if label_secondary is not None and label_secondary_local is not None and int(label_secondary_local) < 0:
+        print_log(f"Secondary local label is negative for {embed_path}. Skip this record.", level="WARNING")
+        continue
+      valid_records.append(record)
     return valid_records
 
   def get_embedding(self, h5_path: str):
@@ -178,6 +215,16 @@ class H5Dataset(MILDataset):
   def select_sample(self, item):
     embed_path = self.files[item]
     label = self.annotations["label"][item]
+    label_secondary = (
+      self.annotations["label_secondary"][item]
+      if "label_secondary" in self.annotations
+      else None
+    )
+    label_secondary_local = (
+      self.annotations["label_secondary_local"][item]
+      if "label_secondary_local" in self.annotations
+      else None
+    )
     embedding, coords = self.get_embedding(embed_path)
     embedding = self.apply_augmenter(embedding)
 
@@ -227,6 +274,10 @@ class H5Dataset(MILDataset):
         h5_path=embed_path,
       ),
     )
+    if label_secondary is not None:
+      data["label_secondary"] = int(label_secondary)
+    if label_secondary_local is not None:
+      data["label_secondary_local"] = int(label_secondary_local)
     return data
 
 
@@ -237,6 +288,7 @@ class TorchEmbeddingDataset(H5Dataset):
     records=None,
     *,
     label_mapping: Optional[Dict[LabelType, int]] = None,
+    secondary_label_mapping: Optional[Dict[LabelType, int]] = None,
     balance: bool = False,
     sample_strategy: Optional[str] = None,
     preload: bool = False,
@@ -260,6 +312,7 @@ class TorchEmbeddingDataset(H5Dataset):
     self.key = kwargs.pop("key", "excel")
     self.desc = desc or "TorchEmbeddingDataset<excel>"
     self.label_mapping = self._normalize_label_mapping(label_mapping)
+    self.secondary_label_mapping = self._normalize_label_mapping(secondary_label_mapping)
     self.embedding_tag = embedding_tag
     self.use_cache = use_cache
     self.cache_embedding_key = cache_embedding_key
@@ -277,6 +330,8 @@ class TorchEmbeddingDataset(H5Dataset):
     self.source = source
     self.split_file = None
     self.split_stat = None
+    self.split_diag = None
+    self.split_diag_file = None
 
     if augmenter is None:
       self.augmenter = None
@@ -297,13 +352,27 @@ class TorchEmbeddingDataset(H5Dataset):
       records = source_data[split]
       self.split_file = source_data.get("split_file", None)
       self.split_stat = source_data.get("split_stat", None)
+      self.split_diag = source_data.get("split_diag", None)
+      self.split_diag_file = source_data.get("split_diag_file", None)
 
     valid_records: List[RecordType] = self.filter_invalid_records(records)
-    self.files = [self.to_embedding_path(embed_path) for embed_path, _ in valid_records]
+    normalized_records = [self._normalize_record(record) for record in valid_records]
+    self.files = [self.to_embedding_path(embed_path) for embed_path, _, _, _ in normalized_records]
+
+    labels = [self.map_label(label) for _, label, _, _ in normalized_records]
+    has_secondary_labels = any(label_secondary is not None for _, _, label_secondary, _ in normalized_records)
     self.ann_keys = ["label"]
-    self.annotations = dict(
-      label=[self.map_label(label) for _, label in valid_records],
-    )
+    self.annotations = dict(label=labels)
+    if has_secondary_labels:
+      self.ann_keys.extend(["label_secondary", "label_secondary_local"])
+      self.annotations["label_secondary"] = [
+        self.map_secondary_label(label_secondary)
+        for _, _, label_secondary, _ in normalized_records
+      ]
+      self.annotations["label_secondary_local"] = [
+        int(-1 if label_secondary_local is None else label_secondary_local)
+        for _, _, _, label_secondary_local in normalized_records
+      ]
     self.indices = list(range(len(self.files)))
     if sample_strategy is None and balance:
       sample_strategy = "balance"
@@ -315,6 +384,7 @@ class TorchEmbeddingDataset(H5Dataset):
         self.indices,
       )
     self.class_names = self._infer_class_names()
+    self.class_names_secondary = self._infer_secondary_class_names()
 
     if preload:
       for embed_path in tqdm(self.files, desc=f"Preloading<{self.key}>"):
@@ -337,6 +407,7 @@ class TorchEmbeddingDataset(H5Dataset):
       f"\tSplit: {self.split}\n"
       f"\tSplit file: {self.split_file}\n"
       f"\tSplit stat: {self.split_stat}\n"
+      f"\tSplit diag file: {self.split_diag_file}\n"
       f"\tDescription: {self.desc}\n"
     )
 

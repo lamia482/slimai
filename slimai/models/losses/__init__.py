@@ -2,7 +2,7 @@ from .basic_classification_loss import BasicClassificationLoss
 from .dino_loss import DINOLoss
 from .focal_loss import FocalLoss
 from .kappa_loss import KappaLoss
-from .mil_loss import MILLoss
+from .mil_loss import HierarchicalMILLoss, MILLoss
 
 
 __all__ = [
@@ -11,4 +11,5 @@ __all__ = [
   "FocalLoss",
   "KappaLoss",
   "MILLoss",
+  "HierarchicalMILLoss",
 ]

@@ -1,4 +1,6 @@
 import time
+import copy
+import json
 import torch
 import shutil
 import matplotlib
@@ -107,6 +109,7 @@ class Runner(object):
       external_test_dataloaders=self.external_test_dataloaders,
       model_desc=self.model_desc,
     )
+    self.dump_runtime_metadata()
     return
   
   def build_components(self, cfg):
@@ -179,19 +182,29 @@ class Runner(object):
       output, loss_dict = train_forward_func(batch_data, batch_info)
       forward_latency = time.time() - forward_start_time
 
-      total_loss = None
-      loss_keys = list(loss_dict.keys())
-      for loss_name in loss_keys:
-        loss_value = loss_dict[loss_name]
-        if "loss" in loss_name:
-          if total_loss is None:
-            total_loss = torch.zeros_like(loss_value)
-          loss_dict[f"{loss_name}^"] = loss_dict.pop(loss_name) # add ^ to loss name for visualization
-          total_loss += loss_value
-          
-      assert (
-        total_loss is not None
-      ), "losses name should contain 'loss' and so to go backward, please check your loss name, backward loss shows with hat '^'."
+      if "loss" in loss_dict:
+        total_loss = loss_dict["loss"]
+      else:
+        total_loss = None
+        loss_keys = list(loss_dict.keys())
+        for loss_name in loss_keys:
+          loss_value = loss_dict[loss_name]
+          if "loss" in loss_name:
+            if total_loss is None:
+              total_loss = torch.zeros_like(loss_value)
+            total_loss += loss_value
+      assert total_loss is not None, (
+        "loss dict must contain key 'loss' or at least one key including 'loss'."
+      )
+
+      # add '^' to loss names for visualization; do not rename main "loss" key
+      renamed_loss_dict = {}
+      for loss_name, loss_value in loss_dict.items():
+        if "loss" in loss_name and loss_name != "loss":
+          renamed_loss_dict[f"{loss_name}^"] = loss_value
+        else:
+          renamed_loss_dict[loss_name] = loss_value
+      loss_dict = renamed_loss_dict
       
       backward_start_time = time.time()
       self.gradient.step(
@@ -285,7 +298,7 @@ class Runner(object):
 
       # after epoch # save checkpoint and evaluate by epoch strategy, reset avg loss and step
       self.arch.epoch_succeed_hooks(runner=self)
-    self.evaluate_test_with_best_valid()
+    self.evaluate_all_with_best_valid()
     return
   
   @torch.inference_mode()
@@ -338,6 +351,18 @@ class Runner(object):
       return {k: self._tensor_to_python(v) for k, v in value.items()}
     return value
 
+  def _resolve_best_valid_metric(self, metric_plain: Dict[str, Any]):
+    metric_name = self.cfg.RUNNER.get("best_ckpt_metric", "loss")
+    if metric_name in ["loss", "valid_loss"]:
+      candidate = metric_plain.get("loss", None)
+    else:
+      candidate = metric_plain.get(metric_name, None)
+      if candidate is None:
+        candidate = metric_plain.get("loss", None)
+    if isinstance(candidate, list):
+      candidate = candidate[0] if len(candidate) > 0 else None
+    return metric_name, candidate
+
   @staticmethod
   def _update_symlink(link_path: Path, target_path: Path) -> None:
     link_path = Path(link_path)
@@ -376,13 +401,21 @@ class Runner(object):
       batch_size_tensor = torch.tensor(float(batch_size), device=self.dist.env.device)
       total_samples += batch_size_tensor
 
-      total_loss = torch.zeros((), device=self.dist.env.device, dtype=torch.float32)
+      if "loss" in loss_dict:
+        total_loss = loss_dict["loss"].detach().to(device=self.dist.env.device, dtype=torch.float32)
+      else:
+        total_loss = None
       for name, value in loss_dict.items():
         loss_value = value.detach().to(device=self.dist.env.device, dtype=torch.float32)
-        total_loss += loss_value
+        if ("loss" not in loss_dict) and ("loss" in name):
+          if total_loss is None:
+            total_loss = torch.zeros((), device=self.dist.env.device, dtype=torch.float32)
+          total_loss += loss_value
         if name not in loss_sums:
           loss_sums[name] = torch.zeros_like(loss_value)
         loss_sums[name] += loss_value * batch_size_tensor
+      if total_loss is None:
+        total_loss = torch.zeros((), device=self.dist.env.device, dtype=torch.float32)
       if "loss" not in loss_sums:
         loss_sums["loss"] = torch.zeros_like(total_loss)
       loss_sums["loss"] += total_loss * batch_size_tensor
@@ -497,7 +530,7 @@ class Runner(object):
       return metrics
 
     metric_plain = self._tensor_to_python(metrics)
-    valid_loss = metric_plain.get("loss", None)
+    best_metric_name, valid_loss = self._resolve_best_valid_metric(metric_plain)
     ckpt_path = getattr(self, "last_epoch_ckpt_path", None)
     if isinstance(ckpt_path, Path):
       ckpt_path = ckpt_path.resolve()
@@ -508,7 +541,9 @@ class Runner(object):
         self.best_valid_epoch = int(epoch)
         if self.dist.env.is_main_process() and isinstance(ckpt_path, Path) and ckpt_path.exists():
           self._update_symlink(self.best_valid_ckpt_path, ckpt_path)
-          help_utils.print_log(f"Update best valid checkpoint: {self.best_valid_ckpt_path}")
+          help_utils.print_log(
+            f"Update best valid checkpoint by {best_metric_name}: {self.best_valid_ckpt_path}"
+          )
 
     epoch_record = dict(
       epoch=int(epoch),
@@ -531,7 +566,23 @@ class Runner(object):
     self.dist.env.sync()
     return metrics
 
-  def evaluate_test_with_best_valid(self):
+  def _build_train_analysis_dataloader(self):
+    if self.cfg.get("TRAIN_LOADER", None) is None:
+      return None
+    cfg_loader = copy.deepcopy(self.cfg.TRAIN_LOADER)
+    cfg_loader["shuffle"] = False
+    dataset_cfg = cfg_loader.get("dataset", {})
+    if isinstance(dataset_cfg, dict):
+      dataset_cfg["balance"] = False
+      dataset_cfg["repeat"] = 1
+      dataset_cfg["augmenter"] = None
+      if "with_augment" in dataset_cfg:
+        dataset_cfg["with_augment"] = False
+      if subsample := self.cfg.get("TRAIN_EVAL_SUBSAMPLE", None):
+        dataset_cfg["max_sample_num"] = subsample
+    return help_build.build_dataloader(cfg_loader)
+
+  def evaluate_all_with_best_valid(self):
     if self.test_dataloader is None:
       return None
     best_ckpt = None
@@ -544,7 +595,7 @@ class Runner(object):
       help_utils.print_log("No best checkpoint found, skip final test evaluation", level="WARNING")
       return None
 
-    help_utils.print_log(f"Load best checkpoint for test: {best_ckpt}")
+    help_utils.print_log(f"Load best checkpoint for analysis: {best_ckpt}")
     ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=False)
     model = self.dist.get_summon_module(self.model)
     model.load_state_dict(ckpt["weight"], strict=True)
@@ -553,16 +604,35 @@ class Runner(object):
     best_epoch = self.best_valid_epoch
     if best_epoch is None:
       best_epoch = ckpt.get("epoch", "unknown")
-    test_result_file = self.work_dir / "results" / f"test_best_epoch_{best_epoch}.pkl"
-    test_metrics = self.evaluate(self.test_dataloader, test_result_file, phase="test_best", step=None)
-    test_metrics_plain = self._tensor_to_python(test_metrics)
+    train_analysis_loader = self._build_train_analysis_dataloader()
+    analysis_result_files = {}
+    analysis_metrics = {}
+
+    if train_analysis_loader is not None:
+      train_result_file = self.work_dir / "results" / f"analysis_train_best_epoch_{best_epoch}.pkl"
+      train_metrics = self.evaluate(train_analysis_loader, train_result_file, phase="train_analysis_best", step=None)
+      analysis_result_files["train"] = train_result_file
+      analysis_metrics["train"] = self._tensor_to_python(train_metrics)
+
+    if self.valid_dataloader is not None:
+      valid_result_file = self.work_dir / "results" / f"analysis_valid_best_epoch_{best_epoch}.pkl"
+      valid_metrics = self.evaluate(self.valid_dataloader, valid_result_file, phase="valid_analysis_best", step=None)
+      analysis_result_files["valid"] = valid_result_file
+      analysis_metrics["valid"] = self._tensor_to_python(valid_metrics)
+
+    test_result_file = self.work_dir / "results" / f"analysis_test_best_epoch_{best_epoch}.pkl"
+    test_metrics = self.evaluate(self.test_dataloader, test_result_file, phase="test_analysis_best", step=None)
+    analysis_result_files["test"] = test_result_file
+    analysis_metrics["test"] = self._tensor_to_python(test_metrics)
+
+    test_metrics_plain = analysis_metrics["test"]
     external_result_files = {}
     external_test_metrics = {}
     for external_name, external_loader in getattr(self, "external_test_dataloaders", {}).items():
       if external_loader is None:
         continue
       external_result_file = (
-        self.work_dir / "results" / f"external_{external_name}_best_epoch_{best_epoch}.pkl"
+        self.work_dir / "results" / f"analysis_external_{external_name}_best_epoch_{best_epoch}.pkl"
       )
       external_metrics = self.evaluate(
         external_loader,
@@ -579,6 +649,8 @@ class Runner(object):
         best_valid_epoch=self.best_valid_epoch,
         best_valid_loss=(None if self.best_valid_epoch is None else self.best_valid_loss),
         best_valid_ckpt=best_ckpt,
+        analysis_result_files=analysis_result_files,
+        analysis_metrics=analysis_metrics,
         test_result_file=test_result_file,
         test_metrics=test_metrics_plain,
         external_result_files=external_result_files,
@@ -602,6 +674,28 @@ class Runner(object):
     help_utils.print_log(f"Parsed Config: \n{self.cfg.dump()}")
     help_utils.print_log(f"Dumped config to: {dst_config_file}")
 
+    # dump taxonomy metadata
+    try:
+      taxonomy_file = self.work_dir / "label_taxonomy.json"
+      taxonomy_payload = {}
+      for key in [
+        "LABEL_TAXONOMY",
+        "PRIMARY_LABEL_MAPPING",
+        "SECONDARY_LABEL_MAPPING",
+        "SECONDARY_TO_PRIMARY",
+        "SECONDARY_LOCAL_MAPPING",
+        "LABEL_LEVELS",
+        "TAXONOMY_VERSION",
+        "TAXONOMY_HASH",
+      ]:
+        value = self.cfg.get(key, None)
+        if value is not None:
+          taxonomy_payload[key] = value
+      taxonomy_file.write_text(json.dumps(taxonomy_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+      help_utils.print_log(f"Dumped taxonomy metadata to: {taxonomy_file}")
+    except Exception as e:
+      help_utils.print_log(f"Failed to dump taxonomy metadata: {e}", level="WARNING")
+
     # archive source code (exclude experiments so we do not copy work_dir into itself)
     try:
       source_code_dir = slimai.get_package_path()
@@ -619,4 +713,40 @@ class Runner(object):
     help_utils.print_log(f"Last git commit id: {slimai.get_last_commit_id()}")
 
     help_utils.print_log(f"Experiment work dir: {self.work_dir}")
+    return
+
+  def dump_runtime_metadata(self):
+    try:
+      dataset_meta_file = self.work_dir / "dataset_meta.json"
+      dataset_meta = {}
+      for split_name, dataloader in [
+        ("train", getattr(self, "train_dataloader", None)),
+        ("valid", getattr(self, "valid_dataloader", None)),
+        ("test", getattr(self, "test_dataloader", None)),
+      ]:
+        if dataloader is None:
+          continue
+        dataset = dataloader.dataset
+        dataset_meta[split_name] = dict(
+          split_file=getattr(dataset, "split_file", None),
+          split_stat=getattr(dataset, "split_stat", None),
+          split_diag=getattr(dataset, "split_diag", None),
+          split_diag_file=getattr(dataset, "split_diag_file", None),
+        )
+      external_meta = {}
+      for external_name, dataloader in getattr(self, "external_test_dataloaders", {}).items():
+        if dataloader is None:
+          continue
+        dataset = dataloader.dataset
+        external_meta[external_name] = dict(
+          split_file=getattr(dataset, "split_file", None),
+          split_stat=getattr(dataset, "split_stat", None),
+          split_diag=getattr(dataset, "split_diag", None),
+          split_diag_file=getattr(dataset, "split_diag_file", None),
+        )
+      dataset_meta["external"] = external_meta
+      dataset_meta_file.write_text(json.dumps(dataset_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+      help_utils.print_log(f"Dumped runtime dataset metadata to: {dataset_meta_file}")
+    except Exception as e:
+      help_utils.print_log(f"Failed to dump runtime dataset metadata: {e}", level="WARNING")
     return

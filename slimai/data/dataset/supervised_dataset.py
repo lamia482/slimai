@@ -149,7 +149,7 @@ class SupervisedDataset(BasicDataset):
     canvas_size = image.size()[-2:]
 
     for key in self.ann_keys:
-      if key == "label":
+      if key == "label" or key.startswith("label_"):
         data[key] = wrap_label(data[key])
       elif key == "mask":
         raise NotImplementedError("Mask annotation is not supported yet")

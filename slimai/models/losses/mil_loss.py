@@ -1,10 +1,11 @@
 import torch
-from typing import Dict, List
+from typing import Dict, List, Optional
 from slimai.helper.help_build import MODELS, build_loss
 
 
 __all__ = [
-  "MILLoss", 
+  "MILLoss",
+  "HierarchicalMILLoss",
 ]
 
 @MODELS.register_module()
@@ -44,3 +45,85 @@ class MILLoss(torch.nn.Module):
     loss["cls_loss"] = cls_loss
 
     return loss
+
+
+@MODELS.register_module()
+class HierarchicalMILLoss(torch.nn.Module):
+  def __init__(
+    self,
+    *,
+    primary_loss: Optional[dict] = None,
+    secondary_loss: Optional[dict] = None,
+    consistency_loss_weight: float = 0.0,
+    loss_weighting: str = "kendall",
+    log_var_min: float = -5.0,
+    log_var_max: float = 5.0,
+  ):
+    super().__init__()
+    if primary_loss is None:
+      primary_loss = dict(type="torch.nn.CrossEntropyLoss", label_smoothing=0.0)
+    if secondary_loss is None:
+      secondary_loss = dict(type="torch.nn.CrossEntropyLoss", label_smoothing=0.0)
+    self.primary_loss = build_loss(primary_loss)
+    self.secondary_loss = build_loss(secondary_loss)
+    self.consistency_loss_weight = float(consistency_loss_weight)
+    self.loss_weighting = loss_weighting
+    self.log_var_min = float(log_var_min)
+    self.log_var_max = float(log_var_max)
+
+    # Kendall uncertainty weighting parameters.
+    self.log_var_primary = torch.nn.Parameter(torch.zeros(()))
+    self.log_var_secondary = torch.nn.Parameter(torch.zeros(()))
+    return
+
+  def clamp_log_vars(self):
+    with torch.no_grad():
+      self.log_var_primary.clamp_(self.log_var_min, self.log_var_max)
+      self.log_var_secondary.clamp_(self.log_var_min, self.log_var_max)
+    return
+
+  def forward(
+    self,
+    *,
+    primary_loss_value: torch.Tensor,
+    secondary_loss_value: torch.Tensor,
+    secondary_valid_mask: torch.Tensor,
+    consistency_loss: Optional[torch.Tensor] = None,
+  ) -> Dict[str, torch.Tensor]:
+    self.clamp_log_vars()
+    if secondary_valid_mask.numel() > 0:
+      secondary_valid_mask = secondary_valid_mask.to(device=primary_loss_value.device, dtype=torch.bool)
+    primary_loss = primary_loss_value
+    secondary_loss_raw = secondary_loss_value
+
+    if self.loss_weighting == "kendall":
+      primary_weight = torch.exp(-self.log_var_primary)
+      secondary_weight = torch.exp(-self.log_var_secondary)
+      weighted_loss = (
+        primary_weight * primary_loss
+        + secondary_weight * secondary_loss_raw
+        + self.log_var_primary
+        + self.log_var_secondary
+      )
+    elif self.loss_weighting == "fixed":
+      primary_weight = torch.ones_like(primary_loss)
+      secondary_weight = torch.ones_like(secondary_loss_raw)
+      weighted_loss = primary_loss + secondary_loss_raw
+    else:
+      raise ValueError(f"Unsupported loss_weighting: {self.loss_weighting}")
+
+    consistency_loss_value = (
+      torch.zeros((), device=primary_loss.device, dtype=primary_loss.dtype)
+      if consistency_loss is None
+      else consistency_loss
+    )
+    total_loss = weighted_loss + self.consistency_loss_weight * consistency_loss_value
+    return dict(
+      loss=total_loss,
+      composite_loss=total_loss.detach(),
+      primary_loss=primary_loss.detach(),
+      secondary_loss=secondary_loss_raw.detach(),
+      consistency_loss=consistency_loss_value.detach(),
+      kendall_primary_weight=primary_weight.detach(),
+      kendall_secondary_weight=secondary_weight.detach(),
+    )

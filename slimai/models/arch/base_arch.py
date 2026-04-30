@@ -38,6 +38,7 @@ class BaseArch(object):
 
     # Initialize loss
     self.loss = self.init_loss(loss)
+    self.checkpointing(False)
     return
 
   def compile(self, compile: bool = False):

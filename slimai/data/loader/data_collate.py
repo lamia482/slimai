@@ -29,9 +29,15 @@ class DataCollate():
       self.image_key in keys
     ), "image_key must be in the keys of the batch"
     
+    label_like_keys = [k for k in keys if (k.startswith("label_") and k != self.label_key)]
+
     # pop attributes from original_batch for custom processing
     images = [v.pop(self.image_key) for v in original_batch if self.image_key in v]
     labels = [v.pop(self.label_key) for v in original_batch if self.label_key in v]
+    label_like_values = {
+      key: [v.pop(key) for v in original_batch if key in v]
+      for key in label_like_keys
+    }
     instances = [v.pop(self.instance_key) for v in original_batch if self.instance_key in v]
     masks = [v.pop(self.mask_key) for v in original_batch if self.mask_key in v]
     texts = [v.pop(self.text_key) for v in original_batch if self.text_key in v]
@@ -49,6 +55,10 @@ class DataCollate():
     data["width"], data["height"] = width, height
     
     labels = self.process_label(labels)
+    label_like_values = {
+      key: self.process_label(value)
+      for key, value in label_like_values.items()
+    }
     instances = self.process_instance(instances)
     masks = self.process_mask(masks)
     texts = self.process_text(texts)
@@ -61,6 +71,7 @@ class DataCollate():
         [images, labels, instances, masks, texts, metas]
       ) if v is not None
     })
+    data.update({k: v for k, v in label_like_values.items() if v is not None})
     
     return data
   
