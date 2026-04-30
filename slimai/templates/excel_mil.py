@@ -2,17 +2,18 @@
 import hashlib
 from datetime import datetime
 
-EXCEL_FILE = "/hzztai/slimai/_debug_/alias/projects/brexi/data/乳腺筛选结果_复旦中山全量.xlsx"
+EXCEL_FILE = "/hzztai/slimai/_debug_/alias/projects/brexi/data/乳腺筛选结果_「复旦中山」全量.xlsx"
 SHEET_NAME = "5-数据集"
-OUTPUT_SPLIT_FILE = "/hzztai/slimai/_debug_/alias/projects/brexi/output/乳腺筛选结果_复旦中山全量_5-数据集_split.xlsx"
+OUTPUT_SPLIT_FILE = "/hzztai/slimai/_debug_/alias/projects/brexi/data/乳腺筛选结果_「复旦中山」全量_5-数据集_split.xlsx"
 
 # Keep original Excel unchanged, and only map paths in runtime.
 PATH_MAPPING = [
-  ("/home/hzzt/shzs_embedding", "/mnt/wangqiang/server/192.168.1.67/shzs_embedding"),
+  ("/home/hzzt/shzs_embedding", "/.slimai/cache/shzs_embedding-valid"),
+  # ("/home/hzzt/shzs_embedding", "/.slimai/cache/shzs_embedding"),
 ]
 
 RANDOM_SEED = 10482
-SPLIT_RATIO = dict(train=0.8, valid=0.1, test=0.1)
+SPLIT_RATIO = dict(train=0.6, valid=0.2, test=0.2)
 assert abs(sum(SPLIT_RATIO.values()) - 1.0) < 1e-8, "SPLIT_RATIO must sum to 1.0"
 
 TARGET_NAME = "BREXI"
@@ -33,85 +34,27 @@ USE_DATA_BALANCE = False
 USE_DATA_AUGMENTER = False
 USE_FOCAL_LOSS = False
 
+BREXI_SOURCE = dict(
+  type="StratifiedSheetSource",
+  sheet_file=EXCEL_FILE,
+  sheet_name=SHEET_NAME,
+  file_col="EMBEDDING",
+  label_col="一级分类",
+  split_col="split",
+  output_split_file=OUTPUT_SPLIT_FILE,
+  random_seed=RANDOM_SEED,
+  split_ratio=SPLIT_RATIO,
+  label_mapping=LABEL_MAPPING,
+  path_mapping=PATH_MAPPING,
+  mapped_file_col="EMBEDDING_MAPPED",
+)
 
-def map_embedding_path(path):
-  path = str(path)
-  for src_prefix, dst_prefix in PATH_MAPPING:
-    if path.startswith(src_prefix):
-      return dst_prefix + path[len(src_prefix) :]
-    path = path.replace(src_prefix, dst_prefix, 1)
-  return path
-
-
-def _read_and_split_excel():
-  pd = __import__("pandas")
-  train_test_split = __import__(
-    "sklearn.model_selection", fromlist=["train_test_split"]
-  ).train_test_split
-  os_module = __import__("os")
-  Path = __import__("pathlib", fromlist=["Path"]).Path
-
-  df = pd.read_excel(EXCEL_FILE, sheet_name=SHEET_NAME).copy()
-  df["label_name"] = df["一级分类"]
-  df["label_idx"] = df["label_name"].map(LABEL_MAPPING)
-  df["EMBEDDING_MAPPED"] = df["EMBEDDING"].apply(
-    lambda x: map_embedding_path(x) if pd.notna(x) else x
-  )
-  df["split"] = "ignored"
-  df["ignore_reason"] = ""
-
-  valid_mask = (
-    df["EMBEDDING"].notna()
-    & df["label_idx"].notna()
-    & df["EMBEDDING_MAPPED"].notna()
-  )
-  df.loc[df["EMBEDDING"].isna(), "ignore_reason"] = "missing_embedding"
-  df.loc[df["label_idx"].isna(), "ignore_reason"] = "unknown_label"
-  df.loc[df["EMBEDDING_MAPPED"].isna(), "ignore_reason"] = "invalid_mapped_path"
-
-  usable_df = df[valid_mask].copy()
-  train_df, temp_df = train_test_split(
-    usable_df,
-    test_size=(1.0 - SPLIT_RATIO["train"]),
-    stratify=usable_df["label_name"],
-    random_state=RANDOM_SEED,
-  )
-  test_size_in_temp = SPLIT_RATIO["test"] / (SPLIT_RATIO["valid"] + SPLIT_RATIO["test"])
-  valid_df, test_df = train_test_split(
-    temp_df,
-    test_size=test_size_in_temp,
-    stratify=temp_df["label_name"],
-    random_state=RANDOM_SEED,
-  )
-
-  df.loc[train_df.index, "split"] = "train"
-  df.loc[valid_df.index, "split"] = "valid"
-  df.loc[test_df.index, "split"] = "test"
-
-  output_path = Path(OUTPUT_SPLIT_FILE)
-  os_module.makedirs(output_path.parent, exist_ok=True)
-  df.to_excel(output_path, sheet_name=f"{SHEET_NAME}_split", index=False)
-
-  def to_records(_df):
-    return list(zip(_df["EMBEDDING_MAPPED"].tolist(), _df["label_name"].tolist()))
-
-  return dict(
-    train=to_records(train_df),
-    valid=to_records(valid_df),
-    test=to_records(test_df),
-    split_file=output_path.as_posix(),
-    split_stat=dict(
-      total=int(len(df)),
-      usable=int(len(usable_df)),
-      ignored=int((~valid_mask).sum()),
-      train=int(len(train_df)),
-      valid=int(len(valid_df)),
-      test=int(len(test_df)),
-    ),
-  )
-
-
-SPLIT_DATA = _read_and_split_excel()
+EXTERNAL_EXCEL_FILES = {
+  # "external_a": "/hzztai/slimai/_debug_/alias/projects/brexi/data/乳腺筛选结果_「复旦中山」全量.xlsx",
+  # "external_b": "/hzztai/slimai/_debug_/alias/projects/brexi/data/乳腺筛选结果_「复旦中山」全量.xlsx",
+  # "external_c": "/hzztai/slimai/_debug_/alias/projects/brexi/data/乳腺筛选结果_「复旦中山」全量.xlsx",
+}
+EXTERNAL_OUTPUT_DIR = "/hzztai/slimai/_debug_/alias/projects/brexi/output"
 
 
 TRAIN_AUGMENTER = dict(
@@ -126,11 +69,12 @@ TRAIN_AUGMENTER = dict(
 )
 
 
-def build_excel_dataset(records, *, balance=False, with_augment=False, desc=""):
+def build_excel_dataset(split, *, balance=False, with_augment=False, desc=""):
   augmenter = TRAIN_AUGMENTER if with_augment else None
   return dict(
     type="TorchEmbeddingDataset",
-    records=records,
+    source=BREXI_SOURCE,
+    split=split,
     label_mapping=LABEL_MAPPING,
     balance=balance,
     preload=False,
@@ -148,14 +92,67 @@ def build_excel_dataset(records, *, balance=False, with_augment=False, desc=""):
     desc=desc,
   )
 
+def build_external_source(center_name, sheet_file):
+  return dict(
+    type="ExternalSheetSource",
+    sheet_file=sheet_file,
+    sheet_name=SHEET_NAME,
+    file_col="EMBEDDING",
+    label_col="一级分类",
+    split_col="split",
+    output_split_file=f"{EXTERNAL_OUTPUT_DIR}/{center_name}_{SHEET_NAME}_external.xlsx",
+    label_mapping=LABEL_MAPPING,
+    path_mapping=PATH_MAPPING,
+    mapped_file_col="EMBEDDING_MAPPED",
+    center_name=center_name,
+    center_col="center",
+  )
 
-batch_size = 1
+def build_external_dataset(center_name, sheet_file, *, desc=""):
+  return dict(
+    type="TorchEmbeddingDataset",
+    source=build_external_source(center_name, sheet_file),
+    split="test",
+    label_mapping=LABEL_MAPPING,
+    balance=False,
+    preload=False,
+    embedding_tag="",
+    augmenter=None,
+    use_cache=True,
+    cache_embedding_key="embedding",
+    cache_visual_key="visual",
+    max_sample_num=None,
+    repeat=1,
+    embedding_key=EMBEDDING_KEY,
+    coords_key=COORDS_KEY,
+    embedding_magnification=EMBEDDING_MAGNIFICATION,
+    expected_embedding_dim=EMBEDDING_DIM,
+    desc=desc,
+  )
+
+def build_external_loader(center_name, sheet_file):
+  return dict(
+    dataset=build_external_dataset(
+      center_name=center_name,
+      sheet_file=sheet_file,
+      desc=f"BREXI<{TARGET_NAME}:external:{center_name}>",
+    ),
+    batch_size=batch_size,
+    num_workers=num_workers,
+    persistent_workers=persistent_workers,
+    shuffle=False,
+    pin_memory=True,
+    collate_fn=dict(type="MILCollate"),
+  )
+
+
+batch_size = 4
 num_workers = 4
 persistent_workers = False
 
 TRAIN_LOADER = dict(
   dataset=build_excel_dataset(
-    SPLIT_DATA["train"],
+    "train",
     balance=USE_DATA_BALANCE,
     with_augment=USE_DATA_AUGMENTER,
     desc=f"BREXI<{TARGET_NAME}:train>",
@@ -170,7 +167,7 @@ TRAIN_LOADER = dict(
 
 VALID_LOADER = dict(
   dataset=build_excel_dataset(
-    SPLIT_DATA["valid"],
+    "valid",
     balance=False,
     with_augment=False,
     desc=f"BREXI<{TARGET_NAME}:valid>",
@@ -185,7 +182,7 @@ VALID_LOADER = dict(
 
 TEST_LOADER = dict(
   dataset=build_excel_dataset(
-    SPLIT_DATA["test"],
+    "test",
     balance=False,
     with_augment=False,
     desc=f"BREXI<{TARGET_NAME}:test>",
@@ -198,14 +195,25 @@ TEST_LOADER = dict(
   collate_fn=dict(type="MILCollate"),
 )
 
+EXTERNAL_TEST_LOADERS = {}
+if isinstance(EXTERNAL_EXCEL_FILES, dict) and len(EXTERNAL_EXCEL_FILES) > 0:
+  EXTERNAL_TEST_LOADERS = {
+    center_name: build_external_loader(center_name, sheet_file)
+    for center_name, sheet_file in EXTERNAL_EXCEL_FILES.items()
+  }
+  EXTERNAL_TEST_LOADERS["external_pooled"] = build_external_loader(
+    "external_pooled",
+    EXTERNAL_EXCEL_FILES,
+  )
+
 
 ############################## 2. MODEL
 HEAD = dict(
   type="MLP",
   input_dim=EMBEDDING_DIM,
   output_dim=NUM_CLASSES,
-  n_layer=1,
-  dropout=0.1,
+  n_layer=3,
+  dropout=0.5,
 )
 
 
@@ -219,7 +227,7 @@ MODEL = dict(
     input_dim=EMBEDDING_DIM,
     hidden_dim=EMBEDDING_DIM,
     attention="gated",
-    dropout=0.1,
+    dropout=0.5,
   ),
   head=HEAD,
   loss=dict(
@@ -233,7 +241,7 @@ MODEL = dict(
   ),
   solver=dict(
     type="torch.optim.AdamW",
-    lr=1e-3,
+    lr=1e-4,
     weight_decay=1e-2,
     scheduler=dict(
       type="torch.optim.lr_scheduler.CosineAnnealingWarmRestarts",
@@ -300,6 +308,13 @@ METRIC = dict(
     num_classes=NUM_CLASSES,
     sync_on_compute=False,
   ),
+  f1=dict(
+    type="torchmetrics.F1Score",
+    task="multiclass",
+    average="macro",
+    num_classes=NUM_CLASSES,
+    sync_on_compute=False,
+  ),
 )
 
 
@@ -316,11 +331,11 @@ signature = datetime.now().strftime(
 ############################## CLEAR FOR DUMP
 del datetime, hashlib
 
-_PROJECT_ = "mil"
+_PROJECT_ = "brexi"
 
 _COMMENT_ = """
 1. Excel-driven MIL training for brexi.
 2. Runtime path mapping for EMBEDDING field via configurable PATH_MAPPING.
 3. Stratified 80/10/10 split exported to output sheet.
-4. TorchEmbeddingDataset reads embedding payloads directly via torch.load.
+4. TorchEmbeddingDataset reads NPU-compatible pickles via load_torch_pickle_compat.
 """
