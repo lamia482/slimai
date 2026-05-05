@@ -3,60 +3,153 @@ from __future__ import annotations
 import concurrent.futures
 from dataclasses import dataclass
 import os
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
+from loguru import logger
 
-from .extract import FeatureExtractor, infer_patch_features
+try:
+  from .extract import FeatureExtractor, infer_patch_features
+except Exception:
+  from extract import FeatureExtractor, infer_patch_features  # type: ignore
 
 
-def _get_accelerator() -> str:
+def _is_npu_available() -> bool:
+  try:
+    import torch_npu # type: ignore # noqa: F401
+  except Exception:
+    return False
+  if not hasattr(torch, "npu"):
+    return False
+  try:
+    return bool(torch.npu.is_available()) # type: ignore[attr-defined]
+  except Exception:
+    return False
+
+
+def _npu_count() -> int:
+  if not _is_npu_available():
+    return 0
+  try:
+    return int(torch.npu.device_count()) # type: ignore[attr-defined]
+  except Exception:
+    return 0
+
+
+def get_available_devices() -> Dict[str, List[int]]:
+  available: Dict[str, List[int]] = {"cpu": [0]}
+  if _is_npu_available():
+    available["npu"] = list(range(_npu_count()))
   if torch.cuda.is_available():
-    return "cuda"
-  return "cpu"
+    available["cuda"] = list(range(torch.cuda.device_count()))
+  return available
 
 
-def parse_devices(devices_str: Optional[str]) -> List[int]:
-  accelerator = _get_accelerator()
-  if accelerator == "cpu":
-    return [0]
+def resolve_accelerator(accelerator: str) -> Tuple[str, Dict[str, List[int]]]:
+  requested = accelerator.strip().lower()
+  available = get_available_devices()
+  if requested not in ["auto", "npu", "cuda", "cpu"]:
+    raise ValueError(f"Unsupported --accelerator value: {accelerator}")
+  if requested == "auto":
+    if len(available.get("npu", [])) > 0:
+      return "npu", available
+    if len(available.get("cuda", [])) > 0:
+      return "cuda", available
+    return "cpu", available
+  if requested == "cpu":
+    return "cpu", available
+  if len(available.get(requested, [])) == 0:
+    raise ValueError(f"Accelerator '{requested}' is unavailable. detected={available}")
+  return requested, available
 
+
+def _parse_devices_str(devices_str: Optional[str]) -> List[int]:
   if devices_str is None:
-    devices_str = ""
-
-  parts = [p.strip() for p in devices_str.split(",") if p.strip() != ""]
+    return []
+  parts = [part.strip() for part in devices_str.split(",") if part.strip() != ""]
   if len(parts) == 0:
-    return list(range(torch.cuda.device_count()))
-
-  requested = []
+    return []
+  parsed: List[int] = []
   for part in parts:
     if not part.isdigit():
       raise ValueError(f"Invalid --devices value: {devices_str}")
-    requested.append(int(part))
+    parsed.append(int(part))
+  return parsed
 
-  visible_count = torch.cuda.device_count()
-  if all(0 <= device_id < visible_count for device_id in requested):
-    return requested
 
-  # Support physical GPU ids when CUDA_VISIBLE_DEVICES is set, e.g. "6,7".
-  # In this case torch uses logical ids [0, 1], so map physical -> logical.
-  cvd = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-  cvd_parts = [p.strip() for p in cvd.split(",") if p.strip() != ""]
-  if len(cvd_parts) > 0 and all(part.isdigit() for part in cvd_parts):
-    physical_to_logical = {int(physical): logical for logical, physical in enumerate(cvd_parts)}
-    if all(device_id in physical_to_logical for device_id in requested):
-      return [physical_to_logical[device_id] for device_id in requested]
+def _map_visible_devices(requested: List[int], env_name: str) -> Optional[List[int]]:
+  raw = os.environ.get(env_name, "")
+  parts = [part.strip() for part in raw.split(",") if part.strip() != ""]
+  if len(parts) == 0:
+    return None
+  if not all(part.isdigit() for part in parts):
+    return None
+  physical_to_logical = {int(physical): logical for logical, physical in enumerate(parts)}
+  if not all(device_id in physical_to_logical for device_id in requested):
+    return None
+  return [physical_to_logical[device_id] for device_id in requested]
 
-  raise ValueError(
-    "Invalid --devices value '{}'. Visible logical devices are [0..{}]. "
-    "If CUDA_VISIBLE_DEVICES is set (current='{}'), pass logical ids (e.g. 0,1) "
-    "or matching physical ids from CUDA_VISIBLE_DEVICES.".format(
-      devices_str,
-      max(visible_count - 1, 0),
-      cvd if cvd != "" else "<empty>",
+
+def parse_devices(devices_str: Optional[str], accelerator: str) -> List[int]:
+  if accelerator == "cpu":
+    return [0]
+
+  requested = _parse_devices_str(devices_str)
+  if accelerator == "cuda":
+    visible_count = torch.cuda.device_count()
+    if len(requested) == 0:
+      return list(range(visible_count))
+    if all(0 <= device_id < visible_count for device_id in requested):
+      return requested
+    mapped = _map_visible_devices(requested, "CUDA_VISIBLE_DEVICES")
+    if mapped is not None:
+      return mapped
+    raise ValueError(
+      "Invalid --devices '{}' for cuda. visible logical range=[0..{}], CUDA_VISIBLE_DEVICES='{}'".format(
+        devices_str,
+        max(visible_count - 1, 0),
+        os.environ.get("CUDA_VISIBLE_DEVICES", "<empty>"),
+      )
     )
+
+  if accelerator == "npu":
+    visible_count = _npu_count()
+    if len(requested) == 0:
+      return list(range(visible_count))
+    if all(0 <= device_id < visible_count for device_id in requested):
+      return requested
+    mapped = _map_visible_devices(requested, "ASCEND_VISIBLE_DEVICES")
+    if mapped is not None:
+      return mapped
+    raise ValueError(
+      "Invalid --devices '{}' for npu. visible logical range=[0..{}], ASCEND_VISIBLE_DEVICES='{}'".format(
+        devices_str,
+        max(visible_count - 1, 0),
+        os.environ.get("ASCEND_VISIBLE_DEVICES", "<empty>"),
+      )
+    )
+
+  raise ValueError(f"Unsupported resolved accelerator: {accelerator}")
+
+
+def log_device_resolution(
+  *,
+  requested_accelerator: str,
+  resolved_accelerator: str,
+  available_devices: Dict[str, List[int]],
+  requested_devices: Optional[str],
+  resolved_devices: Sequence[int],
+) -> None:
+  logger.info(
+    "Accelerator requested='{}' resolved='{}' available={} requested_devices='{}' resolved_devices={}",
+    requested_accelerator,
+    resolved_accelerator,
+    available_devices,
+    requested_devices if requested_devices is not None else "",
+    list(resolved_devices),
   )
+  return
 
 
 @dataclass(frozen=True)

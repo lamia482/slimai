@@ -13,13 +13,20 @@ from timm.data.transforms_factory import create_transform
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .pipeline import PatchDataset
+try:
+  from .pipeline import PatchDataset
+except Exception:
+  from pipeline import PatchDataset  # type: ignore
 
 
-def _get_accelerator() -> str:
-  if torch.cuda.is_available():
-    return "cuda"
-  return "cpu"
+def _ensure_npu_runtime() -> None:
+  try:
+    import torch_npu # type: ignore # noqa: F401
+  except Exception as exc:
+    raise RuntimeError("NPU requested but torch_npu is unavailable.") from exc
+  if not hasattr(torch, "npu"):
+    raise RuntimeError("NPU requested but torch.npu is unavailable.")
+  return
 
 
 @dataclass(frozen=True)
@@ -97,6 +104,7 @@ def build_feature_extractor(
   slide_encoder_name: Optional[str],
   *,
   device_id: int,
+  accelerator: str = "cpu",
   cache_dir: str = "/.slimai/cache/huggingface/hub",
 ) -> FeatureExtractor:
   if patch_encoder_name not in PATCH_ENCODER_BUILDERS:
@@ -104,11 +112,18 @@ def build_feature_extractor(
     raise ValueError(f"Unsupported patch encoder: {patch_encoder_name}. Available: {available}")
 
   model, transform, feature_dim = PATCH_ENCODER_BUILDERS[patch_encoder_name](cache_dir)
-  accelerator = _get_accelerator()
-  if accelerator == "cpu":
+  accelerator_name = accelerator.strip().lower()
+  if accelerator_name == "cpu":
     device = torch.device("cpu")
+  elif accelerator_name == "npu":
+    _ensure_npu_runtime()
+    device = torch.device(f"npu:{device_id}")
+  elif accelerator_name == "cuda":
+    if not torch.cuda.is_available():
+      raise RuntimeError("CUDA requested but torch.cuda is unavailable.")
+    device = torch.device(f"cuda:{device_id}")
   else:
-    device = torch.device(f"{accelerator}:{device_id}")
+    raise ValueError(f"Unsupported accelerator: {accelerator}")
 
   patch_encoder = model.to(device).eval()
   slide_encoder = None

@@ -1,5 +1,21 @@
 import argparse
+import os
+from pathlib import Path
 import sys
+
+_READER_ENV_DEFAULTS = {
+  "ENABLE_SLIDE_MPP_UNIFY": "0",
+  "ENABLE_PYRAMID_RESAMPLE": "1",
+  "ENABLE_SHRINK_ON_BOUNDARY": "1",
+  "ENV_SLIDE_UNIFY_MPP_MAGNIFICATION": "20",
+  "ENV_SLIDE_UNIFY_MPP_RESOLUTION": "0.5,0.5",
+}
+
+
+def _apply_reader_env_defaults():
+  for key, value in _READER_ENV_DEFAULTS.items():
+    os.environ.setdefault(key, value)
+  return
 
 
 def parse_args():
@@ -20,8 +36,14 @@ def parse_args():
     ] 
   )
   parser.add_argument("--tag", required=True, help="User-specified embedding tag.")
-  parser.add_argument("--out-dir", required=True, help="Output directory (flat outputs).")
+  parser.add_argument("--out-dir", required=True, help="Output directory.")
   parser.add_argument("--devices", default=None, help="Comma-separated device ids, e.g. 0,1,2,3")
+  parser.add_argument(
+    "--accelerator",
+    default="auto",
+    choices=["auto", "npu", "cuda", "cpu"],
+    help="Accelerator backend. auto checks npu/cuda/cpu in order.",
+  )
   parser.add_argument("--max-futs", type=int, default=0, help="Max pending futures. 0 means auto.")
   parser.add_argument("--batch-size", type=int, default=4, help="Inference batch size.")
   parser.add_argument("--num-workers", type=int, default=2, help="Data loader workers.")
@@ -34,12 +56,34 @@ def parse_args():
   parser.add_argument("--min-tissue-ratio", type=float, default=0.05, help="Minimum tissue ratio for tissue shrink.")
   parser.add_argument("--tissue-shrink", type=str, default="tissue", help="Tissue shrink method.")
   parser.add_argument("--output", default=None, help="Path to xlsx record file, e.g. record.xlsx.")
+  parser.add_argument("--preflight-only", action=argparse.BooleanOptionalAction, default=False)
+  parser.add_argument("--manifest-only", action=argparse.BooleanOptionalAction, default=False)
+  parser.add_argument("--limit", type=int, default=0, help="Only process first N manifest items. 0 means no limit.")
   return parser.parse_args()
 
-def main():
-  from slimai.helper.features.compose import CreateFeatureConfig, main as compose_main
 
+def _import_compose_main():
+  package_dir = Path(__file__).resolve().parents[1]
+  project_dir = package_dir.parent
+  project_path = project_dir.as_posix()
+  if project_path not in sys.path:
+    sys.path.insert(0, project_path)
+  try:
+    from slimai.helper.features.compose import CreateFeatureConfig, main as compose_main
+    return CreateFeatureConfig, compose_main
+  except Exception:
+    features_dir = package_dir / "helper" / "features"
+    features_path = features_dir.as_posix()
+    if features_path not in sys.path:
+      sys.path.append(features_path)
+    from compose import CreateFeatureConfig, main as compose_main  # type: ignore
+    return CreateFeatureConfig, compose_main
+
+
+def main():
   args = parse_args()
+  _apply_reader_env_defaults()
+  CreateFeatureConfig, compose_main = _import_compose_main()
   config = CreateFeatureConfig(
     input_file=args.input_file,
     wsi_col=args.wsi_col,
@@ -49,6 +93,7 @@ def main():
     tag=args.tag,
     out_dir=args.out_dir,
     devices=args.devices,
+    accelerator=args.accelerator,
     max_futs=args.max_futs,
     batch_size=args.batch_size,
     num_workers=args.num_workers,
@@ -61,6 +106,9 @@ def main():
     min_tissue_ratio=args.min_tissue_ratio,
     tissue_shrink=args.tissue_shrink,
     output=args.output,
+    preflight_only=args.preflight_only,
+    manifest_only=args.manifest_only,
+    limit=args.limit,
   )
   compose_main(config)
   return

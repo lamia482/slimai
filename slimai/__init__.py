@@ -1,38 +1,36 @@
 """
-* Date     :  2024/12/11 14:00
-* File     :  __init__.py
-* Brief    :  offer quick start to build & use the toolbox
-* Author   :  lamia
-* Email    :  wangqiang482@icloud.com
-* License  :  (C)Copyright 2024-2027, KFBIO
+slimai package entry.
+
+Keep package import lightweight to avoid pulling optional runtime dependencies
+when users only need a small submodule (e.g. helper.features.compose).
 """
 
-### Set extra environment variables
+import importlib
+import os
+import os.path as osp
+from typing import Any
+
 _EXTRA_ENV_ = {
-  "OPENCV_IO_MAX_IMAGE_PIXELS": "1099511627776", 
+  "OPENCV_IO_MAX_IMAGE_PIXELS": "1099511627776",
 }
 
-import os, os.path as osp
-
 for key, value in _EXTRA_ENV_.items():
-  if key in os.environ:
-    continue
-  os.environ[key] = value
+  if key not in os.environ:
+    os.environ[key] = value
 
-### Import slimai modules
+__all__ = ["data", "helper", "models", "runner", "check_env"]
 
-from . import (
-  data, helper, models, runner
-)
+def __getattr__(name: str) -> Any:
+  if name in ["data", "helper", "models", "runner"]:
+    module = importlib.import_module(f".{name}", __name__)
+    globals()[name] = module
+    return module
+  raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
-__all__ = [
-  "data", "helper", "models", "runner"
-]
-
-def get_path():
+def get_path() -> str:
   return osp.abspath(__file__)
 
-def get_package_path():
+def get_package_path() -> str:
   return osp.dirname(osp.dirname(get_path()))
 
 def get_last_commit_id() -> str:
@@ -47,21 +45,20 @@ def get_version():
 
 __version__ = get_version()
 
-def check_env():
-  import importlib
+def check_env() -> None:
   from .helper.help_utils import print_log
   from .helper.common import REQUIREMENTS
 
-  print_log(">>> Checking environment for slimai(VERSION={})...".format(__version__))
-
+  print_log(">>> Checking environment for slimai...")
   for package_name, (min_version, max_version) in REQUIREMENTS.items():
     package = importlib.import_module(package_name)
     package_version = getattr(package, "__version__", None)
     assert (
       (min_version is None or str(package_version) >= str(min_version)) and
       (max_version is None or str(package_version) <= str(max_version))
-    ), "{} <= {}.ver <= {} is required, but got {}".format(min_version, package_name, max_version, package_version)
+    ), "{} <= {}.ver <= {} is required, but got {}".format(
+      min_version, package_name, max_version, package_version
+    )
     print_log("+++ {} version: {} passed the environment check".format(package_name, package_version))
-
   print_log(">>> All packages depended by slimai passed the environment check.")
   return

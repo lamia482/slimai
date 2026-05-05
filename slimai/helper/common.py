@@ -15,4 +15,4 @@ import torch
 torch.hub.set_dir(TORCH_HUB_DIR)
 
 ##### VERSION #####
-VERSION = "0.1.7"
+VERSION = "0.2.0"
