@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import getpass
 import hashlib
 import json
+import logging
 import os
 import re
+import shlex
+import shutil
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # Avoid shadowing stdlib `copy` when this file is executed directly.
 if __name__ == "__main__":
@@ -22,6 +27,14 @@ from dataclasses import dataclass
 import pandas as pd
 import torch
 from tqdm import tqdm
+
+try:
+  import paramiko
+except Exception:
+  paramiko = None
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -48,6 +61,258 @@ class ParseResult:
   duplicate_count: int
   relative_paths: List[str]
 
+
+@dataclass(frozen=True)
+class SyncCopyTask:
+  src_path: Path
+  rel_path: str
+  size: int
+  mtime: float
+
+
+class TransferCache:
+  def __init__(self, cache_dir: Path) -> None:
+    self.cache_dir = cache_dir
+    self.state_path = cache_dir / "cache_state.json"
+    self.manifest_path = cache_dir / "manifest.jsonl"
+    self._lock = threading.Lock()
+    self._state = self._load_state()
+    return
+
+  def _load_state(self) -> Dict[str, dict]:
+    if not self.state_path.exists():
+      return {}
+    try:
+      raw = self.state_path.read_text(encoding="utf-8")
+      data = json.loads(raw)
+      if isinstance(data, dict):
+        return data
+    except Exception as ex:
+      LOGGER.warning("Failed to load transfer cache state: %s", ex)
+    return {}
+
+  def get(self, rel_path: str) -> Optional[dict]:
+    with self._lock:
+      return self._state.get(rel_path)
+
+  def record(self, rel_path: str, payload: dict) -> None:
+    event = dict(payload)
+    event["updated_at"] = time.time()
+    event_line = json.dumps(dict(rel_path=rel_path, **event), ensure_ascii=False)
+    with self._lock:
+      self._state[rel_path] = event
+      self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+      with self.manifest_path.open("a", encoding="utf-8") as fp:
+        fp.write(event_line + "\n")
+    return
+
+  def flush(self) -> None:
+    with self._lock:
+      self.state_path.parent.mkdir(parents=True, exist_ok=True)
+      self.state_path.write_text(
+        json.dumps(self._state, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+      )
+    return
+
+
+def _nearest_existing_parent(path: Path) -> Path:
+  current = path.resolve()
+  while not current.exists():
+    if current.parent == current:
+      break
+    current = current.parent
+  return current
+
+
+def _load_sync_tasks_from_excel(
+  *,
+  xlsx_path: Path,
+  path_column: str,
+  src_base: Path,
+  sheet: Optional[str],
+) -> Tuple[List[SyncCopyTask], List[str], List[str]]:
+  if sheet:
+    df = pd.read_excel(xlsx_path, sheet_name=sheet)
+  else:
+    df = pd.read_excel(xlsx_path)
+  if path_column not in df.columns:
+    raise KeyError(f"Column '{path_column}' not found in Excel columns: {list(df.columns)}")
+
+  raw_paths = [str(value).strip() for value in df[path_column].tolist() if not pd.isna(value)]
+  src_base = src_base.resolve()
+  seen_rel = set()
+  tasks: List[SyncCopyTask] = []
+  invalid_paths: List[str] = []
+  missing_paths: List[str] = []
+
+  for raw in raw_paths:
+    if raw == "":
+      continue
+    candidate = Path(raw).expanduser()
+    if candidate.is_absolute():
+      candidate = candidate.resolve()
+    else:
+      candidate = (src_base / candidate).resolve()
+
+    try:
+      rel = candidate.relative_to(src_base)
+    except Exception:
+      invalid_paths.append(raw)
+      continue
+
+    if not candidate.exists() or not candidate.is_file():
+      missing_paths.append(candidate.as_posix())
+      continue
+
+    rel_path = rel.as_posix()
+    if rel_path in seen_rel:
+      continue
+    seen_rel.add(rel_path)
+    stat = candidate.stat()
+    tasks.append(
+      SyncCopyTask(
+        src_path=candidate,
+        rel_path=rel_path,
+        size=int(stat.st_size),
+        mtime=float(stat.st_mtime),
+      )
+    )
+  return tasks, invalid_paths, missing_paths
+
+
+def _summarize_sync_precheck(
+  *,
+  tasks: Sequence[SyncCopyTask],
+  invalid_paths: Sequence[str],
+  missing_paths: Sequence[str],
+  total_size: int,
+) -> None:
+  print("========== SYNC PRECHECK ==========")
+  print(f"valid_files: {len(tasks)}")
+  print(f"total_size: {_format_bytes(total_size)}")
+  print(f"invalid_paths: {len(invalid_paths)}")
+  print(f"missing_files: {len(missing_paths)}")
+  if len(invalid_paths) > 0:
+    print("invalid_examples:")
+    for item in list(invalid_paths)[:5]:
+      print(f"  {item}")
+  if len(missing_paths) > 0:
+    print("missing_examples:")
+    for item in list(missing_paths)[:5]:
+      print(f"  {item}")
+  return
+
+
+def _get_or_compute_local_md5(task: SyncCopyTask, cache: TransferCache) -> str:
+  entry = cache.get(task.rel_path)
+  if (
+    entry is not None
+    and int(entry.get("src_size", -1)) == task.size
+    and abs(float(entry.get("src_mtime", 0.0)) - task.mtime) < 0.0001
+    and isinstance(entry.get("local_md5", None), str)
+  ):
+    return str(entry["local_md5"])
+
+  md5 = file_md5(task.src_path)
+  cache.record(
+    task.rel_path,
+    dict(
+      status="local_md5",
+      src_size=task.size,
+      src_mtime=task.mtime,
+      local_md5=md5,
+    ),
+  )
+  return md5
+
+
+def _build_ssh_client(args: argparse.Namespace, password: Optional[str]):
+  if paramiko is None:
+    raise RuntimeError("paramiko is required for remote mode. install it first.")
+  client = paramiko.SSHClient()
+  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  connect_kwargs = dict(
+    hostname=args.host,
+    port=args.port,
+    username=args.username,
+    timeout=30,
+    banner_timeout=30,
+    auth_timeout=30,
+  )
+  if args.key_file:
+    connect_kwargs["key_filename"] = args.key_file
+  if password:
+    connect_kwargs["password"] = password
+  client.connect(**connect_kwargs)
+  return client
+
+
+def _resolve_ssh_password(args: argparse.Namespace) -> Optional[str]:
+  if args.key_file:
+    return None
+  if args.password_env:
+    env_value = os.getenv(args.password_env)
+    if env_value:
+      return env_value
+  return getpass.getpass(f"SSH password for {args.username}@{args.host}:{args.port}: ")
+
+
+def _local_free_space_bytes(dst: Path) -> int:
+  probe = _nearest_existing_parent(dst)
+  usage = shutil.disk_usage(probe)
+  return int(usage.free)
+
+
+def _remote_free_space_bytes(args: argparse.Namespace, password: Optional[str], dst: str) -> int:
+  client = _build_ssh_client(args, password)
+  try:
+    parent = str(Path(dst).parent)
+    command = f"df -PB1 {shlex.quote(parent)} | tail -1"
+    stdin, stdout, stderr = client.exec_command(command)
+    _ = stdin
+    err = stderr.read().decode("utf-8", errors="ignore").strip()
+    out = stdout.read().decode("utf-8", errors="ignore").strip()
+    if err and not out:
+      raise RuntimeError(f"df failed: {err}")
+    parts = out.split()
+    if len(parts) < 4:
+      raise RuntimeError(f"Unexpected df output: {out}")
+    return int(parts[3])
+  finally:
+    client.close()
+
+
+def _ensure_remote_dir(sftp, remote_dir: str) -> None:
+  if remote_dir in ["", "/"]:
+    return
+  parts = [part for part in remote_dir.split("/") if part]
+  current = "/"
+  for part in parts:
+    current = f"{current.rstrip('/')}/{part}"
+    try:
+      sftp.stat(current)
+    except FileNotFoundError:
+      sftp.mkdir(current)
+    except IOError:
+      try:
+        sftp.mkdir(current)
+      except Exception:
+        pass
+  return
+
+
+def _remote_md5(ssh_client, remote_path: str) -> str:
+  command = f"md5sum {shlex.quote(remote_path)}"
+  stdin, stdout, stderr = ssh_client.exec_command(command)
+  _ = stdin
+  err = stderr.read().decode("utf-8", errors="ignore").strip()
+  out = stdout.read().decode("utf-8", errors="ignore").strip()
+  if err and not out:
+    raise RuntimeError(f"md5sum failed for {remote_path}: {err}")
+  if out == "":
+    raise RuntimeError(f"md5sum produced empty output for {remote_path}")
+  return out.split()[0]
 
 def map_path(path: str, old_prefix: str, new_prefix: str) -> str:
   if path.startswith(old_prefix):
@@ -977,6 +1242,376 @@ def create_valid_symlinks(
   return 0
 
 
+def _local_sync_copy_one(
+  *,
+  task: SyncCopyTask,
+  dst_root: Path,
+  chunk_size: int,
+  cache: TransferCache,
+  progress: tqdm,
+  progress_lock: threading.Lock,
+  retries: int,
+  no_overwrite: bool,
+) -> Tuple[str, str]:
+  dst_final = dst_root / task.rel_path
+  dst_part = dst_final.with_name(dst_final.name + ".part")
+  dst_final.parent.mkdir(parents=True, exist_ok=True)
+
+  local_md5 = _get_or_compute_local_md5(task, cache)
+  for attempt in range(retries + 1):
+    try:
+      if dst_final.exists():
+        if dst_final.stat().st_size == task.size:
+          dst_md5 = file_md5(dst_final)
+          if dst_md5 == local_md5:
+            with progress_lock:
+              progress.update(task.size)
+            cache.record(
+              task.rel_path,
+              dict(
+                status="skipped_same",
+                src_size=task.size,
+                src_mtime=task.mtime,
+                local_md5=local_md5,
+                dst_md5=dst_md5,
+              ),
+            )
+            return "skipped", task.rel_path
+          if no_overwrite:
+            with progress_lock:
+              progress.update(task.size)
+            cache.record(
+              task.rel_path,
+              dict(
+                status="skipped_conflict",
+                src_size=task.size,
+                src_mtime=task.mtime,
+                local_md5=local_md5,
+                dst_md5=dst_md5,
+              ),
+            )
+            return "skipped_conflict", task.rel_path
+        dst_final.unlink(missing_ok=True)
+
+      resume_offset = 0
+      if dst_part.exists():
+        part_size = int(dst_part.stat().st_size)
+        if part_size <= task.size:
+          resume_offset = part_size
+        else:
+          dst_part.unlink(missing_ok=True)
+
+      with task.src_path.open("rb") as src:
+        src.seek(resume_offset)
+        mode = "ab" if resume_offset > 0 else "wb"
+        with dst_part.open(mode) as out:
+          while True:
+            chunk = src.read(chunk_size)
+            if not chunk:
+              break
+            out.write(chunk)
+            with progress_lock:
+              progress.update(len(chunk))
+
+      final_size = int(dst_part.stat().st_size)
+      if final_size != task.size:
+        raise RuntimeError(f"Incomplete write for {task.rel_path}: {final_size}/{task.size}")
+
+      dst_part.replace(dst_final)
+      dst_md5 = file_md5(dst_final)
+      if dst_md5 != local_md5:
+        raise RuntimeError(f"MD5 mismatch for {task.rel_path}: local={local_md5} dst={dst_md5}")
+
+      cache.record(
+        task.rel_path,
+        dict(
+          status="done",
+          src_size=task.size,
+          src_mtime=task.mtime,
+          local_md5=local_md5,
+          dst_md5=dst_md5,
+        ),
+      )
+      return "done", task.rel_path
+    except Exception as ex:
+      if attempt >= retries:
+        cache.record(
+          task.rel_path,
+          dict(
+            status="failed",
+            src_size=task.size,
+            src_mtime=task.mtime,
+            error=str(ex),
+          ),
+        )
+        return "failed", f"{task.rel_path}: {ex}"
+      time.sleep(min(2 ** attempt, 5))
+  return "failed", f"{task.rel_path}: unknown error"
+
+
+def _remote_sync_copy_one(
+  *,
+  task: SyncCopyTask,
+  args: argparse.Namespace,
+  password: Optional[str],
+  dst_root: str,
+  chunk_size: int,
+  cache: TransferCache,
+  progress: tqdm,
+  progress_lock: threading.Lock,
+  retries: int,
+  no_overwrite: bool,
+) -> Tuple[str, str]:
+  local_md5 = _get_or_compute_local_md5(task, cache)
+  remote_final = f"{dst_root.rstrip('/')}/{task.rel_path}"
+  remote_part = remote_final + ".part"
+
+  for attempt in range(retries + 1):
+    ssh_client = None
+    sftp = None
+    try:
+      ssh_client = _build_ssh_client(args, password)
+      sftp = ssh_client.open_sftp()
+      _ensure_remote_dir(sftp, str(Path(remote_final).parent))
+
+      try:
+        final_stat = sftp.stat(remote_final)
+      except FileNotFoundError:
+        final_stat = None
+
+      if final_stat is not None and int(final_stat.st_size) == task.size:
+        remote_digest = _remote_md5(ssh_client, remote_final)
+        if remote_digest == local_md5:
+          with progress_lock:
+            progress.update(task.size)
+          cache.record(
+            task.rel_path,
+            dict(
+              status="skipped_same",
+              src_size=task.size,
+              src_mtime=task.mtime,
+              local_md5=local_md5,
+              dst_md5=remote_digest,
+            ),
+          )
+          return "skipped", task.rel_path
+        if no_overwrite:
+          with progress_lock:
+            progress.update(task.size)
+          cache.record(
+            task.rel_path,
+            dict(
+              status="skipped_conflict",
+              src_size=task.size,
+              src_mtime=task.mtime,
+              local_md5=local_md5,
+              dst_md5=remote_digest,
+            ),
+          )
+          return "skipped_conflict", task.rel_path
+
+      resume_offset = 0
+      try:
+        part_stat = sftp.stat(remote_part)
+        if int(part_stat.st_size) <= task.size:
+          resume_offset = int(part_stat.st_size)
+        else:
+          sftp.remove(remote_part)
+      except FileNotFoundError:
+        pass
+
+      with task.src_path.open("rb") as src:
+        src.seek(resume_offset)
+        mode = "ab" if resume_offset > 0 else "wb"
+        with sftp.file(remote_part, mode) as out:
+          while True:
+            chunk = src.read(chunk_size)
+            if not chunk:
+              break
+            out.write(chunk)
+            with progress_lock:
+              progress.update(len(chunk))
+
+      part_size = int(sftp.stat(remote_part).st_size)
+      if part_size != task.size:
+        raise RuntimeError(f"Incomplete upload for {task.rel_path}: {part_size}/{task.size}")
+
+      try:
+        sftp.remove(remote_final)
+      except FileNotFoundError:
+        pass
+      sftp.rename(remote_part, remote_final)
+      remote_digest = _remote_md5(ssh_client, remote_final)
+      if remote_digest != local_md5:
+        raise RuntimeError(
+          f"MD5 mismatch for {task.rel_path}: local={local_md5} remote={remote_digest}"
+        )
+
+      cache.record(
+        task.rel_path,
+        dict(
+          status="done",
+          src_size=task.size,
+          src_mtime=task.mtime,
+          local_md5=local_md5,
+          dst_md5=remote_digest,
+        ),
+      )
+      return "done", task.rel_path
+    except Exception as ex:
+      if attempt >= retries:
+        cache.record(
+          task.rel_path,
+          dict(
+            status="failed",
+            src_size=task.size,
+            src_mtime=task.mtime,
+            error=str(ex),
+          ),
+        )
+        return "failed", f"{task.rel_path}: {ex}"
+      time.sleep(min(2 ** attempt, 5))
+    finally:
+      if sftp is not None:
+        sftp.close()
+      if ssh_client is not None:
+        ssh_client.close()
+  return "failed", f"{task.rel_path}: unknown error"
+
+
+def run_sync(args: argparse.Namespace) -> int:
+  if args.workers < 1:
+    raise ValueError(f"--workers must be >= 1, got {args.workers}")
+  if args.chunk_size_mb < 1:
+    raise ValueError(f"--chunk-size-mb must be >= 1, got {args.chunk_size_mb}")
+  if args.retries < 0:
+    raise ValueError(f"--retries must be >= 0, got {args.retries}")
+
+  remote_flags = [args.host, args.port, args.username]
+  if any(value is not None for value in remote_flags) and not all(
+    value is not None for value in remote_flags
+  ):
+    raise ValueError("--host, --port and --username must be set together for remote sync")
+
+  remote_mode = args.host is not None and args.port is not None and args.username is not None
+  xlsx_path = Path(args.xlsx)
+  src_base = Path(args.src_base)
+  dst = args.dst
+  dst_path = Path(dst)
+  chunk_size = int(args.chunk_size_mb) * 1024 * 1024
+
+  if not xlsx_path.exists():
+    raise FileNotFoundError(f"XLSX not found: {xlsx_path.as_posix()}")
+  if not src_base.exists():
+    raise FileNotFoundError(f"src-base not found: {src_base.as_posix()}")
+
+  tasks, invalid_paths, missing_paths = _load_sync_tasks_from_excel(
+    xlsx_path=xlsx_path,
+    path_column=args.path_column,
+    src_base=src_base,
+    sheet=args.sheet,
+  )
+  if len(tasks) == 0:
+    print(f"No valid files found from column '{args.path_column}'.")
+    return 1
+
+  total_size = sum(item.size for item in tasks)
+  _summarize_sync_precheck(
+    tasks=tasks,
+    invalid_paths=invalid_paths,
+    missing_paths=missing_paths,
+    total_size=total_size,
+  )
+
+  password = None
+  if remote_mode:
+    password = _resolve_ssh_password(args)
+    free_bytes = _remote_free_space_bytes(args, password, dst)
+    print(f"remote_free_space: {_format_bytes(free_bytes)}")
+  else:
+    free_bytes = _local_free_space_bytes(dst_path)
+    print(f"local_free_space: {_format_bytes(free_bytes)}")
+
+  if free_bytes < total_size:
+    print(
+      "Insufficient destination space. "
+      f"need={_format_bytes(total_size)} available={_format_bytes(free_bytes)}"
+    )
+    return 2
+
+  if args.dry_run:
+    print("sync mode: dry-run (no file transfer)")
+    return 0
+
+  cache = TransferCache(Path(args.cache_dir))
+  progress_lock = threading.Lock()
+  done = 0
+  skipped = 0
+  skipped_conflict = 0
+  failed = 0
+
+  print(
+    "Start sync copy: "
+    f"files={len(tasks)} total={_format_bytes(total_size)} workers={args.workers} "
+    f"mode={'remote' if remote_mode else 'local'}"
+  )
+  with tqdm(total=total_size, unit="B", unit_scale=True, desc="SyncCopyProgress") as progress:
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+      futures = []
+      for task in tasks:
+        if remote_mode:
+          futures.append(
+            executor.submit(
+              _remote_sync_copy_one,
+              task=task,
+              args=args,
+              password=password,
+              dst_root=dst,
+              chunk_size=chunk_size,
+              cache=cache,
+              progress=progress,
+              progress_lock=progress_lock,
+              retries=args.retries,
+              no_overwrite=args.no_overwrite,
+            )
+          )
+        else:
+          futures.append(
+            executor.submit(
+              _local_sync_copy_one,
+              task=task,
+              dst_root=dst_path,
+              chunk_size=chunk_size,
+              cache=cache,
+              progress=progress,
+              progress_lock=progress_lock,
+              retries=args.retries,
+              no_overwrite=args.no_overwrite,
+            )
+          )
+
+      for future in as_completed(futures):
+        status, message = future.result()
+        if status == "done":
+          done += 1
+        elif status == "skipped":
+          skipped += 1
+        elif status == "skipped_conflict":
+          skipped_conflict += 1
+        else:
+          failed += 1
+          print(f"failed: {message}")
+
+  cache.flush()
+  print(
+    "Sync finished. "
+    f"done={done} skipped={skipped} skipped_conflict={skipped_conflict} failed={failed}"
+  )
+  if failed > 0:
+    return 3
+  return 0
+
+
 def run_copy(args: argparse.Namespace) -> int:
   if args.workers < 1:
     raise ValueError(f"--workers must be >= 1, got {args.workers}")
@@ -1193,6 +1828,73 @@ def build_parser(defaults: Optional[CliDefaults] = None) -> argparse.ArgumentPar
     ),
   )
   copy_parser.set_defaults(handler=run_copy)
+
+  sync_parser = subparsers.add_parser(
+    "sync",
+    help="Sync files listed in an Excel column to local or remote destination.",
+    description=(
+      "Sync files listed in an Excel column to a local directory or to a remote "
+      "destination via SSH/SFTP."
+    ),
+  )
+  sync_parser.add_argument(
+    "--xlsx",
+    required=True,
+    help="Input xlsx path.",
+  )
+  sync_parser.add_argument(
+    "--sheet",
+    default=None,
+    help="Optional worksheet name. Default reads the first sheet.",
+  )
+  sync_parser.add_argument(
+    "--path-column",
+    default="EMBEDDING",
+    help="Column name containing source file paths.",
+  )
+  sync_parser.add_argument(
+    "--src-base",
+    required=True,
+    help="Base directory used for relative path mapping.",
+  )
+  sync_parser.add_argument(
+    "--dst",
+    required=True,
+    help="Destination root path (local or remote path).",
+  )
+  sync_parser.add_argument("--host", default=None, help="Remote host.")
+  sync_parser.add_argument("--port", type=int, default=None, help="Remote SSH port.")
+  sync_parser.add_argument("--username", default=None, help="Remote SSH username.")
+  sync_parser.add_argument("--key-file", default=None, help="SSH private key file path.")
+  sync_parser.add_argument(
+    "--password-env",
+    default="SSH_PASSWORD",
+    help="Environment variable for SSH password.",
+  )
+  sync_parser.add_argument("--workers", type=int, default=4, help="Worker threads.")
+  sync_parser.add_argument(
+    "--chunk-size-mb",
+    type=int,
+    default=8,
+    help="Chunk size (MB) for copy/upload.",
+  )
+  sync_parser.add_argument("--retries", type=int, default=3, help="Retries per file.")
+  sync_parser.add_argument(
+    "--cache-dir",
+    default=".transfer_cache/sync",
+    help="Cache directory for sync manifest/state.",
+  )
+  sync_parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help="Only scan/validate/check space, no copying.",
+  )
+  sync_parser.add_argument(
+    "--no-overwrite",
+    action="store_true",
+    help="Skip conflicting destination files when md5 differs.",
+  )
+  sync_parser.set_defaults(handler=run_sync)
 
   link_parser = subparsers.add_parser(
     "link-valid",
