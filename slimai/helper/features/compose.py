@@ -20,29 +20,16 @@ from loguru import logger
 from tqdm import tqdm
 
 from sdk.reader import get_reader_by_ext
-
-try:
-  from .extract import FeatureExtractor, build_feature_extractor
-  from .pipeline import get_tissue_region
-  from .task import (
-    InferenceOptions,
-    build_chunk_tasks,
-    log_device_resolution,
-    parse_devices,
-    resolve_accelerator,
-    run_chunk_tasks,
-  )
-except Exception:
-  from extract import FeatureExtractor, build_feature_extractor  # type: ignore
-  from pipeline import get_tissue_region  # type: ignore
-  from task import (  # type: ignore
-    InferenceOptions,
-    build_chunk_tasks,
-    log_device_resolution,
-    parse_devices,
-    resolve_accelerator,
-    run_chunk_tasks,
-  )
+from .extract import FeatureExtractor, build_feature_extractor
+from .pipeline import get_tissue_region
+from .task import (
+  InferenceOptions,
+  build_chunk_tasks,
+  log_device_resolution,
+  parse_devices,
+  resolve_accelerator,
+  run_chunk_tasks,
+)
 
 
 @dataclass(frozen=True)
@@ -57,8 +44,8 @@ class CreateFeatureConfig:
   devices: Optional[str] = None
   accelerator: str = "auto"
   max_futs: int = 0
-  batch_size: int = 4
-  num_workers: int = 2
+  batch_size: int = -1
+  num_workers: int = -1
   patch_size: int = 224
   stride_size: int = 192
   read_scale: float = 20
@@ -685,6 +672,16 @@ def main(config: CreateFeatureConfig) -> None:
     if len(resolved_devices) == 0:
       raise ValueError("No devices resolved. Use --devices 0 or --devices 0,1,...")
 
+    auto_num_workers = config.num_workers
+    if auto_num_workers < 0:
+      cpu_count = os.cpu_count() or 8
+      device_count = max(len(resolved_devices), 1)
+      auto_num_workers = max(2, min(8, cpu_count // device_count // 2))
+
+    auto_batch_size = config.batch_size
+    if auto_batch_size < 0:
+      auto_batch_size = max(min(auto_num_workers * 4, 16), auto_num_workers)
+
     runtime = RunRuntime(
       requested_accelerator=config.accelerator,
       resolved_accelerator=resolved_accelerator,
@@ -837,8 +834,8 @@ def main(config: CreateFeatureConfig) -> None:
           options = InferenceOptions(
             read_scale=config.read_scale,
             patch_size=config.patch_size,
-            batch_size=config.batch_size,
-            num_workers=config.num_workers,
+            batch_size=auto_batch_size,
+            num_workers=auto_num_workers,
             to_gray=config.to_gray,
             show_progress=True,
           )

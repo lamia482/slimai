@@ -12,11 +12,7 @@ from timm.data.config import resolve_data_config
 from timm.data.transforms_factory import create_transform
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
-try:
-  from .pipeline import PatchDataset
-except Exception:
-  from pipeline import PatchDataset  # type: ignore
+from .pipeline import PatchDataset
 
 
 def _ensure_npu_runtime() -> None:

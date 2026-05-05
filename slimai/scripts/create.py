@@ -15,6 +15,11 @@ _READER_ENV_DEFAULTS = {
 def _apply_reader_env_defaults():
   for key, value in _READER_ENV_DEFAULTS.items():
     os.environ.setdefault(key, value)
+  package_dir = Path(__file__).resolve().parents[1]
+  project_dir = package_dir.parent
+  project_path = project_dir.as_posix()
+  if project_path not in sys.path:
+    sys.path.insert(0, project_path)
   return
 
 
@@ -45,8 +50,8 @@ def parse_args():
     help="Accelerator backend. auto checks npu/cuda/cpu in order.",
   )
   parser.add_argument("--max-futs", type=int, default=0, help="Max pending futures. 0 means auto.")
-  parser.add_argument("--batch-size", type=int, default=4, help="Inference batch size.")
-  parser.add_argument("--num-workers", type=int, default=2, help="Data loader workers.")
+  parser.add_argument("--batch-size", type=int, default=8, help="Inference batch size. -1 means auto.")
+  parser.add_argument("--num-workers", type=int, default=4, help="Data loader workers per device. -1 means auto.")
   parser.add_argument("--patch-size", type=int, default=224, help="Patch size.")
   parser.add_argument("--stride-size", type=int, default=192, help="Stride when reset-coords.")
   parser.add_argument("--read-scale", type=float, default=20, help="Read scale for WSI.")
@@ -63,21 +68,8 @@ def parse_args():
 
 
 def _import_compose_main():
-  package_dir = Path(__file__).resolve().parents[1]
-  project_dir = package_dir.parent
-  project_path = project_dir.as_posix()
-  if project_path not in sys.path:
-    sys.path.insert(0, project_path)
-  try:
-    from slimai.helper.features.compose import CreateFeatureConfig, main as compose_main
-    return CreateFeatureConfig, compose_main
-  except Exception:
-    features_dir = package_dir / "helper" / "features"
-    features_path = features_dir.as_posix()
-    if features_path not in sys.path:
-      sys.path.append(features_path)
-    from compose import CreateFeatureConfig, main as compose_main  # type: ignore
-    return CreateFeatureConfig, compose_main
+  from slimai.helper.features.compose import CreateFeatureConfig, main as compose_main
+  return CreateFeatureConfig, compose_main
 
 
 def main():

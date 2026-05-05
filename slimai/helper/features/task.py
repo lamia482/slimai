@@ -8,11 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 from loguru import logger
-
-try:
-  from .extract import FeatureExtractor, infer_patch_features
-except Exception:
-  from extract import FeatureExtractor, infer_patch_features  # type: ignore
+from .extract import FeatureExtractor, infer_patch_features
 
 
 def _is_npu_available() -> bool:
