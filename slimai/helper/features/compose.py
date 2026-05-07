@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import signal
+import time
 import traceback
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -20,11 +21,13 @@ from loguru import logger
 from tqdm import tqdm
 
 from sdk.reader import get_reader_by_ext
-from .extract import FeatureExtractor, build_feature_extractor
+from .extract import build_feature_extractor
 from .pipeline import get_tissue_region
 from .task import (
   InferenceOptions,
+  PersistentWorkerPool,
   build_chunk_tasks,
+  create_persistent_worker_pool,
   log_device_resolution,
   parse_devices,
   resolve_accelerator,
@@ -52,6 +55,7 @@ class CreateFeatureConfig:
   operate_scale: float = 1.25
   to_gray: bool = False
   skip_existing: bool = True
+  verify_existing_md5: bool = False
   min_tissue_ratio: float = 0.05
   tissue_shrink: str = "tissue"
   output: Optional[str] = None
@@ -100,6 +104,14 @@ def _extract_runtime_params(config: CreateFeatureConfig, encoder_list: Sequence[
 
 def _short_traceback(exc: BaseException) -> str:
   return "".join(traceback.format_exception_only(type(exc), exc)).strip()
+
+
+def _sec(start_ts: float) -> float:
+  return max(time.perf_counter() - start_ts, 0.0)
+
+
+def _fmt_sec(sec: float) -> str:
+  return f"{max(sec, 0.0):.3f}s"
 
 
 def _append_run_log(run_log: Path, message: str) -> None:
@@ -304,12 +316,22 @@ def _normalize_encoder_list(value: object) -> List[str]:
   return [str(value)]
 
 
+def _read_h5_attr_str(path: Path, key: str, default: str = "") -> str:
+  try:
+    with h5py.File(path.as_posix(), "r") as fp:
+      return str(fp.attrs.get(key, default))
+  except Exception:
+    return default
+
+
 def _validate_h5_cache(
   path: Path,
   *,
   runtime_params: Dict[str, object],
   wsi_file: str,
-  wsi_md5: str,
+  source_size: Optional[int] = None,
+  source_mtime_ns: Optional[int] = None,
+  wsi_md5: Optional[str] = None,
 ) -> bool:
   if not path.exists():
     return False
@@ -320,7 +342,15 @@ def _validate_h5_cache(
         return False
       if str(attrs.get("wsi_file", "")) != wsi_file:
         return False
-      if str(attrs.get("wsi_md5", "")) != wsi_md5:
+      if source_size is not None:
+        cached_size = attrs.get("source_size_bytes", None)
+        if cached_size is not None and int(cached_size) != int(source_size):
+          return False
+      if source_mtime_ns is not None:
+        cached_mtime_ns = attrs.get("source_mtime_ns", None)
+        if cached_mtime_ns is not None and int(cached_mtime_ns) != int(source_mtime_ns):
+          return False
+      if wsi_md5 is not None and str(attrs.get("wsi_md5", "")) != wsi_md5:
         return False
       if int(attrs.get("patch_size", -1)) != int(runtime_params["patch_size"]):
         return False
@@ -364,6 +394,8 @@ def _write_h5_atomic(
   path: Path,
   *,
   wsi_file: str,
+  source_size: int,
+  source_mtime_ns: int,
   wsi_md5: str,
   runtime_params: Dict[str, object],
   tissue: Optional[np.ndarray],
@@ -377,6 +409,8 @@ def _write_h5_atomic(
   with h5py.File(tmp_path.as_posix(), "w") as fp:
     fp.attrs["schema_version"] = "slimai_embedding_v1"
     fp.attrs["wsi_file"] = wsi_file
+    fp.attrs["source_size_bytes"] = int(source_size)
+    fp.attrs["source_mtime_ns"] = int(source_mtime_ns)
     fp.attrs["wsi_md5"] = wsi_md5
     fp.attrs["patch_num"] = int(region_np.shape[0])
     fp.attrs["embedding_tag"] = runtime_params["embedding_tag"]
@@ -584,26 +618,6 @@ def _setup_sigint(runtime: RunRuntime, run_log: Path):
   return previous
 
 
-def _build_encoder_engines(
-  *,
-  encoder_list: Sequence[str],
-  devices: Sequence[int],
-  slide_encoder_name: Optional[str],
-  accelerator: str,
-) -> Dict[str, Dict[int, FeatureExtractor]]:
-  model_engines: Dict[str, Dict[int, FeatureExtractor]] = {}
-  for encoder_name in encoder_list:
-    model_engines[encoder_name] = {}
-    for device_id in devices:
-      model_engines[encoder_name][device_id] = build_feature_extractor(
-        encoder_name,
-        slide_encoder_name,
-        device_id=device_id,
-        accelerator=accelerator,
-      )
-  return model_engines
-
-
 def _safe_model_precheck(
   *,
   encoder_name: str,
@@ -611,6 +625,7 @@ def _safe_model_precheck(
   device_id: int,
   slide_encoder_name: Optional[str],
 ) -> Dict[str, object]:
+  extractor = None
   try:
     extractor = build_feature_extractor(
       encoder_name,
@@ -618,19 +633,30 @@ def _safe_model_precheck(
       device_id=device_id,
       accelerator=resolved_accelerator,
     )
-    return {
+    result = {
       "ok": True,
       "encoder": encoder_name,
       "device": str(extractor.device),
       "feature_dim": int(extractor.feature_dim),
     }
   except Exception as exc:
-    return {
+    result = {
       "ok": False,
       "encoder": encoder_name,
       "error_type": type(exc).__name__,
       "error": str(exc),
     }
+  finally:
+    if extractor is not None:
+      del extractor
+    try:
+      if resolved_accelerator == "npu" and hasattr(torch, "npu"):
+        torch.npu.empty_cache() # type: ignore[attr-defined]
+      elif resolved_accelerator == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    except Exception:
+      pass
+  return result
 
 
 def main(config: CreateFeatureConfig) -> None:
@@ -697,27 +723,33 @@ def main(config: CreateFeatureConfig) -> None:
       resolved_devices=runtime.resolved_devices,
     )
 
-    dependency_check = _check_runtime_dependencies()
-    model_check = _safe_model_precheck(
-      encoder_name=encoder_list[0],
-      resolved_accelerator=resolved_accelerator,
-      device_id=resolved_devices[0],
-      slide_encoder_name=config.slide_encoder,
-    )
-    _write_preflight(
-      preflight_path,
-      config=config,
-      runtime=runtime,
-      manifest=manifest,
-      dependency_check=dependency_check,
-      model_check=model_check,
-    )
+    _check_existing_config_or_raise(config_path, config)
+    if config.preflight_only or not preflight_path.exists():
+      dependency_check = _check_runtime_dependencies()
+      model_check = _safe_model_precheck(
+        encoder_name=encoder_list[0],
+        resolved_accelerator=resolved_accelerator,
+        device_id=resolved_devices[0],
+        slide_encoder_name=config.slide_encoder,
+      )
+      _write_preflight(
+        preflight_path,
+        config=config,
+        runtime=runtime,
+        manifest=manifest,
+        dependency_check=dependency_check,
+        model_check=model_check,
+      )
+    else:
+      _append_run_log(
+        run_log,
+        f"preflight_reused=1 model_precheck_skipped=1 path={preflight_path.as_posix()}",
+      )
 
     if config.preflight_only:
       _append_run_log(run_log, "preflight_only=1 exit_without_inference=1")
       return
 
-    _check_existing_config_or_raise(config_path, config)
     _write_config_snapshot(
       config_path,
       config=config,
@@ -729,14 +761,18 @@ def main(config: CreateFeatureConfig) -> None:
       _append_run_log(run_log, "manifest_only=1 exit_without_inference=1")
       return
 
-    model_engines = _build_encoder_engines(
-      encoder_list=encoder_list,
-      devices=resolved_devices,
-      slide_encoder_name=config.slide_encoder,
-      accelerator=resolved_accelerator,
+    options = InferenceOptions(
+      read_scale=config.read_scale,
+      patch_size=config.patch_size,
+      batch_size=auto_batch_size,
+      num_workers=auto_num_workers,
+      to_gray=config.to_gray,
+      show_progress=True,
     )
     runtime_params = _extract_runtime_params(config, encoder_list)
     previous_handler = _setup_sigint(runtime, run_log)
+    persistent_pools: Dict[str, PersistentWorkerPool] = {}
+    persistent_disabled = False
     stats = {
       "generated": 0,
       "cache_hit": 0,
@@ -745,11 +781,43 @@ def main(config: CreateFeatureConfig) -> None:
       "skipped_source_changed": 0,
       "skipped_unsupported_ext": 0,
     }
+    perf_totals: Dict[str, float] = {
+      "cache_hit_total_sec": 0.0,
+      "generated_total_sec": 0.0,
+      "cache_validate_sec": 0.0,
+      "source_md5_sec": 0.0,
+      "tissue_region_sec": 0.0,
+      "build_tasks_sec": 0.0,
+      "run_chunks_sec": 0.0,
+      "write_h5_sec": 0.0,
+      "record_success_sec": 0.0,
+    }
+    chunk_metric_totals: Dict[str, float] = {
+      "spawn_to_start_sec": 0.0,
+      "build_feature_extractor_sec": 0.0,
+      "dataloader_setup_sec": 0.0,
+      "first_batch_latency_sec": 0.0,
+      "infer_loop_sec": 0.0,
+      "save_npy_sec": 0.0,
+      "worker_total_sec": 0.0,
+      "throughput_patch_per_sec": 0.0,
+    }
+    chunk_metric_count = 0
     max_workers = len(resolved_devices) if config.max_futs <= 0 else config.max_futs
 
     try:
       pbar = tqdm(manifest)
       for item in pbar:
+        item_start = time.perf_counter()
+        stage_times: Dict[str, float] = {
+          "cache_validate_sec": 0.0,
+          "source_md5_sec": 0.0,
+          "tissue_region_sec": 0.0,
+          "build_tasks_sec": 0.0,
+          "run_chunks_sec": 0.0,
+          "write_h5_sec": 0.0,
+          "record_success_sec": 0.0,
+        }
         if runtime.stop_requested:
           _append_run_log(run_log, "stop_requested=1 break_loop=1")
           break
@@ -800,22 +868,53 @@ def main(config: CreateFeatureConfig) -> None:
           continue
 
         try:
-          wsi_md5 = _file_md5(item.wsi_file)
           expected_h5 = Path(item.expected_h5_path)
+          if config.verify_existing_md5:
+            existing_md5_start = time.perf_counter()
+            existing_wsi_md5 = _file_md5(item.wsi_file)
+            stage_times["source_md5_sec"] += _sec(existing_md5_start)
+          else:
+            existing_wsi_md5 = None
+          cache_validate_start = time.perf_counter()
           if config.skip_existing and _validate_h5_cache(
             expected_h5,
             runtime_params=runtime_params,
             wsi_file=item.wsi_file,
-            wsi_md5=wsi_md5,
+            source_size=int(current_stat.st_size),
+            source_mtime_ns=int(current_stat.st_mtime_ns),
+            wsi_md5=existing_wsi_md5,
           ):
+            stage_times["cache_validate_sec"] += _sec(cache_validate_start)
             payload = dict(base_payload)
             payload["status"] = "cache_hit"
-            payload["wsi_md5"] = wsi_md5
+            payload["wsi_md5"] = existing_wsi_md5 or _read_h5_attr_str(expected_h5, "wsi_md5")
             payload["output_size"] = int(expected_h5.stat().st_size)
+            payload["perf"] = {
+              "cache_validate_sec": stage_times["cache_validate_sec"],
+              "source_md5_sec": stage_times["source_md5_sec"],
+              "wsi_total_sec": _sec(item_start),
+            }
             _append_jsonl(success_jsonl, payload)
             stats["cache_hit"] += 1
+            perf_totals["cache_hit_total_sec"] += payload["perf"]["wsi_total_sec"]  # type: ignore[index]
+            perf_totals["cache_validate_sec"] += stage_times["cache_validate_sec"]
+            perf_totals["source_md5_sec"] += stage_times["source_md5_sec"]
+            _append_run_log(
+              run_log,
+              "perf_cache_hit wsi={} total={} cache_validate={} source_md5={}".format(
+                item.wsi_file,
+                _fmt_sec(payload["perf"]["wsi_total_sec"]),  # type: ignore[index]
+                _fmt_sec(stage_times["cache_validate_sec"]),
+                _fmt_sec(stage_times["source_md5_sec"]),
+              ),
+            )
             continue
+          stage_times["cache_validate_sec"] += _sec(cache_validate_start)
 
+          source_md5_start = time.perf_counter()
+          wsi_md5 = _file_md5(item.wsi_file)
+          stage_times["source_md5_sec"] += _sec(source_md5_start)
+          tissue_start = time.perf_counter()
           tissue_output = get_tissue_region(
             item.wsi_file,
             read_scale=config.read_scale,
@@ -829,33 +928,111 @@ def main(config: CreateFeatureConfig) -> None:
             return_tissue=True,
             tissue_scale=1.25,
           )
+          stage_times["tissue_region_sec"] += _sec(tissue_start)
           region_np = tissue_output.region_np
           tissue = tissue_output.tissue
-          options = InferenceOptions(
-            read_scale=config.read_scale,
-            patch_size=config.patch_size,
-            batch_size=auto_batch_size,
-            num_workers=auto_num_workers,
-            to_gray=config.to_gray,
-            show_progress=True,
-          )
           encoder_feature_dict: Dict[str, np.ndarray] = {}
           for encoder_name in encoder_list:
+            build_tasks_start = time.perf_counter()
             tasks = build_chunk_tasks(
               wsi_file=item.wsi_file,
+              encoder_name=encoder_name,
+              slide_encoder_name=config.slide_encoder,
               region_np=region_np,
               devices=resolved_devices,
-              model_engines=model_engines[encoder_name],
+              accelerator=resolved_accelerator,
             )
-            encoder_feature_dict[encoder_name] = run_chunk_tasks(
-              tasks=tasks,
-              options=options,
-              max_workers=max_workers,
-            )
+            stage_times["build_tasks_sec"] += _sec(build_tasks_start)
+            run_chunks_start = time.perf_counter()
+            pool = None
+            created_pool = False
+            if not persistent_disabled:
+              pool = persistent_pools.get(encoder_name)
+              if pool is None:
+                pool = create_persistent_worker_pool(
+                  encoder_name=encoder_name,
+                  slide_encoder_name=config.slide_encoder,
+                  accelerator=resolved_accelerator,
+                  devices=resolved_devices,
+                  options=options,
+                )
+                persistent_pools[encoder_name] = pool
+                created_pool = True
+            try:
+              feature_np, chunk_metrics = run_chunk_tasks(
+                tasks=tasks,
+                options=options,
+                max_workers=max_workers,
+                persistent_pool=pool,
+              )
+              if created_pool and pool is not None:
+                for metric in sorted(pool.startup_metrics.values(), key=lambda x: int(x.get("device_id", -1))):
+                  _append_run_log(
+                    run_log,
+                    (
+                      "perf_worker_startup encoder={} device={} pid={} spawn_to_ready={} "
+                      "build_feature_extractor={} dataloader_setup={} startup_total={}"
+                    ).format(
+                      encoder_name,
+                      metric.get("device_id"),
+                      metric.get("pid"),
+                      _fmt_sec(float(metric.get("spawn_to_ready_sec", 0.0))),
+                      _fmt_sec(float(metric.get("build_feature_extractor_sec", 0.0))),
+                      _fmt_sec(float(metric.get("dataloader_setup_sec", 0.0))),
+                      _fmt_sec(float(metric.get("worker_startup_total_sec", 0.0))),
+                    ),
+                  )
+            except Exception as pool_exc:
+              if pool is None:
+                raise
+              _append_run_log(
+                run_log,
+                (
+                  "persistent_pool_failed encoder={} wsi={} error_type={} error={} fallback_ephemeral=1"
+                ).format(
+                  encoder_name,
+                  item.wsi_file,
+                  type(pool_exc).__name__,
+                  pool_exc,
+                ),
+              )
+              persistent_disabled = True
+              for worker_pool in persistent_pools.values():
+                worker_pool.close()
+              persistent_pools.clear()
+              feature_np, chunk_metrics = run_chunk_tasks(
+                tasks=tasks,
+                options=options,
+                max_workers=max_workers,
+                persistent_pool=None,
+              )
+            stage_times["run_chunks_sec"] += _sec(run_chunks_start)
+            encoder_feature_dict[encoder_name] = feature_np
+            if len(chunk_metrics) > 0:
+              per_chunk_tokens = []
+              for chunk_metric in sorted(chunk_metrics, key=lambda x: int(x.get("chunk_index", -1))):
+                device_id = int(chunk_metric.get("device_id", -1))
+                throughput = float(chunk_metric.get("throughput_patch_per_sec", 0.0))
+                worker_total_sec = float(chunk_metric.get("worker_total_sec", 0.0))
+                per_chunk_tokens.append(f"npu:{device_id}:{_fmt_sec(worker_total_sec)}:{throughput:.1f}patch/s")
+                for metric_name in chunk_metric_totals.keys():
+                  chunk_metric_totals[metric_name] += float(chunk_metric.get(metric_name, 0.0))
+                chunk_metric_count += 1
+              _append_run_log(
+                run_log,
+                "perf_chunks wsi={} encoder={} {}".format(
+                  item.wsi_file,
+                  encoder_name,
+                  " ".join(per_chunk_tokens),
+                ),
+              )
 
+          write_h5_start = time.perf_counter()
           _write_h5_atomic(
             expected_h5,
             wsi_file=item.wsi_file,
+            source_size=int(current_stat.st_size),
+            source_mtime_ns=int(current_stat.st_mtime_ns),
             wsi_md5=wsi_md5,
             runtime_params=runtime_params,
             tissue=tissue,
@@ -863,8 +1040,10 @@ def main(config: CreateFeatureConfig) -> None:
             attention_np=None,
             encoder_feature_dict=encoder_feature_dict,
           )
+          stage_times["write_h5_sec"] += _sec(write_h5_start)
 
           patch_num = int(region_np.shape[0])
+          record_start = time.perf_counter()
           if config.output is not None:
             _append_record_to_xlsx(
               config.output,
@@ -878,10 +1057,46 @@ def main(config: CreateFeatureConfig) -> None:
           payload["wsi_md5"] = wsi_md5
           payload["patch_num"] = patch_num
           payload["output_size"] = int(expected_h5.stat().st_size)
+          stage_times["record_success_sec"] += _sec(record_start)
+          payload["perf"] = {
+            "cache_validate_sec": stage_times["cache_validate_sec"],
+            "source_md5_sec": stage_times["source_md5_sec"],
+            "tissue_region_sec": stage_times["tissue_region_sec"],
+            "build_tasks_sec": stage_times["build_tasks_sec"],
+            "run_chunks_sec": stage_times["run_chunks_sec"],
+            "write_h5_sec": stage_times["write_h5_sec"],
+            "record_success_sec": stage_times["record_success_sec"],
+            "wsi_total_sec": _sec(item_start),
+          }
           _append_jsonl(success_jsonl, payload)
           if patch_num == 0:
             _append_run_log(run_log, f"warning patch_num=0 wsi={item.wsi_file}")
           stats["generated"] += 1
+          perf_totals["generated_total_sec"] += payload["perf"]["wsi_total_sec"]  # type: ignore[index]
+          perf_totals["cache_validate_sec"] += stage_times["cache_validate_sec"]
+          perf_totals["source_md5_sec"] += stage_times["source_md5_sec"]
+          perf_totals["tissue_region_sec"] += stage_times["tissue_region_sec"]
+          perf_totals["build_tasks_sec"] += stage_times["build_tasks_sec"]
+          perf_totals["run_chunks_sec"] += stage_times["run_chunks_sec"]
+          perf_totals["write_h5_sec"] += stage_times["write_h5_sec"]
+          perf_totals["record_success_sec"] += stage_times["record_success_sec"]
+          _append_run_log(
+            run_log,
+            (
+              "perf_generated wsi={} total={} cache_validate={} source_md5={} tissue={} "
+              "build_tasks={} run_chunks={} write_h5={} record={}"
+            ).format(
+              item.wsi_file,
+              _fmt_sec(payload["perf"]["wsi_total_sec"]),  # type: ignore[index]
+              _fmt_sec(stage_times["cache_validate_sec"]),
+              _fmt_sec(stage_times["source_md5_sec"]),
+              _fmt_sec(stage_times["tissue_region_sec"]),
+              _fmt_sec(stage_times["build_tasks_sec"]),
+              _fmt_sec(stage_times["run_chunks_sec"]),
+              _fmt_sec(stage_times["write_h5_sec"]),
+              _fmt_sec(stage_times["record_success_sec"]),
+            ),
+          )
         except Exception as exc:
           payload = dict(base_payload)
           payload["status"] = "failed"
@@ -902,7 +1117,43 @@ def main(config: CreateFeatureConfig) -> None:
           stats["skipped_unsupported_ext"],
         ),
       )
+      _append_run_log(
+        run_log,
+        (
+          "perf_summary avg_generated={} avg_cache_hit={} avg_cache_validate={} avg_source_md5={} avg_tissue={} "
+          "avg_build_tasks={} avg_run_chunks={} avg_write_h5={} avg_record_success={}"
+        ).format(
+          _fmt_sec(perf_totals["generated_total_sec"] / max(stats["generated"], 1)),
+          _fmt_sec(perf_totals["cache_hit_total_sec"] / max(stats["cache_hit"], 1)),
+          _fmt_sec(perf_totals["cache_validate_sec"] / max(stats["generated"] + stats["cache_hit"], 1)),
+          _fmt_sec(perf_totals["source_md5_sec"] / max(stats["generated"] + stats["cache_hit"], 1)),
+          _fmt_sec(perf_totals["tissue_region_sec"] / max(stats["generated"], 1)),
+          _fmt_sec(perf_totals["build_tasks_sec"] / max(stats["generated"], 1)),
+          _fmt_sec(perf_totals["run_chunks_sec"] / max(stats["generated"], 1)),
+          _fmt_sec(perf_totals["write_h5_sec"] / max(stats["generated"], 1)),
+          _fmt_sec(perf_totals["record_success_sec"] / max(stats["generated"], 1)),
+        ),
+      )
+      if chunk_metric_count > 0:
+        _append_run_log(
+          run_log,
+          (
+            "perf_worker_summary avg_spawn_to_start={} avg_build_feature_extractor={} avg_dataloader_setup={} "
+            "avg_first_batch_latency={} avg_infer_loop={} avg_save_npy={} avg_worker_total={} avg_throughput={:.2f}patch/s"
+          ).format(
+            _fmt_sec(chunk_metric_totals["spawn_to_start_sec"] / chunk_metric_count),
+            _fmt_sec(chunk_metric_totals["build_feature_extractor_sec"] / chunk_metric_count),
+            _fmt_sec(chunk_metric_totals["dataloader_setup_sec"] / chunk_metric_count),
+            _fmt_sec(chunk_metric_totals["first_batch_latency_sec"] / chunk_metric_count),
+            _fmt_sec(chunk_metric_totals["infer_loop_sec"] / chunk_metric_count),
+            _fmt_sec(chunk_metric_totals["save_npy_sec"] / chunk_metric_count),
+            _fmt_sec(chunk_metric_totals["worker_total_sec"] / chunk_metric_count),
+            chunk_metric_totals["throughput_patch_per_sec"] / chunk_metric_count,
+          ),
+        )
     finally:
+      for worker_pool in persistent_pools.values():
+        worker_pool.close()
       signal.signal(signal.SIGINT, previous_handler)
   finally:
     lock_path.unlink(missing_ok=True)

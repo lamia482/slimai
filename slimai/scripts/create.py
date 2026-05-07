@@ -58,6 +58,12 @@ def parse_args():
   parser.add_argument("--operate-scale", type=float, default=1.25, help="Operate scale for tissue shrink.")
   parser.add_argument("--to-gray", action=argparse.BooleanOptionalAction, default=False)
   parser.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
+  parser.add_argument(
+    "--verify-existing-md5",
+    action=argparse.BooleanOptionalAction,
+    default=False,
+    help="Verify existing h5 cache by hashing source WSI. Disabled by default for faster resume.",
+  )
   parser.add_argument("--min-tissue-ratio", type=float, default=0.05, help="Minimum tissue ratio for tissue shrink.")
   parser.add_argument("--tissue-shrink", type=str, default="tissue", help="Tissue shrink method.")
   parser.add_argument("--output", default=None, help="Path to xlsx record file, e.g. record.xlsx.")
@@ -95,6 +101,7 @@ def main():
     operate_scale=args.operate_scale,
     to_gray=args.to_gray,
     skip_existing=args.skip_existing,
+    verify_existing_md5=args.verify_existing_md5,
     min_tissue_ratio=args.min_tissue_ratio,
     tissue_shrink=args.tissue_shrink,
     output=args.output,
