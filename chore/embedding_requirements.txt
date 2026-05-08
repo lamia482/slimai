@@ -1,3 +1,4 @@
+# requirements for create embedding and cache
 lmdb
 loguru
 h5py

@@ -302,6 +302,9 @@ class TorchEmbeddingDataset(H5Dataset):
     desc: Optional[str] = None,
     embedding_key: str = "embedding",
     coords_key: str = "x1_y1_dict",
+    h5_embedding_key: str = "features",
+    h5_coords_key: str = "coords",
+    h5_schema_version: Optional[str] = None,
     embedding_magnification: Optional[Union[int, str]] = None,
     expected_embedding_dim: Optional[int] = None,
     source=None,
@@ -324,6 +327,9 @@ class TorchEmbeddingDataset(H5Dataset):
 
     self.embedding_key = embedding_key
     self.coords_key = coords_key
+    self.h5_embedding_key = h5_embedding_key
+    self.h5_coords_key = h5_coords_key
+    self.h5_schema_version = h5_schema_version
     self.embedding_magnification = embedding_magnification
     self.expected_embedding_dim = expected_embedding_dim
     self.split = split
@@ -402,6 +408,9 @@ class TorchEmbeddingDataset(H5Dataset):
       f"\tEmbedding tag: {self.embedding_tag}\n"
       f"\tEmbedding key: {self.embedding_key}\n"
       f"\tCoordinates key: {self.coords_key}\n"
+      f"\tH5 embedding key: {self.h5_embedding_key}\n"
+      f"\tH5 coordinates key: {self.h5_coords_key}\n"
+      f"\tH5 schema version: {self.h5_schema_version}\n"
       f"\tEmbedding magnification: {self.embedding_magnification}\n"
       f"\tExpected embedding dim: {self.expected_embedding_dim}\n"
       f"\tSplit: {self.split}\n"
@@ -448,6 +457,27 @@ class TorchEmbeddingDataset(H5Dataset):
       coords = self._select_group_data(coords, "coords")
     return embedding, coords
 
+  def _extract_embedding_and_coords_from_h5(self, embed_path: str):
+    with h5py.File(embed_path, "r") as fp:
+      if self.h5_schema_version is not None:
+        schema_version = str(fp.attrs.get("schema_version", ""))
+        if schema_version != str(self.h5_schema_version):
+          raise ValueError(
+            f"H5 schema mismatch in {embed_path}: got '{schema_version}', expected '{self.h5_schema_version}'."
+          )
+
+      if self.h5_embedding_key not in fp:
+        raise KeyError(
+          f"H5 embedding key '{self.h5_embedding_key}' not found in {embed_path}. "
+          f"Available keys: {list(fp.keys())[:20]}"
+        )
+      embedding = fp[self.h5_embedding_key][:]
+
+      coords = None
+      if self.h5_coords_key in fp:
+        coords = fp[self.h5_coords_key][:]
+    return embedding, coords
+
   def _normalize_coords(self, coords, embedding: torch.Tensor, embed_path: str) -> torch.Tensor:
     if coords is None:
       return torch.zeros((embedding.shape[0], 2), dtype=torch.float32)
@@ -469,12 +499,15 @@ class TorchEmbeddingDataset(H5Dataset):
     if embed_path in self.embeddings:
       return self.embeddings[embed_path]
 
-    payload = torch.load(
-      embed_path,
-      map_location="cpu",
-      weights_only=False,
-    )
-    embedding, coords = self._extract_embedding_and_coords(payload, embed_path)
+    if str(embed_path).lower().endswith((".h5", ".hdf5")):
+      embedding, coords = self._extract_embedding_and_coords_from_h5(embed_path)
+    else:
+      payload = torch.load(
+        embed_path,
+        map_location="cpu",
+        weights_only=False,
+      )
+      embedding, coords = self._extract_embedding_and_coords(payload, embed_path)
     embedding = torch.as_tensor(embedding).float()
     if embedding.dim() != 2:
       raise ValueError(f"Embedding tensor must be 2D [N, K], got {tuple(embedding.shape)} from {embed_path}.")

@@ -2,6 +2,7 @@ import os, os.path as osp
 import argparse
 from pathlib import Path
 from mmengine.config import Config
+import slimai.data  # noqa: F401; import registers datasets, sources, loaders, transforms
 from slimai.runner import Runner
 from slimai.helper import Distributed
 from slimai.helper.help_utils import print_log

@@ -1,4 +1,3 @@
-import swanlab
 import mmengine
 import torch
 import numpy as np
@@ -10,6 +9,11 @@ from .help_utils import print_log, get_dist_env
 from .help_build import build_visualizer
 from .structure import DataSample
 from .utils import singleton
+
+try:
+  import swanlab
+except ModuleNotFoundError:
+  swanlab = None
 
 
 @singleton.singleton_wrapper
@@ -26,7 +30,7 @@ class Record(object):
     Args:
       cfg: Configuration object containing experiment settings
     """
-    self._swanlab_ok = (not no_record)
+    self._swanlab_ok = (not no_record) and (swanlab is not None)
 
     assert (
       cfg is not None
@@ -71,6 +75,10 @@ class Record(object):
 
     # keys that caused swanlab chart error (e.g. None / invalid type); skip in subsequent steps
     self._swanlab_skip_keys = set()
+
+    if swanlab is None:
+      print_log("swanlab is not installed, skip recording", level="WARNING", warn_once=True)
+      return
 
     # only one process across all nodes&ranks should record
     if not self.should_record:

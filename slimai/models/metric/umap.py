@@ -2,7 +2,6 @@ import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 import torch
-import umap
 from slimai.helper.help_build import MODELS
 
 
@@ -24,6 +23,11 @@ class UMAP(torch.nn.Module):
   def forward(self, 
               embeddings: torch.Tensor, 
               targets: torch.Tensor) -> matplotlib.figure.Figure: # type: ignore    
+    try:
+      import umap
+    except ModuleNotFoundError as ex:
+      raise ModuleNotFoundError("UMAP metric requires `umap-learn` to be installed") from ex
+
     obj = umap.UMAP(n_components=self.num_classs, **self.kwargs)
     result = obj.fit_transform(embeddings)
     result = torch.tensor(result)

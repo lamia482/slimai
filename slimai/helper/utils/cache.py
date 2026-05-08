@@ -106,6 +106,7 @@ class LMDBCache(object):
       dupfixed=False,
     )
 
+    self._env_cache = {}
     self.data_env, self.database = self.create_env(self.lmdb_data_name)
     self.meta_env, self.metabase = self.create_env(self.lmdb_meta_name)
 
@@ -202,7 +203,6 @@ class LMDBCache(object):
       with env.begin(db=db, write=True) as txn, txn.cursor(db=db) as cursor:
         for i, v in enumerate(seq):
           cursor.put(k, f"{i:0{nbit}d}_".encode() + v, dupdata=True) # add index and length to value for futher sort
-      env.close()
       return
 
     _set_bytes_(*self.create_env(self.lmdb_data_name), 
@@ -230,7 +230,11 @@ class LMDBCache(object):
     return has_database and has_meta
 
   def create_env(self, db_name: str, env_name: str = "data"):
-    env = lmdb.open((self.cache_dir / env_name).as_posix(), **self.env_kwargs)
+    env_path = (self.cache_dir / env_name).as_posix()
+    env = self._env_cache.get(env_path)
+    if env is None:
+      env = lmdb.open(env_path, **self.env_kwargs)
+      self._env_cache[env_path] = env
     db = env.open_db(db_name.encode(), **self.db_kwargs)
     return env, db
 
