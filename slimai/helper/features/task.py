@@ -181,6 +181,73 @@ class InferenceOptions:
   show_progress: bool = True
 
 
+def _env_flag(name: str, default: bool) -> bool:
+  raw = os.environ.get(name, "").strip().lower()
+  if raw == "":
+    return default
+  return raw not in ["0", "false", "no", "n", "off"]
+
+
+def _model_load_retry_count() -> int:
+  raw = os.environ.get("SLIMAI_MODEL_LOAD_RETRIES", "3").strip()
+  try:
+    return max(1, int(raw))
+  except ValueError:
+    return 3
+
+
+def _is_retryable_model_load_error(exc: Exception) -> bool:
+  text = f"{type(exc).__module__}.{type(exc).__name__}: {exc}"
+  retry_tokens = [
+    "RemoteProtocolError",
+    "ConnectionError",
+    "ConnectError",
+    "ReadTimeout",
+    "Timeout",
+    "Server disconnected",
+    "temporarily unavailable",
+    "Connection reset",
+    "IncompleteRead",
+  ]
+  return any(token in text for token in retry_tokens)
+
+
+def _build_feature_extractor_with_retry(
+  encoder_name: str,
+  slide_encoder_name: Optional[str],
+  *,
+  device_id: int,
+  accelerator: str,
+) -> Tuple[Any, int]:
+  max_attempts = _model_load_retry_count()
+  for attempt in range(1, max_attempts + 1):
+    try:
+      extractor = build_feature_extractor(
+        encoder_name,
+        slide_encoder_name,
+        device_id=device_id,
+        accelerator=accelerator,
+      )
+      return extractor, attempt - 1
+    except Exception as exc:
+      if attempt >= max_attempts or not _is_retryable_model_load_error(exc):
+        raise
+      sleep_sec = min(30.0, 5.0 * attempt)
+      logger.warning(
+        "Retry feature extractor startup encoder={} device={}:{} attempt={}/{} sleep={:.1f}s error_type={} error={}",
+        encoder_name,
+        accelerator,
+        device_id,
+        attempt,
+        max_attempts,
+        sleep_sec,
+        type(exc).__name__,
+        exc,
+      )
+      time.sleep(sleep_sec)
+  raise RuntimeError("unreachable feature extractor retry state")
+
+
 @dataclass(frozen=True)
 class PersistentWorkerPoolConfig:
   encoder_name: str
@@ -231,7 +298,7 @@ def _persistent_worker_loop(
   startup_start = time.perf_counter()
   try:
     build_start = time.perf_counter()
-    extractor = build_feature_extractor(
+    extractor, model_load_retries = _build_feature_extractor_with_retry(
       config.encoder_name,
       config.slide_encoder_name,
       device_id=device_id,
@@ -277,6 +344,7 @@ def _persistent_worker_loop(
         "pid": os.getpid(),
         "spawn_to_ready_sec": spawn_to_ready_sec,
         "build_feature_extractor_sec": build_feature_extractor_sec,
+        "model_load_retries": int(model_load_retries),
         "dataloader_setup_sec": dataloader_setup_sec,
         "worker_startup_total_sec": max(time.perf_counter() - startup_start, 0.0),
       }
@@ -378,22 +446,36 @@ class PersistentWorkerPool:
   def _start(self) -> None:
     if self._started:
       return
-    for device_id in self.config.devices:
-      device_queue: mp.Queue = self.context.Queue()
-      launch_time = time.perf_counter()
-      process = self.context.Process(
-        target=_persistent_worker_loop,
-        kwargs={
-          "device_id": int(device_id),
-          "config": self.config,
-          "request_queue": device_queue,
-          "result_queue": self.result_queue,
-          "launch_time": launch_time,
-        },
-      )
-      process.start()
-      self.request_queues[int(device_id)] = device_queue
-      self.processes[int(device_id)] = process
+    set_worker_hf_offline = (
+      _env_flag("SLIMAI_WORKER_HF_HUB_OFFLINE", True)
+      and "HF_HUB_OFFLINE" not in os.environ
+    )
+    old_hf_hub_offline = os.environ.get("HF_HUB_OFFLINE")
+    if set_worker_hf_offline:
+      os.environ["HF_HUB_OFFLINE"] = "1"
+    try:
+      for device_id in self.config.devices:
+        device_queue: mp.Queue = self.context.Queue()
+        launch_time = time.perf_counter()
+        process = self.context.Process(
+          target=_persistent_worker_loop,
+          kwargs={
+            "device_id": int(device_id),
+            "config": self.config,
+            "request_queue": device_queue,
+            "result_queue": self.result_queue,
+            "launch_time": launch_time,
+          },
+        )
+        process.start()
+        self.request_queues[int(device_id)] = device_queue
+        self.processes[int(device_id)] = process
+    finally:
+      if set_worker_hf_offline:
+        if old_hf_hub_offline is None:
+          os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+          os.environ["HF_HUB_OFFLINE"] = old_hf_hub_offline
 
     pending_devices = set(int(device) for device in self.config.devices)
     timeout_sec = 300.0
@@ -557,7 +639,7 @@ def create_persistent_worker_pool(
 
 def _worker_run(task: ChunkTask, options: InferenceOptions) -> Tuple[np.ndarray, Dict[str, Any]]:
   build_start = time.perf_counter()
-  extractor = build_feature_extractor(
+  extractor, model_load_retries = _build_feature_extractor_with_retry(
     task.encoder_name,
     task.slide_encoder_name,
     device_id=task.device_id,
@@ -585,6 +667,7 @@ def _worker_run(task: ChunkTask, options: InferenceOptions) -> Tuple[np.ndarray,
     "encoder_name": task.encoder_name,
     "input_patch_count": int(task.region_chunk.shape[0]),
     "build_feature_extractor_sec": build_feature_extractor_sec,
+    "model_load_retries": int(model_load_retries),
     "infer_patch_features_sec": infer_patch_features_sec,
   }
   metrics.update(infer_metrics)

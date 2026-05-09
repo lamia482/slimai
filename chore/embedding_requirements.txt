@@ -11,3 +11,5 @@ openslide-bin
 openslide-python
 timm
 huggingface_hub
+# Optional for CONCH encoder:
+# pip install git+https://github.com/mahmoodlab/CONCH.git

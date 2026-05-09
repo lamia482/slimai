@@ -32,7 +32,7 @@ def parse_args():
     "--patch-encoders",
     required=False,
     default=None,
-    help="Comma-separated patch encoders, e.g. UNI,CONCH",
+    help="Comma-separated patch encoders, e.g. UNI,UNI2,CONCH",
   )
   parser.add_argument(
     "--slide-encoder", required=False, help="Slide encoder name.",
@@ -58,6 +58,12 @@ def parse_args():
   parser.add_argument("--operate-scale", type=float, default=1.25, help="Operate scale for tissue shrink.")
   parser.add_argument("--to-gray", action=argparse.BooleanOptionalAction, default=False)
   parser.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
+  parser.add_argument(
+    "--incremental-h5",
+    action=argparse.BooleanOptionalAction,
+    default=False,
+    help="Append missing encoder datasets into existing h5 files instead of replacing whole files.",
+  )
   parser.add_argument(
     "--verify-existing-md5",
     action=argparse.BooleanOptionalAction,
@@ -101,6 +107,7 @@ def main():
     operate_scale=args.operate_scale,
     to_gray=args.to_gray,
     skip_existing=args.skip_existing,
+    incremental_h5=args.incremental_h5,
     verify_existing_md5=args.verify_existing_md5,
     min_tissue_ratio=args.min_tissue_ratio,
     tissue_shrink=args.tissue_shrink,

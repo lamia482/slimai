@@ -11,7 +11,7 @@ from pathlib import Path
 import signal
 import time
 import traceback
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import h5py
 import numpy as np
@@ -55,6 +55,7 @@ class CreateFeatureConfig:
   operate_scale: float = 1.25
   to_gray: bool = False
   skip_existing: bool = True
+  incremental_h5: bool = False
   verify_existing_md5: bool = False
   min_tissue_ratio: float = 0.05
   tissue_shrink: str = "tissue"
@@ -332,6 +333,7 @@ def _validate_h5_cache(
   source_size: Optional[int] = None,
   source_mtime_ns: Optional[int] = None,
   wsi_md5: Optional[str] = None,
+  allow_encoder_superset: bool = False,
 ) -> bool:
   if not path.exists():
     return False
@@ -370,8 +372,12 @@ def _validate_h5_cache(
         return False
       cached_encoders = sorted(_normalize_encoder_list(attrs.get("encoder_list")))
       expected_encoders = sorted([str(x) for x in runtime_params["encoder_list"]])  # type: ignore[index]
-      if cached_encoders != expected_encoders:
-        return False
+      if allow_encoder_superset:
+        if not set(expected_encoders).issubset(set(cached_encoders)):
+          return False
+      else:
+        if cached_encoders != expected_encoders:
+          return False
       if "region_np" not in fp:
         return False
       patch_num = int(attrs.get("patch_num", -1))
@@ -388,6 +394,196 @@ def _validate_h5_cache(
   except Exception:
     return False
   return True
+
+
+@dataclass(frozen=True)
+class ExistingH5State:
+  wsi_md5: str
+  patch_num: int
+  existing_encoders: List[str]
+  region_np: np.ndarray
+
+
+def _read_json_dict(path: Path) -> Optional[Dict[str, object]]:
+  if not path.exists():
+    return None
+  try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+  except Exception:
+    return None
+  if not isinstance(payload, dict):
+    return None
+  return payload
+
+
+def _encoder_list_from_config_payload(payload: Dict[str, object]) -> List[str]:
+  patch_encoders = str(payload.get("patch_encoders", "") or "").strip()
+  if patch_encoders != "":
+    return [item.strip() for item in patch_encoders.split(",") if item.strip() != ""]
+  patch_encoder = str(payload.get("patch_encoder", "") or "").strip()
+  if patch_encoder == "":
+    return []
+  return [patch_encoder]
+
+
+def _dedupe_preserve(items: Sequence[str]) -> List[str]:
+  deduped: List[str] = []
+  seen: Set[str] = set()
+  for item in items:
+    if item in seen:
+      continue
+    seen.add(item)
+    deduped.append(item)
+  return deduped
+
+
+def _collect_overwrite_risks(
+  manifest: Sequence[ManifestItem],
+  *,
+  runtime_params: Dict[str, object],
+  config: CreateFeatureConfig,
+) -> None:
+  if config.incremental_h5:
+    return
+  sample: List[str] = []
+  for item in manifest:
+    expected_h5 = Path(item.expected_h5_path)
+    if not expected_h5.exists():
+      continue
+    if not config.skip_existing:
+      sample.append(
+        f"{expected_h5.as_posix()} (requested --no-skip-existing will replace this file)"
+      )
+      if len(sample) >= 3:
+        break
+      continue
+    if not _validate_h5_cache(
+      expected_h5,
+      runtime_params=runtime_params,
+      wsi_file=item.wsi_file,
+      source_size=item.size if item.size >= 0 else None,
+      source_mtime_ns=item.mtime_ns if item.mtime_ns >= 0 else None,
+      wsi_md5=None,
+      allow_encoder_superset=False,
+    ):
+      sample.append(
+        (
+          f"{expected_h5.as_posix()} (existing h5 is incompatible; rerun would overwrite). "
+          "Use --incremental-h5 to append encoder datasets or change --out-dir/--tag."
+        )
+      )
+      if len(sample) >= 3:
+        break
+  if len(sample) == 0:
+    return
+  raise ValueError(
+    "Refuse to overwrite existing h5 files due to high-risk parameters. "
+    "Examples: {}".format(" | ".join(sample))
+  )
+
+
+def _read_existing_h5_state(
+  *,
+  path: Path,
+  runtime_params: Dict[str, object],
+  wsi_file: str,
+  source_size: int,
+  source_mtime_ns: int,
+  wsi_md5: Optional[str],
+) -> ExistingH5State:
+  with h5py.File(path.as_posix(), "r") as fp:
+    attrs = fp.attrs
+    if str(attrs.get("schema_version", "")) != "slimai_embedding_v1":
+      raise ValueError(f"incompatible schema_version: {attrs.get('schema_version', '')}")
+    if str(attrs.get("wsi_file", "")) != wsi_file:
+      raise ValueError("incompatible wsi_file")
+    cached_size = attrs.get("source_size_bytes", None)
+    if cached_size is not None and int(cached_size) != int(source_size):
+      raise ValueError(f"incompatible source_size_bytes: {cached_size} != {source_size}")
+    cached_mtime_ns = attrs.get("source_mtime_ns", None)
+    if cached_mtime_ns is not None and int(cached_mtime_ns) != int(source_mtime_ns):
+      raise ValueError(f"incompatible source_mtime_ns: {cached_mtime_ns} != {source_mtime_ns}")
+    if wsi_md5 is not None and str(attrs.get("wsi_md5", "")) != wsi_md5:
+      raise ValueError("incompatible wsi_md5")
+    if int(attrs.get("patch_size", -1)) != int(runtime_params["patch_size"]):
+      raise ValueError("incompatible patch_size")
+    if int(attrs.get("stride_size", -1)) != int(runtime_params["stride_size"]):
+      raise ValueError("incompatible stride_size")
+    if float(attrs.get("read_scale", -1.0)) != float(runtime_params["read_scale"]):
+      raise ValueError("incompatible read_scale")
+    if float(attrs.get("operate_scale", -1.0)) != float(runtime_params["operate_scale"]):
+      raise ValueError("incompatible operate_scale")
+    if bool(attrs.get("to_gray", False)) != bool(runtime_params["to_gray"]):
+      raise ValueError("incompatible to_gray")
+    if float(attrs.get("min_tissue_ratio", -1.0)) != float(runtime_params["min_tissue_ratio"]):
+      raise ValueError("incompatible min_tissue_ratio")
+    if str(attrs.get("tissue_shrink", "")) != str(runtime_params["tissue_shrink"]):
+      raise ValueError("incompatible tissue_shrink")
+    if str(attrs.get("embedding_tag", "")) != str(runtime_params["embedding_tag"]):
+      raise ValueError("incompatible embedding_tag")
+    if "region_np" not in fp:
+      raise ValueError("region_np dataset missing")
+    patch_num = int(attrs.get("patch_num", -1))
+    if patch_num < 0:
+      raise ValueError("invalid patch_num")
+    region_np = fp["region_np"][:].astype(np.float32)
+    if int(region_np.shape[0]) != patch_num:
+      raise ValueError("region_np length mismatch patch_num")
+    existing_encoders = _normalize_encoder_list(attrs.get("encoder_list"))
+    for encoder_name in existing_encoders:
+      feature_name = f"{encoder_name}_feature_np"
+      if feature_name not in fp:
+        raise ValueError(f"missing dataset: {feature_name}")
+      if int(fp[feature_name].shape[0]) != patch_num:
+        raise ValueError(f"dataset length mismatch: {feature_name}")
+    return ExistingH5State(
+      wsi_md5=str(attrs.get("wsi_md5", "")),
+      patch_num=patch_num,
+      existing_encoders=existing_encoders,
+      region_np=region_np,
+    )
+
+
+def _append_h5_features(
+  *,
+  path: Path,
+  runtime_params: Dict[str, object],
+  encoder_feature_dict: Dict[str, np.ndarray],
+) -> None:
+  if len(encoder_feature_dict) == 0:
+    return
+  with h5py.File(path.as_posix(), "a") as fp:
+    attrs = fp.attrs
+    patch_num = int(attrs.get("patch_num", -1))
+    if patch_num < 0:
+      raise ValueError("invalid patch_num in existing h5")
+    existing_encoders = _normalize_encoder_list(attrs.get("encoder_list"))
+    existing_encoder_set = set(existing_encoders)
+    for encoder_name, feature_np in encoder_feature_dict.items():
+      feature_name = f"{encoder_name}_feature_np"
+      if feature_name in fp:
+        continue
+      if int(feature_np.shape[0]) != patch_num:
+        raise ValueError(
+          f"feature row mismatch for {feature_name}: {feature_np.shape[0]} != {patch_num}"
+        )
+      tmp_name = f"tmp_{feature_name}_{os.getpid()}"
+      if tmp_name in fp:
+        del fp[tmp_name]
+      fp.create_dataset(tmp_name, data=feature_np.astype(np.float32), dtype=np.float32)
+      fp.move(tmp_name, feature_name)
+      if encoder_name not in existing_encoder_set:
+        existing_encoders.append(encoder_name)
+        existing_encoder_set.add(encoder_name)
+    string_dtype = h5py.string_dtype(encoding="utf-8")
+    deduped_encoders = _dedupe_preserve(existing_encoders)
+    if "encoder_list" in attrs:
+      del attrs["encoder_list"]
+    attrs.create("encoder_list", np.asarray(deduped_encoders, dtype=object), dtype=string_dtype)
+    if "patch_encoder_list" in attrs:
+      del attrs["patch_encoder_list"]
+    attrs.create("patch_encoder_list", np.asarray(deduped_encoders, dtype=object), dtype=string_dtype)
+  return
 
 
 def _write_h5_atomic(
@@ -480,8 +676,11 @@ def _write_config_snapshot(
   config: CreateFeatureConfig,
   runtime: RunRuntime,
   manifest_path: Path,
+  payload_overrides: Optional[Dict[str, object]] = None,
 ) -> None:
   payload: Dict[str, object] = asdict(config)
+  if payload_overrides is not None and len(payload_overrides) > 0:
+    payload.update(payload_overrides)
   payload["written_at"] = _now_iso()
   payload["manifest_path"] = manifest_path.as_posix()
   payload["requested_accelerator"] = runtime.requested_accelerator
@@ -498,17 +697,17 @@ def _write_config_snapshot(
   return
 
 
-def _check_existing_config_or_raise(path: Path, config: CreateFeatureConfig) -> None:
-  if not path.exists():
-    return
-  try:
-    old_payload = json.loads(path.read_text(encoding="utf-8"))
-  except Exception:
-    return
+def _check_existing_config_or_raise(
+  path: Path,
+  config: CreateFeatureConfig,
+  *,
+  requested_encoders: Sequence[str],
+) -> Dict[str, object]:
+  old_payload = _read_json_dict(path)
+  if old_payload is None:
+    return {}
   critical_keys = [
     "tag",
-    "patch_encoder",
-    "patch_encoders",
     "accelerator",
     "devices",
     "patch_size",
@@ -529,7 +728,25 @@ def _check_existing_config_or_raise(path: Path, config: CreateFeatureConfig) -> 
       "Existing config.json has mismatched keys {}. "
       "Please confirm and use a new --out-dir or align parameters.".format(mismatch)
     )
-  return
+  old_encoders = _encoder_list_from_config_payload(old_payload)
+  new_encoders = _dedupe_preserve([str(item) for item in requested_encoders])
+  if old_encoders == new_encoders:
+    return {}
+  if not config.incremental_h5:
+    raise ValueError(
+      "Existing config.json has mismatched encoder list old={} new={}. "
+      "To prevent accidental overwrite, either use --incremental-h5 to append datasets "
+      "or choose a new --out-dir/--tag.".format(old_encoders, new_encoders)
+    )
+  merged_encoders = _dedupe_preserve(old_encoders + new_encoders)
+  overrides: Dict[str, object] = {}
+  if len(merged_encoders) == 1:
+    overrides["patch_encoder"] = merged_encoders[0]
+    overrides["patch_encoders"] = None
+  else:
+    overrides["patch_encoder"] = None
+    overrides["patch_encoders"] = ",".join(merged_encoders)
+  return overrides
 
 
 def _write_preflight(
@@ -723,7 +940,17 @@ def main(config: CreateFeatureConfig) -> None:
       resolved_devices=runtime.resolved_devices,
     )
 
-    _check_existing_config_or_raise(config_path, config)
+    runtime_params = _extract_runtime_params(config, encoder_list)
+    config_snapshot_overrides = _check_existing_config_or_raise(
+      config_path,
+      config,
+      requested_encoders=encoder_list,
+    )
+    _collect_overwrite_risks(
+      manifest,
+      runtime_params=runtime_params,
+      config=config,
+    )
     if config.preflight_only or not preflight_path.exists():
       dependency_check = _check_runtime_dependencies()
       model_check = _safe_model_precheck(
@@ -755,6 +982,7 @@ def main(config: CreateFeatureConfig) -> None:
       config=config,
       runtime=runtime,
       manifest_path=manifest_path,
+      payload_overrides=config_snapshot_overrides,
     )
 
     if config.manifest_only:
@@ -769,13 +997,14 @@ def main(config: CreateFeatureConfig) -> None:
       to_gray=config.to_gray,
       show_progress=True,
     )
-    runtime_params = _extract_runtime_params(config, encoder_list)
     previous_handler = _setup_sigint(runtime, run_log)
     persistent_pools: Dict[str, PersistentWorkerPool] = {}
     persistent_disabled = False
     stats = {
       "generated": 0,
       "cache_hit": 0,
+      "incremental_generated": 0,
+      "incremental_cache_hit": 0,
       "failed": 0,
       "skipped_missing_source": 0,
       "skipped_source_changed": 0,
@@ -883,10 +1112,11 @@ def main(config: CreateFeatureConfig) -> None:
             source_size=int(current_stat.st_size),
             source_mtime_ns=int(current_stat.st_mtime_ns),
             wsi_md5=existing_wsi_md5,
+            allow_encoder_superset=config.incremental_h5,
           ):
             stage_times["cache_validate_sec"] += _sec(cache_validate_start)
             payload = dict(base_payload)
-            payload["status"] = "cache_hit"
+            payload["status"] = "incremental_cache_hit" if config.incremental_h5 else "cache_hit"
             payload["wsi_md5"] = existing_wsi_md5 or _read_h5_attr_str(expected_h5, "wsi_md5")
             payload["output_size"] = int(expected_h5.stat().st_size)
             payload["perf"] = {
@@ -895,7 +1125,10 @@ def main(config: CreateFeatureConfig) -> None:
               "wsi_total_sec": _sec(item_start),
             }
             _append_jsonl(success_jsonl, payload)
-            stats["cache_hit"] += 1
+            if payload["status"] == "incremental_cache_hit":
+              stats["incremental_cache_hit"] += 1
+            else:
+              stats["cache_hit"] += 1
             perf_totals["cache_hit_total_sec"] += payload["perf"]["wsi_total_sec"]  # type: ignore[index]
             perf_totals["cache_validate_sec"] += stage_times["cache_validate_sec"]
             perf_totals["source_md5_sec"] += stage_times["source_md5_sec"]
@@ -911,28 +1144,63 @@ def main(config: CreateFeatureConfig) -> None:
             continue
           stage_times["cache_validate_sec"] += _sec(cache_validate_start)
 
-          source_md5_start = time.perf_counter()
-          wsi_md5 = _file_md5(item.wsi_file)
-          stage_times["source_md5_sec"] += _sec(source_md5_start)
-          tissue_start = time.perf_counter()
-          tissue_output = get_tissue_region(
-            item.wsi_file,
-            read_scale=config.read_scale,
-            operate_scale=config.operate_scale,
-            patch_size_h=config.patch_size,
-            patch_size_w=config.patch_size,
-            patch_stride_h=config.stride_size,
-            patch_stride_w=config.stride_size,
-            min_ratio=config.min_tissue_ratio,
-            shrink=config.tissue_shrink,
-            return_tissue=True,
-            tissue_scale=1.25,
-          )
-          stage_times["tissue_region_sec"] += _sec(tissue_start)
-          region_np = tissue_output.region_np
-          tissue = tissue_output.tissue
+          incremental_mode = False
+          encoder_list_to_run = list(encoder_list)
+          wsi_md5 = existing_wsi_md5 or ""
+          if config.incremental_h5 and expected_h5.exists():
+            incremental_state = _read_existing_h5_state(
+              path=expected_h5,
+              runtime_params=runtime_params,
+              wsi_file=item.wsi_file,
+              source_size=int(current_stat.st_size),
+              source_mtime_ns=int(current_stat.st_mtime_ns),
+              wsi_md5=existing_wsi_md5,
+            )
+            existing_encoder_set = set(incremental_state.existing_encoders)
+            encoder_list_to_run = [name for name in encoder_list if name not in existing_encoder_set]
+            if len(encoder_list_to_run) == 0:
+              payload = dict(base_payload)
+              payload["status"] = "incremental_cache_hit"
+              payload["wsi_md5"] = wsi_md5 or incremental_state.wsi_md5
+              payload["output_size"] = int(expected_h5.stat().st_size)
+              payload["perf"] = {
+                "cache_validate_sec": stage_times["cache_validate_sec"],
+                "source_md5_sec": stage_times["source_md5_sec"],
+                "wsi_total_sec": _sec(item_start),
+              }
+              _append_jsonl(success_jsonl, payload)
+              stats["incremental_cache_hit"] += 1
+              perf_totals["cache_hit_total_sec"] += payload["perf"]["wsi_total_sec"]  # type: ignore[index]
+              continue
+            region_np = incremental_state.region_np
+            tissue = None
+            if wsi_md5 == "":
+              wsi_md5 = incremental_state.wsi_md5
+            incremental_mode = True
+          else:
+            tissue_start = time.perf_counter()
+            tissue_output = get_tissue_region(
+              item.wsi_file,
+              read_scale=config.read_scale,
+              operate_scale=config.operate_scale,
+              patch_size_h=config.patch_size,
+              patch_size_w=config.patch_size,
+              patch_stride_h=config.stride_size,
+              patch_stride_w=config.stride_size,
+              min_ratio=config.min_tissue_ratio,
+              shrink=config.tissue_shrink,
+              return_tissue=True,
+              tissue_scale=1.25,
+            )
+            stage_times["tissue_region_sec"] += _sec(tissue_start)
+            region_np = tissue_output.region_np
+            tissue = tissue_output.tissue
+          if wsi_md5 == "":
+            source_md5_start = time.perf_counter()
+            wsi_md5 = _file_md5(item.wsi_file)
+            stage_times["source_md5_sec"] += _sec(source_md5_start)
           encoder_feature_dict: Dict[str, np.ndarray] = {}
-          for encoder_name in encoder_list:
+          for encoder_name in encoder_list_to_run:
             build_tasks_start = time.perf_counter()
             tasks = build_chunk_tasks(
               wsi_file=item.wsi_file,
@@ -1028,18 +1296,25 @@ def main(config: CreateFeatureConfig) -> None:
               )
 
           write_h5_start = time.perf_counter()
-          _write_h5_atomic(
-            expected_h5,
-            wsi_file=item.wsi_file,
-            source_size=int(current_stat.st_size),
-            source_mtime_ns=int(current_stat.st_mtime_ns),
-            wsi_md5=wsi_md5,
-            runtime_params=runtime_params,
-            tissue=tissue,
-            region_np=region_np,
-            attention_np=None,
-            encoder_feature_dict=encoder_feature_dict,
-          )
+          if incremental_mode and expected_h5.exists():
+            _append_h5_features(
+              path=expected_h5,
+              runtime_params=runtime_params,
+              encoder_feature_dict=encoder_feature_dict,
+            )
+          else:
+            _write_h5_atomic(
+              expected_h5,
+              wsi_file=item.wsi_file,
+              source_size=int(current_stat.st_size),
+              source_mtime_ns=int(current_stat.st_mtime_ns),
+              wsi_md5=wsi_md5,
+              runtime_params=runtime_params,
+              tissue=tissue,
+              region_np=region_np,
+              attention_np=None,
+              encoder_feature_dict=encoder_feature_dict,
+            )
           stage_times["write_h5_sec"] += _sec(write_h5_start)
 
           patch_num = int(region_np.shape[0])
@@ -1053,9 +1328,11 @@ def main(config: CreateFeatureConfig) -> None:
               patch_num=patch_num,
             )
           payload = dict(base_payload)
-          payload["status"] = "generated"
+          payload["status"] = "incremental_generated" if incremental_mode else "generated"
           payload["wsi_md5"] = wsi_md5
           payload["patch_num"] = patch_num
+          if incremental_mode:
+            payload["generated_encoders"] = list(encoder_list_to_run)
           payload["output_size"] = int(expected_h5.stat().st_size)
           stage_times["record_success_sec"] += _sec(record_start)
           payload["perf"] = {
@@ -1071,7 +1348,10 @@ def main(config: CreateFeatureConfig) -> None:
           _append_jsonl(success_jsonl, payload)
           if patch_num == 0:
             _append_run_log(run_log, f"warning patch_num=0 wsi={item.wsi_file}")
-          stats["generated"] += 1
+          if incremental_mode:
+            stats["incremental_generated"] += 1
+          else:
+            stats["generated"] += 1
           perf_totals["generated_total_sec"] += payload["perf"]["wsi_total_sec"]  # type: ignore[index]
           perf_totals["cache_validate_sec"] += stage_times["cache_validate_sec"]
           perf_totals["source_md5_sec"] += stage_times["source_md5_sec"]
@@ -1106,11 +1386,15 @@ def main(config: CreateFeatureConfig) -> None:
           _append_jsonl(failed_jsonl, payload)
           _append_run_log(run_log, f"failed wsi={item.wsi_file} error={type(exc).__name__}:{exc}")
           stats["failed"] += 1
+      total_generated = stats["generated"] + stats["incremental_generated"]
+      total_cache_hit = stats["cache_hit"] + stats["incremental_cache_hit"]
       _append_run_log(
         run_log,
-        "summary generated={} cache_hit={} failed={} skipped_missing_source={} skipped_source_changed={} skipped_unsupported_ext={}".format(
+        "summary generated={} incremental_generated={} cache_hit={} incremental_cache_hit={} failed={} skipped_missing_source={} skipped_source_changed={} skipped_unsupported_ext={}".format(
           stats["generated"],
+          stats["incremental_generated"],
           stats["cache_hit"],
+          stats["incremental_cache_hit"],
           stats["failed"],
           stats["skipped_missing_source"],
           stats["skipped_source_changed"],
@@ -1123,15 +1407,15 @@ def main(config: CreateFeatureConfig) -> None:
           "perf_summary avg_generated={} avg_cache_hit={} avg_cache_validate={} avg_source_md5={} avg_tissue={} "
           "avg_build_tasks={} avg_run_chunks={} avg_write_h5={} avg_record_success={}"
         ).format(
-          _fmt_sec(perf_totals["generated_total_sec"] / max(stats["generated"], 1)),
-          _fmt_sec(perf_totals["cache_hit_total_sec"] / max(stats["cache_hit"], 1)),
-          _fmt_sec(perf_totals["cache_validate_sec"] / max(stats["generated"] + stats["cache_hit"], 1)),
-          _fmt_sec(perf_totals["source_md5_sec"] / max(stats["generated"] + stats["cache_hit"], 1)),
-          _fmt_sec(perf_totals["tissue_region_sec"] / max(stats["generated"], 1)),
-          _fmt_sec(perf_totals["build_tasks_sec"] / max(stats["generated"], 1)),
-          _fmt_sec(perf_totals["run_chunks_sec"] / max(stats["generated"], 1)),
-          _fmt_sec(perf_totals["write_h5_sec"] / max(stats["generated"], 1)),
-          _fmt_sec(perf_totals["record_success_sec"] / max(stats["generated"], 1)),
+          _fmt_sec(perf_totals["generated_total_sec"] / max(total_generated, 1)),
+          _fmt_sec(perf_totals["cache_hit_total_sec"] / max(total_cache_hit, 1)),
+          _fmt_sec(perf_totals["cache_validate_sec"] / max(total_generated + total_cache_hit, 1)),
+          _fmt_sec(perf_totals["source_md5_sec"] / max(total_generated + total_cache_hit, 1)),
+          _fmt_sec(perf_totals["tissue_region_sec"] / max(total_generated, 1)),
+          _fmt_sec(perf_totals["build_tasks_sec"] / max(total_generated, 1)),
+          _fmt_sec(perf_totals["run_chunks_sec"] / max(total_generated, 1)),
+          _fmt_sec(perf_totals["write_h5_sec"] / max(total_generated, 1)),
+          _fmt_sec(perf_totals["record_success_sec"] / max(total_generated, 1)),
         ),
       )
       if chunk_metric_count > 0:

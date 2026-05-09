@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -134,6 +135,58 @@ def _build_uni2_encoder(cache_dir: str) -> Tuple[torch.nn.Module, Callable, int]
   return model, transform, int(model.num_features) # type: ignore
 
 
+class _ConchImageEncoderWrapper(torch.nn.Module):
+  def __init__(self, model: torch.nn.Module):
+    super().__init__()
+    self.model = model
+    return
+
+  def forward(self, batch: torch.Tensor) -> torch.Tensor:
+    return self.model.encode_image(batch, proj_contrast=False, normalize=False)
+
+
+def _resolve_conch_feature_dim(model: torch.nn.Module) -> int:
+  visual = getattr(model, "visual", None)
+  if visual is not None and hasattr(visual, "output_dim"):
+    return int(getattr(visual, "output_dim"))
+  with torch.inference_mode():
+    sample = torch.zeros((1, 3, 448, 448), dtype=torch.float32)
+    output = model.encode_image(sample, proj_contrast=False, normalize=False)
+  if output.ndim != 2:
+    raise RuntimeError(f"Unexpected CONCH output shape: {tuple(output.shape)}")
+  return int(output.shape[1])
+
+
+def _build_conch_encoder(cache_dir: str) -> Tuple[torch.nn.Module, Callable, int]:
+  try:
+    from conch.open_clip_custom import create_model_from_pretrained  # type: ignore
+  except Exception as exc:
+    raise RuntimeError(
+      "CONCH requires the official package. Install with "
+      "`pip install git+https://github.com/mahmoodlab/CONCH.git`."
+    ) from exc
+  checkpoint_path = os.environ.get("SLIMAI_CONCH_CHECKPOINT", "").strip()
+  if checkpoint_path == "":
+    try:
+      from huggingface_hub import hf_hub_download
+
+      checkpoint_path = hf_hub_download(
+        repo_id="MahmoodLab/CONCH",
+        filename="pytorch_model.bin",
+        cache_dir=cache_dir,
+      )
+    except Exception as exc:
+      raise RuntimeError(
+        "Unable to resolve CONCH checkpoint. Set SLIMAI_CONCH_CHECKPOINT to a local "
+        "checkpoint path, or grant Hugging Face access to MahmoodLab/CONCH."
+      ) from exc
+  model, preprocess = create_model_from_pretrained("conch_ViT-B-16", checkpoint_path)
+  model.eval()
+  wrapped_model = _ConchImageEncoderWrapper(model)
+  feature_dim = _resolve_conch_feature_dim(model)
+  return wrapped_model, preprocess, feature_dim
+
+
 def _build_not_implemented_encoder(name: str, _: str) -> Tuple[torch.nn.Module, Callable, int]:
   raise NotImplementedError(
     f"Encoder '{name}' is reserved but not implemented yet. "
@@ -144,7 +197,7 @@ def _build_not_implemented_encoder(name: str, _: str) -> Tuple[torch.nn.Module, 
 PATCH_ENCODER_BUILDERS: Dict[str, Callable[[str], Tuple[torch.nn.Module, Callable, int]]] = {
   "UNI": _build_uni_encoder,
   "UNI2": _build_uni2_encoder,
-  "CONCH": lambda cache_dir: _build_not_implemented_encoder("CONCH", cache_dir),
+  "CONCH": _build_conch_encoder,
   "CONCHV1_5": lambda cache_dir: _build_not_implemented_encoder("CONCHV1_5", cache_dir),
 }
 
