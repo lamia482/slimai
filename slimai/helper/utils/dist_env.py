@@ -137,8 +137,14 @@ class DistEnv(object):
     # initialize distributed environment
     if not dist.is_initialized():
       if cls.env.get("WORLD_SIZE", None) is None: # in non ddp mode, MASTER_ADDR and MASTER_PORT are not set, mannually set them to use distributed training
-        cls.env["MASTER_ADDR"] = os.environ["MASTER_ADDR"] = "localhost"
-        cls.env["MASTER_PORT"] = os.environ["MASTER_PORT"] = "12345"
+        if os.environ.get("MASTER_ADDR", None) is None:
+          cls.env["MASTER_ADDR"] = os.environ["MASTER_ADDR"] = "localhost"
+        else:
+          cls.env["MASTER_ADDR"] = os.environ["MASTER_ADDR"]
+        if os.environ.get("MASTER_PORT", None) is None:
+          cls.env["MASTER_PORT"] = os.environ["MASTER_PORT"] = "12345"
+        else:
+          cls.env["MASTER_PORT"] = os.environ["MASTER_PORT"]
       
       cls.set_start_method("fork")
       cls.device_module.set_device(cls.local_rank)

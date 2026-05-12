@@ -102,6 +102,13 @@ class StratifiedSheetSource(object):
     mapped_file_col: str = "EMBEDDING_MAPPED",
     case_col: str = "案例号",
     center_col: str = "中心",
+    extra_cols: Optional[Sequence[str]] = None,
+    filter_col: Optional[str] = None,
+    filter_values: Optional[Sequence[Any]] = None,
+    split_mode: str = "random",
+    fold_col: Optional[str] = None,
+    fold_value: Optional[Any] = None,
+    group_col: Optional[str] = None,
     diag_output_file: Optional[str] = None,
     min_class_samples: int = 1,
   ):
@@ -123,8 +130,20 @@ class StratifiedSheetSource(object):
     self.mapped_file_col = mapped_file_col
     self.case_col = case_col
     self.center_col = center_col
+    self.extra_cols = list(extra_cols or [])
+    self.filter_col = filter_col
+    self.filter_values = (
+      [str(v) for v in list(filter_values)] if isinstance(filter_values, (tuple, list)) else None
+    )
+    self.split_mode = str(split_mode).lower().strip()
+    self.fold_col = fold_col
+    self.fold_value = fold_value
+    self.group_col = group_col or case_col
     self.diag_output_file = diag_output_file
     self.min_class_samples = int(max(min_class_samples, 1))
+    assert self.split_mode in ["random", "predefined"], (
+      "split_mode must be one of ['random', 'predefined'], but got {}".format(self.split_mode)
+    )
     return
 
   def map_path(self, path):
@@ -136,23 +155,44 @@ class StratifiedSheetSource(object):
     return path
 
   def _read_sheet_from(self, sheet_file, sheet_name=None):
-    source = SheetSource(
-      sheet_file=sheet_file,
-      col_mapping={
-        self.file_col: "raw_file",
-        self.label_col: "label_name",
-        **(
-          {self.secondary_label_col: "label_secondary_name"}
-          if isinstance(self.secondary_label_col, str)
-          else {}
-        ),
-      },
-      sheet_name=self.sheet_name if sheet_name is None else sheet_name,
-      filter=None,
-      apply=None,
-    )
-    data = source()
-    df = pd.DataFrame(data)
+    target_sheet_name = self.sheet_name if sheet_name is None else sheet_name
+    if str(sheet_file).endswith(".xlsx"):
+      if isinstance(target_sheet_name, str):
+        df = pd.read_excel(sheet_file, sheet_name=target_sheet_name)
+      else:
+        df_dict = pd.read_excel(sheet_file, sheet_name=target_sheet_name)
+        if isinstance(df_dict, dict):
+          df = pd.concat(df_dict.values(), ignore_index=True)
+        else:
+          df = pd.DataFrame(df_dict)
+    elif str(sheet_file).endswith(".csv"):
+      df = pd.read_csv(sheet_file)
+    else:
+      raise ValueError(f"Unsupported file extension: {str(sheet_file).split('.')[-1]}")
+
+    rename_map = {
+      self.file_col: "raw_file",
+      self.label_col: "label_name",
+    }
+    if isinstance(self.secondary_label_col, str) and self.secondary_label_col != "":
+      rename_map[self.secondary_label_col] = "label_secondary_name"
+    if isinstance(self.case_col, str) and self.case_col != "":
+      rename_map[self.case_col] = self.case_col
+    if isinstance(self.center_col, str) and self.center_col != "":
+      rename_map[self.center_col] = self.center_col
+    if isinstance(self.split_col, str) and self.split_col != "":
+      rename_map[self.split_col] = self.split_col
+    if isinstance(self.fold_col, str) and self.fold_col != "":
+      rename_map[self.fold_col] = self.fold_col
+    if isinstance(self.filter_col, str) and self.filter_col != "":
+      rename_map[self.filter_col] = self.filter_col
+    for col in self.extra_cols:
+      rename_map[col] = col
+
+    for raw_key in list(rename_map.keys()):
+      if raw_key not in df.columns:
+        df[raw_key] = None
+    df = df[list(rename_map.keys())].rename(columns=rename_map)
     return df
 
   def _read_sheet(self):
@@ -162,10 +202,20 @@ class StratifiedSheetSource(object):
     df = (self._read_sheet() if df is None else df).copy()
     if center_name is not None:
       df[center_col] = center_name
+    if (
+      isinstance(self.filter_col, str)
+      and self.filter_col in df.columns
+      and isinstance(self.filter_values, list)
+      and len(self.filter_values) > 0
+    ):
+      normalized_filter_values = set([str(v) for v in self.filter_values])
+      current_values = df[self.filter_col].astype(str)
+      df = df[current_values.isin(normalized_filter_values)].copy()
 
+    label_mapping = dict(self.label_mapping) if self.label_mapping is not None else None
     df["label_idx"] = (
-      df["label_name"].map(self.label_mapping)
-      if self.label_mapping is not None
+      df["label_name"].map(label_mapping)
+      if label_mapping is not None
       else df["label_name"]
     )
     has_secondary = (
@@ -174,8 +224,13 @@ class StratifiedSheetSource(object):
       and "label_secondary_name" in df.columns
     )
     if has_secondary:
-      if self.secondary_label_mapping is not None:
-        df["label_secondary_idx"] = df["label_secondary_name"].map(self.secondary_label_mapping)
+      secondary_mapping = (
+        dict(self.secondary_label_mapping)
+        if self.secondary_label_mapping is not None
+        else None
+      )
+      if secondary_mapping is not None:
+        df["label_secondary_idx"] = df["label_secondary_name"].map(secondary_mapping)
       else:
         df["label_secondary_idx"] = df["label_secondary_name"]
       df["label_secondary_local"] = df.apply(
@@ -212,6 +267,102 @@ class StratifiedSheetSource(object):
 
     usable_df = df[valid_mask].copy()
     return df, usable_df, valid_mask
+
+  def _resolve_group_column(self, usable_df: pd.DataFrame) -> pd.Series:
+    if isinstance(self.group_col, str) and self.group_col in usable_df.columns:
+      values = usable_df[self.group_col]
+      if values.notna().any():
+        return values.fillna("__missing_group__").astype(str)
+    return usable_df.index.astype(str).to_series(index=usable_df.index)
+
+  def _resolve_group_stratify_values(self, usable_df: pd.DataFrame, group_values: pd.Series) -> pd.Series:
+    row_stratify = self._resolve_stratify_column(usable_df).astype(str)
+    grouped = pd.DataFrame(dict(group=group_values.astype(str), stratify=row_stratify))
+    group_to_stratify = grouped.drop_duplicates(subset=["group"]).set_index("group")["stratify"]
+    return group_to_stratify
+
+  def _split_by_group_random(self, usable_df: pd.DataFrame):
+    train_ratio, valid_ratio, test_ratio = self._validate_ratio()
+    group_values = self._resolve_group_column(usable_df)
+    group_to_stratify = self._resolve_group_stratify_values(usable_df, group_values)
+    all_groups = list(group_to_stratify.index.tolist())
+    stratify_values = group_to_stratify.values
+
+    train_groups, temp_groups = train_test_split(
+      all_groups,
+      test_size=(1.0 - train_ratio),
+      stratify=stratify_values,
+      random_state=self.random_seed,
+    )
+    test_size_in_temp = test_ratio / (valid_ratio + test_ratio)
+    temp_to_stratify = group_to_stratify.loc[temp_groups].values
+    valid_groups, test_groups = train_test_split(
+      temp_groups,
+      test_size=test_size_in_temp,
+      stratify=temp_to_stratify,
+      random_state=self.random_seed,
+    )
+
+    train_df = usable_df[group_values.isin(set(train_groups))].copy()
+    valid_df = usable_df[group_values.isin(set(valid_groups))].copy()
+    test_df = usable_df[group_values.isin(set(test_groups))].copy()
+    return train_df, valid_df, test_df
+
+  @staticmethod
+  def _normalize_split_value(value: Any) -> str:
+    if pd.isna(value):
+      return ""
+    text = str(value).strip().lower()
+    if text in ["train", "tr", "training"]:
+      return "train"
+    if text in ["valid", "val", "validation", "dev"]:
+      return "valid"
+    if text in ["test", "te", "testing", "holdout"]:
+      return "test"
+    return ""
+
+  def _split_by_predefined(self, df: pd.DataFrame, usable_df: pd.DataFrame):
+    train_df = pd.DataFrame(columns=usable_df.columns)
+    valid_df = pd.DataFrame(columns=usable_df.columns)
+    test_df = pd.DataFrame(columns=usable_df.columns)
+
+    if isinstance(self.fold_col, str) and self.fold_col in usable_df.columns and self.fold_value is not None:
+      fold_values = usable_df[self.fold_col].astype(str)
+      target_fold = str(self.fold_value)
+      test_mask = (fold_values == target_fold)
+      test_df = usable_df[test_mask].copy()
+      remain_df = usable_df[~test_mask].copy()
+      if len(remain_df) > 0:
+        # keep train:valid ratio from split_ratio while test is fixed by fold
+        train_ratio, valid_ratio, _ = self._validate_ratio()
+        train_ratio_in_remain = train_ratio / max(train_ratio + valid_ratio, 1e-8)
+        group_values = self._resolve_group_column(remain_df)
+        group_to_stratify = self._resolve_group_stratify_values(remain_df, group_values)
+        all_groups = list(group_to_stratify.index.tolist())
+        if len(all_groups) > 1:
+          tr_groups, va_groups = train_test_split(
+            all_groups,
+            train_size=train_ratio_in_remain,
+            stratify=group_to_stratify.values,
+            random_state=self.random_seed,
+          )
+          train_df = remain_df[group_values.isin(set(tr_groups))].copy()
+          valid_df = remain_df[group_values.isin(set(va_groups))].copy()
+        else:
+          train_df = remain_df.copy()
+          valid_df = remain_df.iloc[0:0].copy()
+      return train_df, valid_df, test_df
+
+    if isinstance(self.split_col, str) and self.split_col in df.columns:
+      split_values = df[self.split_col].apply(self._normalize_split_value)
+      usable_index = set(usable_df.index.tolist())
+      train_df = df[(split_values == "train") & (df.index.isin(usable_index))].copy()
+      valid_df = df[(split_values == "valid") & (df.index.isin(usable_index))].copy()
+      test_df = df[(split_values == "test") & (df.index.isin(usable_index))].copy()
+      if len(train_df) > 0 and len(valid_df) > 0 and len(test_df) > 0:
+        return train_df, valid_df, test_df
+
+    return self._split_by_group_random(usable_df)
 
   def _map_secondary_local(self, label_name, label_secondary_name):
     if label_name is None or label_secondary_name is None:
@@ -367,24 +518,11 @@ class StratifiedSheetSource(object):
     return stat
 
   def __call__(self):
-    train_ratio, valid_ratio, test_ratio = self._validate_ratio()
     df, usable_df, _ = self._prepare_dataframe()
-    stratify_values = self._resolve_stratify_column(usable_df)
-
-    train_df, temp_df = train_test_split(
-      usable_df,
-      test_size=(1.0 - train_ratio),
-      stratify=stratify_values,
-      random_state=self.random_seed,
-    )
-    test_size_in_temp = test_ratio / (valid_ratio + test_ratio)
-    stratify_temp = self._resolve_stratify_column(temp_df)
-    valid_df, test_df = train_test_split(
-      temp_df,
-      test_size=test_size_in_temp,
-      stratify=stratify_temp,
-      random_state=self.random_seed,
-    )
+    if self.split_mode == "predefined":
+      train_df, valid_df, test_df = self._split_by_predefined(df, usable_df)
+    else:
+      train_df, valid_df, test_df = self._split_by_group_random(usable_df)
 
     df.loc[train_df.index, self.split_col] = "train"
     df.loc[valid_df.index, self.split_col] = "valid"
