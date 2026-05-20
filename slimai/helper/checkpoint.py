@@ -1,4 +1,5 @@
 import sys
+import os
 import torch
 from pathlib import Path
 import mmengine
@@ -90,7 +91,11 @@ class Checkpoint(object):
     link_path.parent.mkdir(parents=True, exist_ok=True)
     if link_path.exists() or link_path.is_symlink():
       link_path.unlink(missing_ok=True)
-    link_path.symlink_to(target_path)
+    try:
+      rel_target = Path(os.path.relpath(str(target_path), start=str(link_path.parent)))
+      link_path.symlink_to(rel_target)
+    except Exception:
+      link_path.symlink_to(target_path)
     return
 
   def save(
@@ -217,7 +222,8 @@ class Checkpoint(object):
     elif isinstance(resume_from, int):
       resume_from = self.save_dir / f"epoch_{resume_from}.pth"
 
-    resume_from = Path(str(resume_from)).resolve()
+    if resume_from is not None:
+      resume_from = Path(str(resume_from)).resolve()
     
     # Only resume when checkpoint exists
     if resume_from is None or not Path(resume_from).exists():

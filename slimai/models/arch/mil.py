@@ -153,6 +153,46 @@ class MIL(ClassificationArch):
     loss = self.loss(backbone, atten_weights, cls_logits, cls_targets)
     return loss
 
+  def _normalize_single_attention(self, attention: Any) -> torch.Tensor:
+    if torch.is_tensor(attention):
+      tensor = attention.detach().reshape(-1).float()
+      return tensor
+
+    if isinstance(attention, (list, tuple)):
+      values: List[float] = []
+      for value in attention:
+        if value is None:
+          values.append(float("nan"))
+          continue
+        if torch.is_tensor(value):
+          tensor_value = value.detach().reshape(-1).float()
+          if tensor_value.numel() == 0:
+            values.append(float("nan"))
+          else:
+            values.append(float(tensor_value[0].item()))
+          continue
+        try:
+          values.append(float(value))
+        except Exception:
+          values.append(float("nan"))
+      return torch.tensor(values, dtype=torch.float32)
+
+    if attention is None:
+      return torch.zeros((0,), dtype=torch.float32)
+
+    try:
+      return torch.tensor([float(attention)], dtype=torch.float32)
+    except Exception:
+      return torch.tensor([float("nan")], dtype=torch.float32)
+
+  def _normalize_batch_attentions(self, atten_weights: Any) -> List[torch.Tensor]:
+    if not isinstance(atten_weights, (list, tuple)):
+      return []
+    normalized: List[torch.Tensor] = []
+    for sample_attention in atten_weights:
+      normalized.append(self._normalize_single_attention(sample_attention))
+    return normalized
+
   def _postprocess(self, 
                   batch_data: Union[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]], 
                   batch_info: DataSample) -> DataSample: 
@@ -163,6 +203,12 @@ class MIL(ClassificationArch):
       atten_weights, cls_logits = batch_data
     
     super()._postprocess(cls_logits, batch_info)
+    normalized_attentions = self._normalize_batch_attentions(atten_weights)
+    batch_info.output.update(dict(
+      patch_attentions=normalized_attentions,
+      attentions=normalized_attentions,
+      atten_weights=normalized_attentions,
+    ))
 
     # Only compute topk/tailk when attention weights are tensors (e.g. ABMIL); WMIL returns list of lists
     if atten_weights and all(torch.is_tensor(al) for al in atten_weights):
@@ -449,6 +495,12 @@ class HierarchicalMIL(MIL):
         labels=secondary_output["conditional_labels"],
       ),
     )
+    normalized_attentions = self._normalize_batch_attentions(atten_weights)
+    batch_info.output.update(dict(
+      patch_attentions=normalized_attentions,
+      attentions=normalized_attentions,
+      atten_weights=normalized_attentions,
+    ))
 
     if atten_weights and all(torch.is_tensor(al) for al in atten_weights):
       topk = 8 * 8

@@ -1,3 +1,4 @@
+import os
 import time
 import copy
 import json
@@ -6,7 +7,7 @@ import shutil
 import matplotlib
 from pathlib import Path
 from functools import partial
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 import mmengine
 import slimai
 from slimai.helper import (
@@ -20,7 +21,8 @@ from .report import ExperimentReporter
 class Runner(object):
   def __init__(self, cfg: mmengine.Config):
 
-    self.record = Record(cfg=cfg)
+    self.record = Record(cfg=cfg, 
+                         no_record=cfg.RUNNER.logger.get("no_record", False))
     self.dist = Distributed()
 
     # Initialize runner with configuration
@@ -83,12 +85,15 @@ class Runner(object):
     
     # Initialize epoch and load checkpoint if needed
     resume = cfg.RUNNER.resume
+    resolved_resume_from = self._resolve_resume_from(resume.resume_from) if resume.enable else None
+    if resume.enable and isinstance(resolved_resume_from, str):
+      help_utils.print_log(f"Resume checkpoint source: {resolved_resume_from}")
     model, solver, scheduler, ckpt = self.checkpoint.load(
       model=model,
       solver=solver,
       scheduler=scheduler,
       resume=resume.enable,
-      resume_from=resume.resume_from,
+      resume_from=resolved_resume_from,
       load_from=resume.load_from
     )
     self.step = ckpt.get("step", 0)
@@ -144,7 +149,15 @@ class Runner(object):
 
     metric = help_build.build_metric(cfg.get("METRIC", dict()))
 
+    help_utils.print_log(
+      f"[ddp-diagnostics] before build_components barrier: {self.dist.env.desc}",
+      main_process_only=False,
+    )
     self.dist.env.sync()
+    help_utils.print_log(
+      f"[ddp-diagnostics] after build_components barrier: {self.dist.env.desc}",
+      main_process_only=False,
+    )
     help_utils.print_log("Created runner, desc: {}, {}".format(
       self.dist, self.dist.env.desc), main_process_only=False)
       
@@ -370,8 +383,62 @@ class Runner(object):
     link_path.parent.mkdir(parents=True, exist_ok=True)
     if link_path.exists() or link_path.is_symlink():
       link_path.unlink(missing_ok=True)
-    link_path.symlink_to(target_path)
+    try:
+      rel_target = Path(os.path.relpath(str(target_path), start=str(link_path.parent)))
+      link_path.symlink_to(rel_target)
+    except Exception:
+      link_path.symlink_to(target_path)
     return
+
+  def _resolve_resume_from(self, resume_from: Any) -> Any:
+    if resume_from is None:
+      return None
+    if isinstance(resume_from, int):
+      return resume_from
+
+    text = str(resume_from).strip()
+    if text == "":
+      return None
+
+    if text in ["latest", "best"]:
+      link_path = self.checkpoint.latest_path if text == "latest" else self.checkpoint.best_path
+      if link_path.exists():
+        resolved = link_path.resolve()
+        help_utils.print_log(f"Resolved resume_from={text} -> {resolved}")
+        return str(resolved)
+
+      epoch_candidates: List[Tuple[int, Path]] = []
+      for ckpt_path in self.checkpoint.save_dir.glob("epoch_*.pth"):
+        stem = ckpt_path.stem
+        epoch_text = stem.split("epoch_")[-1]
+        if epoch_text.isdigit():
+          epoch_candidates.append((int(epoch_text), ckpt_path.resolve()))
+      if len(epoch_candidates) > 0:
+        epoch_candidates = sorted(epoch_candidates, key=lambda kv: kv[0])
+        fallback_path = epoch_candidates[-1][1]
+        help_utils.print_log(
+          f"resume_from={text} is unavailable, fallback to explicit checkpoint: {fallback_path}",
+          level="WARNING",
+        )
+        return str(fallback_path)
+      help_utils.print_log(
+        f"resume_from={text} not found under {self.checkpoint.save_dir}, fallback to build from scratch",
+        level="WARNING",
+      )
+      return text
+
+    resume_path = Path(text).expanduser()
+    if not resume_path.is_absolute():
+      in_work_dir = (self.work_dir / resume_path)
+      if in_work_dir.exists():
+        resume_path = in_work_dir
+      else:
+        resume_path = (Path.cwd() / resume_path)
+    if resume_path.exists():
+      resolved = resume_path.resolve()
+      help_utils.print_log(f"Resolved explicit resume checkpoint -> {resolved}")
+      return str(resolved)
+    return text
 
   @torch.inference_mode()
   def evaluate_loss(self, dataloader) -> Dict[str, torch.Tensor]:
@@ -674,6 +741,12 @@ class Runner(object):
     help_utils.print_log(f"Parsed Config: \n{self.cfg.dump()}")
     help_utils.print_log(f"Dumped config to: {dst_config_file}")
 
+    # snapshot dataset files at the beginning of training
+    try:
+      self.snapshot_dataset_files()
+    except Exception as e:
+      help_utils.print_log(f"Failed to snapshot dataset files: {e}", level="WARNING")
+
     # dump taxonomy metadata
     try:
       taxonomy_file = self.work_dir / "label_taxonomy.json"
@@ -713,6 +786,96 @@ class Runner(object):
     help_utils.print_log(f"Last git commit id: {slimai.get_last_commit_id()}")
 
     help_utils.print_log(f"Experiment work dir: {self.work_dir}")
+    return
+
+  def _collect_dataset_snapshot_candidates(self) -> List[Tuple[str, str]]:
+    candidates: List[Tuple[str, str]] = []
+
+    def _append_candidate(tag: str, value: Any):
+      if not isinstance(value, str):
+        return
+      text = value.strip()
+      if text == "":
+        return
+      candidates.append((tag, text))
+      return
+
+    for key in [
+      "EXCEL_FILE",
+      "OUTPUT_SPLIT_FILE",
+      "SPLIT_FILE",
+      "DATASET_FILE",
+      "ANNOTATION_FILE",
+    ]:
+      _append_candidate(key.lower(), self.cfg.get(key, None))
+
+    external_excel_files = self.cfg.get("EXTERNAL_EXCEL_FILES", None)
+    if isinstance(external_excel_files, dict):
+      for name, path in external_excel_files.items():
+        _append_candidate(f"external_excel_{name}", path)
+
+    for key in ["BREXI_SOURCE", "SOURCE"]:
+      source_cfg = self.cfg.get(key, None)
+      if not isinstance(source_cfg, dict):
+        continue
+      _append_candidate(f"{key.lower()}_sheet_file", source_cfg.get("sheet_file", None))
+      _append_candidate(f"{key.lower()}_output_split_file", source_cfg.get("output_split_file", None))
+
+    return candidates
+
+  def snapshot_dataset_files(self):
+    dataset_dir = self.work_dir / "dataset"
+    source_dir = dataset_dir / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    records = []
+    used_names = set()
+    for tag, src_path_str in self._collect_dataset_snapshot_candidates():
+      src_path = Path(src_path_str).expanduser()
+      if not src_path.is_absolute():
+        src_path = (Path.cwd() / src_path).resolve()
+      else:
+        src_path = src_path.resolve()
+
+      record = dict(
+        tag=tag,
+        source_path=str(src_path),
+        exists=bool(src_path.exists()),
+        copied=False,
+        snapshot_path="",
+        size_bytes=None,
+        error="",
+      )
+
+      if not src_path.exists() or not src_path.is_file():
+        records.append(record)
+        continue
+
+      safe_tag = "".join(ch if (ch.isalnum() or ch in ["-", "_"]) else "_" for ch in tag)
+      dst_name = f"{safe_tag}__{src_path.name}"
+      if dst_name in used_names:
+        dst_name = f"{safe_tag}__{len(used_names):04d}__{src_path.name}"
+      used_names.add(dst_name)
+      dst_path = source_dir / dst_name
+
+      try:
+        shutil.copy2(src_path, dst_path)
+        record["copied"] = True
+        record["snapshot_path"] = str(dst_path)
+        record["size_bytes"] = int(dst_path.stat().st_size)
+      except Exception as e:
+        record["error"] = str(e)
+      records.append(record)
+
+    manifest_path = dataset_dir / "dataset_snapshot_manifest.json"
+    payload = dict(
+      schema_version="dataset_snapshot_manifest_v1",
+      run_dir=str(self.work_dir),
+      source_dir=str(source_dir),
+      files=records,
+    )
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    help_utils.print_log(f"Dumped dataset snapshot manifest to: {manifest_path}")
     return
 
   def dump_runtime_metadata(self):

@@ -1,6 +1,7 @@
 import ast
 import html
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -11,6 +12,7 @@ from sklearn.metrics import auc, average_precision_score, confusion_matrix, prec
 from sklearn.preprocessing import label_binarize
 
 from slimai.helper.help_utils import print_log
+from .sample_analysis_export import write_sample_analysis_bundle
 
 
 class ExperimentReporter(object):
@@ -42,6 +44,14 @@ class ExperimentReporter(object):
     self.display_class_names = self._resolve_display_class_names(self.class_names)
     self.secondary_class_names = self._resolve_secondary_class_names_from_cfg()
     self.display_secondary_class_names = self._resolve_display_class_names(self.secondary_class_names)
+    sample_analysis_cfg = self.cfg.get("SAMPLE_ANALYSIS", {}) if isinstance(self.cfg.get("SAMPLE_ANALYSIS", {}), dict) else {}
+    cfg_enable = sample_analysis_cfg.get("enable", None)
+    env_enable = str(os.getenv("SLIMAI_EXPORT_SAMPLE_ANALYSIS", "1")).strip().lower()
+    env_disable = env_enable in {"0", "false", "no", "off"}
+    if isinstance(cfg_enable, bool):
+      self.enable_sample_analysis_export = cfg_enable and (not env_disable)
+    else:
+      self.enable_sample_analysis_export = not env_disable
     return
 
   def _next_chart_id(self, prefix: str):
@@ -1399,6 +1409,28 @@ class ExperimentReporter(object):
     report_file = self.work_dir / "report.html"
     self._save_html(report_file, body)
     print_log(f"Saved final report to: {report_file}")
+    if not self.enable_sample_analysis_export:
+      print_log("Skip sample analysis export by config/env (SAMPLE_ANALYSIS.enable or SLIMAI_EXPORT_SAMPLE_ANALYSIS)")
+      return report_file
+    try:
+      bundle_info = write_sample_analysis_bundle(
+        work_dir=self.work_dir,
+        analysis_result_files=analysis_result_files or ({"test": test_result_file} if test_result_file else {}),
+        external_result_files=external_result_files,
+        class_names=self.display_class_names,
+        secondary_class_names=self.display_secondary_class_names,
+        dataset_info=self.dataset_info,
+        external_dataset_info=self.external_dataset_info,
+      )
+      print_log(
+        "Saved sample analysis bundle to: {} (rows={}, json_rows={})".format(
+          bundle_info.get("xlsx_file", ""),
+          bundle_info.get("row_count", 0),
+          bundle_info.get("json_row_count", 0),
+        )
+      )
+    except Exception as exc:
+      print_log(f"Failed to export sample analysis bundle: {exc}", level="WARNING")
     return report_file
 
   def _write_final_report_multitask(
@@ -1647,4 +1679,26 @@ class ExperimentReporter(object):
     index_file = self.work_dir / "report.html"
     self._save_html(index_file, index_body)
     print_log(f"Saved final report to: {index_file}")
+    if not self.enable_sample_analysis_export:
+      print_log("Skip sample analysis export by config/env (SAMPLE_ANALYSIS.enable or SLIMAI_EXPORT_SAMPLE_ANALYSIS)")
+      return index_file
+    try:
+      bundle_info = write_sample_analysis_bundle(
+        work_dir=self.work_dir,
+        analysis_result_files=analysis_result_files,
+        external_result_files=external_result_files,
+        class_names=self.display_class_names,
+        secondary_class_names=self.display_secondary_class_names,
+        dataset_info=self.dataset_info,
+        external_dataset_info=self.external_dataset_info,
+      )
+      print_log(
+        "Saved sample analysis bundle to: {} (rows={}, json_rows={})".format(
+          bundle_info.get("xlsx_file", ""),
+          bundle_info.get("row_count", 0),
+          bundle_info.get("json_row_count", 0),
+        )
+      )
+    except Exception as exc:
+      print_log(f"Failed to export sample analysis bundle: {exc}", level="WARNING")
     return index_file
