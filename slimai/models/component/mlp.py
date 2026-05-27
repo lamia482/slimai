@@ -81,7 +81,45 @@ class MLP(torch.nn.Module):
   
   def get_linear(self, in_features, out_features, **kwargs) -> torch.nn.Module:
     return torch.nn.Linear(in_features, out_features, **kwargs)
-  
+
+  def export_model(self) -> torch.nn.Module:
+    export_module = _MLPExport(self)
+    return export_module.eval()
+
+
+class _MLPExport(torch.nn.Module):
+  """MLP export with fixed norm modules (ONNX-safe)."""
+
+  def __init__(self, source: MLP):
+    super().__init__()
+    self.layers = source.layers
+    self.act = source.act
+    self.dropout = source.dropout
+    self.n_layer = source.n_layer
+    norm_keys = sorted(int(key) for key in source.norm.keys())
+    if len(norm_keys) >= 2:
+      self.norm_hidden = source.norm[str(norm_keys[0])]
+      self.norm_bottleneck = source.norm[str(norm_keys[-1])]
+    elif len(norm_keys) == 1:
+      self.norm_hidden = source.norm[str(norm_keys[0])]
+      self.norm_bottleneck = torch.nn.Identity()
+    else:
+      self.norm_hidden = torch.nn.Identity()
+      self.norm_bottleneck = torch.nn.Identity()
+    return
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    for layer_index, layer in enumerate(self.layers):
+      x = layer(x)
+      if layer_index >= self.n_layer - 1:
+        continue
+      if self.n_layer <= 2 or layer_index == len(self.layers) - 2:
+        norm = self.norm_bottleneck
+      else:
+        norm = self.norm_hidden
+      x = self.dropout(self.act(norm(x)))
+    return x
+
 
 @MODELS.register_module()
 class SequentialMLP(MLP):

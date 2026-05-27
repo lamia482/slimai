@@ -42,6 +42,19 @@ class ViT(torch.nn.Module):
   def forward(self, x):
     return self.vit(x, cls_pooling=self.cls_pooling)
 
+  def export_model(self) -> torch.nn.Module:
+    return _ViTExport(self).eval()
+
+
+class _ViTExport(torch.nn.Module):
+  def __init__(self, source: ViT):
+    super().__init__()
+    self.vit_module = source
+    return
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return self.vit_module.vit(x, cls_pooling=self.vit_module.cls_pooling)
+
 
 class FlexViT(models.VisionTransformer):
   vit_arch = {

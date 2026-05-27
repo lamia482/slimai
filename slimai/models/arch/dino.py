@@ -8,6 +8,17 @@ from .cls_arch import ClassificationArch
 from ..component.pipeline import Pipeline
 
 
+class _DINOBackboneExport(torch.nn.Module):
+  def __init__(self, arch: "DINO"):
+    super().__init__()
+    teacher = arch.dist.get_summon_module(arch.teacher)
+    self.backbone = teacher.backbone # type: ignore
+    return
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return self.backbone(x)
+
+
 __all__ = [
   "DINO",
 ]
@@ -119,10 +130,7 @@ class DINO(ClassificationArch):
     return loss
   
   def export_model(self) -> torch.nn.Module:
-    # Export model for inference and export to onnx
-    teacher_without_ddp = self.dist.get_summon_module(self.teacher)
-    backbone = teacher_without_ddp.backbone
-    return backbone # type: ignore
+    return _DINOBackboneExport(self).eval()
   
   def _postprocess(self, 
                    batch_data: torch.Tensor, 

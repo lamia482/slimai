@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import torch
 from slimai.helper.help_build import MODELS
 
@@ -36,20 +38,6 @@ class KMIL(torch.nn.Module):
     self.topk_percent = topk_percent  # Percentage of top-k patches to keep in each iteration
     return
   
-  def forward(self, x):
-    batch_embeddings = []
-    batch_attentions_weights = []
-
-    # Process each sample in the batch individually
-    for _x in x:
-      _embedding, _weights = self.compute(_x)
-      batch_embeddings.append(_embedding)
-      batch_attentions_weights.append(_weights)
-
-    batch_embeddings = torch.stack(batch_embeddings) # [B, D]
-    projection = self.proj(batch_embeddings) # [B, D]
-    return projection, batch_attentions_weights
-
   def compute(self, x):
     """ TODO: divide num_classes clusters, then compute attention for each cluster
     """
@@ -66,6 +54,36 @@ class KMIL(torch.nn.Module):
 
     x = x[topk_indices] * topk_scores.unsqueeze(-1) # [topk, D] # type: ignore
     return x.mean(dim=0), weights
+
+  def _forward_single_bag(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    embedding, weights = self.compute(x)
+    return embedding, weights
+
+  def forward(self, x):
+    batch_embeddings = []
+    batch_attentions_weights = []
+    for _x in x:
+      embedding, weights = self._forward_single_bag(_x)
+      batch_embeddings.append(embedding)
+      batch_attentions_weights.append(weights)
+    batch_embeddings = torch.stack(batch_embeddings)
+    projection = self.proj(batch_embeddings)
+    return projection, batch_attentions_weights
+
+  def export_model(self) -> torch.nn.Module:
+    return _KMILExport(self).eval()
+
+
+class _KMILExport(torch.nn.Module):
+  def __init__(self, source: "KMIL"):
+    super().__init__()
+    self.kmil = source
+    return
+
+  def forward(self, embedding_arr: torch.Tensor):
+    embedding, weights = self.kmil._forward_single_bag(embedding_arr)
+    return self.kmil.proj(embedding.unsqueeze(0)).squeeze(0), weights
+
 
 @MODELS.register_module()
 class WMIL(torch.nn.Module):
@@ -101,62 +119,61 @@ class WMIL(torch.nn.Module):
     self.attention_W = torch.nn.Linear(hidden_dim, 1)
     
     return
-  
-  def forward(self, x): # x: [B, N_hat, K]
+
+  def _forward_single_bag(self, _x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    _x = _x.view(-1, self.input_dim)
+    num_patches = _x.shape[0]
+    embeddings = _x.unsqueeze(0)
+    A_V = self.attention_V(embeddings)
+    if self.attention_U is not None:
+      A_U = self.attention_U(embeddings)
+      A = A_V * A_U
+    else:
+      A = A_V
+    A_W = self.attention_W(A)
+    A_W = self.dropout(A_W)
+    A_W = A_W.transpose(1, 2)
+    if self.attention_temperature is not None:
+      A_W = A_W / self.attention_temperature
+    else:
+      A_W = A_W.sigmoid()
+    k = min(10, num_patches)
+    _, topk_indices = A_W.topk(k=k, dim=-1, largest=True)
+    _, tailk_indices = A_W.topk(k=k, dim=-1, largest=False)
+    indices = torch.cat([topk_indices, tailk_indices], dim=-1).squeeze()
+    truncate_A_W = A_W[:, :, indices]
+    truncate_E = embeddings[:, indices, :]
+    truncate_A_W = truncate_A_W.softmax(-1)
+    attention_weights = torch.zeros(num_patches, device=_x.device, dtype=truncate_A_W.dtype)
+    for patch_idx, weight in zip(indices.reshape(-1), truncate_A_W.reshape(-1)):
+      attention_weights[int(patch_idx.item())] = weight
+    bag_embedding = torch.bmm(truncate_A_W, truncate_E).squeeze(0).squeeze(0)
+    if self.keep_size_hat:
+      size_feat = torch.log10(torch.tensor([num_patches], device=bag_embedding.device).float())
+      bag_embedding = torch.cat([bag_embedding, size_feat], dim=0)
+    return bag_embedding, attention_weights
+
+  def forward(self, x):
     batch_embeddings = []
     batch_attentions_weights = []
-
     for _x in x:
-      _x = _x.view(-1, self.input_dim) # convert [N*K] or [N, K] to [N, K]
-      N = len(_x)
-      embeddings = _x.unsqueeze(0) # [1, N, K]
-      
-      # Compute attention scores
-      A_V = self.attention_V(embeddings) # [1, N, H]
-      if self.attention_U is not None:
-        # Gated attention mechanism
-        A_U = self.attention_U(embeddings) # [1, N, H]
-        A = A_V * A_U # [1, N, H] - element-wise multiplication
-      else:
-        A = A_V # [1, N, H]
-        
-      # Compute final attention weights
-      A_W = self.attention_W(A) # [1, N, 1]
-      A_W = self.dropout(A_W)
-      A_W = A_W.transpose(1, 2)
-      if self.attention_temperature is not None:
-        A_W = A_W / self.attention_temperature # scale by temperature
-      else:
-        A_W = A_W.sigmoid() # [1, 1, N] - sigmoid activation
+      bag_embedding, attention_weights = self._forward_single_bag(_x)
+      batch_embeddings.append(bag_embedding)
+      batch_attentions_weights.append(attention_weights)
+    return torch.stack(batch_embeddings), batch_attentions_weights
 
-      k = 10
-      _, topk_indices = A_W.topk(k=k, dim=-1, largest=True) # select topk(maximum) indices
-      _, tailk_indices = A_W.topk(k=k, dim=-1, largest=False) # select tailk(minimum) indices
-      indices = torch.cat([topk_indices, tailk_indices], dim=-1).squeeze()
+  def export_model(self) -> torch.nn.Module:
+    return _WMILExport(self).eval()
 
-      truncate_A_W = A_W[:, :, indices]
-      truncate_E = embeddings[:, indices, :]
 
-      truncate_A_W = truncate_A_W.softmax(-1)
+class _WMILExport(torch.nn.Module):
+  def __init__(self, source: WMIL):
+    super().__init__()
+    self.wmil = source
+    return
 
-      attens = [None] * N
-
-      for ik, iv in zip(indices.squeeze(), truncate_A_W.squeeze()):
-        attens[ik] = iv
-        
-      batch_attentions_weights.append(attens)
-      
-      # Compute weighted average of embeddings
-      Z = torch.bmm(truncate_A_W, truncate_E) # [1, 1, K] - batch matrix multiplication
-      Z = Z.squeeze() # [K]
-      if self.keep_size_hat:
-        size_feat = torch.log10(torch.tensor([N]).float()).to(Z.device)  # [1]
-        Z = torch.cat([Z, size_feat], dim=0)    # [K+1]
-      batch_embeddings.append(Z)
-
-    batch_embeddings = torch.stack(batch_embeddings) # [B, K(+1)]
-
-    return batch_embeddings, batch_attentions_weights
+  def forward(self, embedding_arr: torch.Tensor):
+    return self.wmil._forward_single_bag(embedding_arr)
 
 
 @MODELS.register_module()
@@ -170,7 +187,10 @@ class SortWMIL(WMIL):
                      keep_size_hat=keep_size_hat, attention_temperature=attention_temperature,
                      **kwargs)
     return
-  
+
+  def export_model(self) -> torch.nn.Module:
+    raise NotImplementedError("SortWMIL ONNX export is not supported.")
+
   def forward(self, x): # x: [B, N_hat, K]
     batch_embeddings = []
     batch_attentions_weights = []

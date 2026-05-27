@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 from pathlib import Path
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 import numpy as np
 import timm
@@ -98,38 +99,109 @@ class MutablePatchDataset(PatchDataset):
     return super().__getitem__(index)
 
 
-def _build_uni_encoder(cache_dir: str) -> Tuple[torch.nn.Module, Callable, int]:
-  model = timm.create_model(  # type: ignore
-    "hf_hub:MahmoodLab/UNI",
-    pretrained=True,
-    init_values=1e-5,
-    dynamic_img_size=True,
+def _env_flag(name: str, default: bool) -> bool:
+  raw = os.environ.get(name, "").strip().lower()
+  if raw == "":
+    return default
+  return raw not in ["0", "false", "no", "n", "off"]
+
+
+def _hf_snapshot_weight_path(cache_dir: str, repo_id: str, filename: str) -> Optional[Path]:
+  snapshots = Path(cache_dir) / f"models--{repo_id.replace('/', '--')}" / "snapshots"
+  if not snapshots.is_dir():
+    return None
+  for snapshot_dir in sorted(snapshots.iterdir()):
+    if not snapshot_dir.is_dir():
+      continue
+    weight_path = snapshot_dir / filename
+    if weight_path.is_file():
+      return weight_path
+  return None
+
+
+def _hf_weight_cached(cache_dir: str, repo_id: str, filename: str) -> bool:
+  try:
+    from huggingface_hub import try_to_load_from_cache
+  except ImportError:
+    return _hf_snapshot_weight_path(cache_dir, repo_id, filename) is not None
+
+  cached = try_to_load_from_cache(
+    repo_id=repo_id,
+    filename=filename,
     cache_dir=cache_dir,
   )
+  if isinstance(cached, (str, os.PathLike)):
+    return Path(cached).is_file()
+  return _hf_snapshot_weight_path(cache_dir, repo_id, filename) is not None
+
+
+@contextmanager
+def _prefer_local_hf_cache(
+  cache_dir: str,
+  repo_id: str,
+  filename: str,
+) -> Iterator[None]:
+  prefer_local = _env_flag("SLIMAI_PREFER_HF_LOCAL_CACHE", True)
+  use_offline = (
+    prefer_local
+    and _hf_weight_cached(cache_dir, repo_id, filename)
+    and "HF_HUB_OFFLINE" not in os.environ
+  )
+  if not use_offline:
+    yield
+    return
+  old_hf_hub_offline = os.environ.get("HF_HUB_OFFLINE")
+  os.environ["HF_HUB_OFFLINE"] = "1"
+  logger.info(
+    "Using cached HuggingFace weights for {}/{} from {}",
+    repo_id,
+    filename,
+    cache_dir,
+  )
+  try:
+    yield
+  finally:
+    if old_hf_hub_offline is None:
+      os.environ.pop("HF_HUB_OFFLINE", None)
+    else:
+      os.environ["HF_HUB_OFFLINE"] = old_hf_hub_offline
+  return
+
+
+def _build_uni_encoder(cache_dir: str) -> Tuple[torch.nn.Module, Callable, int]:
+  with _prefer_local_hf_cache(cache_dir, "MahmoodLab/UNI", "model.safetensors"):
+    model = timm.create_model(  # type: ignore
+      "hf_hub:MahmoodLab/UNI",
+      pretrained=True,
+      init_values=1e-5,
+      dynamic_img_size=True,
+      cache_dir=cache_dir,
+    )
   transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
   model.eval()
   return model, transform, int(model.num_features) # type: ignore
 
 
 def _build_uni2_encoder(cache_dir: str) -> Tuple[torch.nn.Module, Callable, int]:
-  model = timm.create_model(  # type: ignore
-    "hf_hub:MahmoodLab/UNI2-h",
-    pretrained=True,
-    img_size=224,
-    patch_size=14,
-    depth=24,
-    num_heads=24,
-    init_values=1e-5,
-    embed_dim=1536,
-    mlp_ratio=2.66667 * 2,
-    num_classes=0,
-    no_embed_class=True,
-    mlp_layer=timm.layers.SwiGLUPacked,  # type: ignore
-    act_layer=torch.nn.SiLU,
-    reg_tokens=8,
-    dynamic_img_size=True,
-    cache_dir=cache_dir,
-  )
+  with _prefer_local_hf_cache(cache_dir, "MahmoodLab/UNI2-h", "model.safetensors"):
+    model = timm.create_model(  # type: ignore
+      "hf_hub:MahmoodLab/UNI2-h",
+      pretrained=True,
+      img_size=224,
+      patch_size=14,
+      depth=24,
+      num_heads=24,
+      init_values=1e-5,
+      embed_dim=1536,
+      mlp_ratio=2.66667 * 2,
+      num_classes=0,
+      no_embed_class=True,
+      mlp_layer=timm.layers.SwiGLUPacked,  # type: ignore
+      act_layer=torch.nn.SiLU,
+      reg_tokens=8,
+      dynamic_img_size=True,
+      cache_dir=cache_dir,
+    )
   transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
   model.eval()
   return model, transform, int(model.num_features) # type: ignore
@@ -170,11 +242,12 @@ def _build_conch_encoder(cache_dir: str) -> Tuple[torch.nn.Module, Callable, int
     try:
       from huggingface_hub import hf_hub_download
 
-      checkpoint_path = hf_hub_download(
-        repo_id="MahmoodLab/CONCH",
-        filename="pytorch_model.bin",
-        cache_dir=cache_dir,
-      )
+      with _prefer_local_hf_cache(cache_dir, "MahmoodLab/CONCH", "pytorch_model.bin"):
+        checkpoint_path = hf_hub_download(
+          repo_id="MahmoodLab/CONCH",
+          filename="pytorch_model.bin",
+          cache_dir=cache_dir,
+        )
     except Exception as exc:
       raise RuntimeError(
         "Unable to resolve CONCH checkpoint. Set SLIMAI_CONCH_CHECKPOINT to a local "

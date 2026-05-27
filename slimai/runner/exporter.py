@@ -1,110 +1,144 @@
-import onnx
-try:
-  from onnxsim import simplify
-except:
-  simplify = lambda _: (_, True)
-import torch
+from __future__ import annotations
+
 from pathlib import Path
-from functools import partial
+from typing import Any, Dict, Optional
+
+import torch
 from mmengine.model.utils import revert_sync_batchnorm
-from slimai.helper import help_build, help_utils
-from slimai.helper.utils import PytorchNetworkUtils
-from slimai.helper.distributed import Distributed
-from slimai.models.component.pipeline import Pipeline
-from slimai.models.arch.base_arch import BaseArch
+
+from slimai.export.bundle import extract_taxonomy, load_training_bundle
+from slimai.export.manifest import write_export_manifest
+from slimai.export.onnx_core import export_onnx
+from slimai.export.validate import run_export_validation
+from slimai.helper import help_utils
+from slimai.models.arch.mil import (
+  HierarchicalMIL,
+  MIL,
+  SLIDE_ENCODER_INPUT_NAME,
+  SLIDE_ENCODER_OUTPUT_NAMES_HIERARCHICAL,
+  SLIDE_ENCODER_OUTPUT_NAMES_MIL,
+)
+
+PATCH_ENCODER_INPUT_NAME = "patch_tensor"
+PATCH_ENCODER_OUTPUT_NAME = "embedding_arr"
 
 
-class Exporter(torch.nn.Module):
-  """A class for exporting PyTorch models to ONNX format."""
+class Exporter:
+  """Export MIL / HierarchicalMIL checkpoints to patch_encoder + slide_encoder ONNX."""
 
-  def __init__(self, ckpt_path, *, disable_log=False):
-    """Initialize exporter with checkpoint path."""
-    super().__init__()
+  def __init__(
+    self,
+    config_path: str,
+    ckpt_path: str,
+    *,
+    cache_dir: Optional[str] = None,
+    disable_log: bool = False,
+  ):
+    self.config_path = config_path
     self.ckpt_path = ckpt_path
+    self.cache_dir = cache_dir
     self.disable_log = disable_log
-    
-    help_utils.print_log(f"Loading checkpoint from {ckpt_path}", disable_log=self.disable_log)
-    ckpt = torch.load(ckpt_path, map_location="cpu")
-
-    assert (
-      {"model", "weight"}.issubset(set(ckpt.keys()))
-    ), "Invalid checkpoint keys, expect 'model' and 'weight', but got {}".format(ckpt.keys())
-
-    dist = Distributed()
-
-    # turn to non-ddp mode
-    help_utils.print_log("Building model architecture", disable_log=self.disable_log)
-    arch: BaseArch = help_build.build_model(ckpt["model"]) # type: ignore
-    #TODO: fit fsdp
-    arch.model = dist.get_summon_module(arch.model)
-    arch.load_state_dict(ckpt["weight"], strict=True)
-    model = dist.get_summon_module(arch.export_model())
-    model = revert_sync_batchnorm(model)
-
-    self.model = model.eval()
-    help_utils.print_log("Model initialized successfully", disable_log=self.disable_log)
-    help_utils.print_log(f"Model parameters: {PytorchNetworkUtils.get_params_size(self.model)}", disable_log=self.disable_log)
-    return
-
-  @property
-  def device(self):
-    """Get device of the model."""
-    return next(self.model.parameters()).device
-  
-  def forward(self, input_tensor):
-    """Forward function of the model."""
-    forward_func = self.model.forward
-    if isinstance(self.model, Pipeline):
-      forward_func = partial(forward_func, return_flow=True)
-    return forward_func(input_tensor)
-  
-  def export(self, output_dir, *, format="onnx"):    
-    """Export model to ONNX format."""
-    help_utils.print_log(f"Exporting model to {format} format", disable_log=self.disable_log)
-    help_utils.print_log(f"Using device: {self.device}", disable_log=self.disable_log)
-    input_tensor = torch.randn(1, 3, 224, 224).to(self.device)
-    
-    help_utils.print_log("Running model inference", disable_log=self.disable_log)
-    with torch.inference_mode():
-      pytorch_output = self(input_tensor)
-    help_utils.print_log(f"Output shape: {pytorch_output.shape if isinstance(pytorch_output, torch.Tensor) else {k: v.shape for k,v in pytorch_output.items()}}", disable_log=self.disable_log)
-
-    nested_model_file = Path(output_dir) / "-".join(Path(self.ckpt_path).with_suffix(f".{format}").parts[-3:])
-    nested_model_file.parent.mkdir(parents=True, exist_ok=True)
-
-    help_utils.print_log(f"Exporting model to {nested_model_file}", disable_log=self.disable_log)
-    if format == "onnx":
-      nested_output = self._export_onnx(input_tensor, nested_model_file)
-    else:
-      raise ValueError("Invalid format, expect 'onnx', but got {}".format(format))
-        
-    assert ( # TODO: validate output
-      True # pytorch_output == nested_output
-    ), "Output mismatch"
-
-    help_utils.print_log("Model exported successfully", disable_log=self.disable_log)
-    return
-
-  ############################################################
-  # ONNX export
-  ############################################################
-  def _export_onnx(self, input_tensor, onnx_file):
-    """Export model to ONNX format."""
-    export_options = dict(
-      export_params=True, 
-      opset_version=17, 
-      do_constant_folding=True, 
-      input_names=["input"], 
-      output_names=["output"], 
-      dynamic_axes={
-        "input": {0: "batch_size", 1: "channel", 2: "height", 3: "width"}, 
-        "output": {0: "batch_size"}, 
-      }
+    self.cfg, self.arch, self.ckpt = load_training_bundle(config_path, ckpt_path)
+    if not isinstance(self.arch, (MIL, HierarchicalMIL)):
+      raise NotImplementedError(
+        f"Export supports MIL and HierarchicalMIL only, got {type(self.arch).__name__}"
+      )
+    self.slide_output_names = (
+      SLIDE_ENCODER_OUTPUT_NAMES_HIERARCHICAL
+      if isinstance(self.arch, HierarchicalMIL)
+      else SLIDE_ENCODER_OUTPUT_NAMES_MIL
     )
-    torch.onnx.export(self, input_tensor, onnx_file, **export_options) # type: ignore
-    onnx_model = onnx.load(onnx_file)
-    onnx.checker.check_model(onnx_model, full_check=True)
-    onnx_model, check = simplify(onnx_model)
-    assert check, "Simplified ONNX model could not be validated"
-    onnx.save_model(onnx_model, onnx_file)
-    return 
+    self.artifacts = self.arch.export_artifacts(cache_dir=cache_dir, cfg=self.cfg)
+    self.patch_encoder = revert_sync_batchnorm(self.artifacts["patch_encoder"]).eval()
+    self.slide_encoder = revert_sync_batchnorm(self.artifacts["slide_encoder"]).eval()
+    self.preprocess = self.artifacts.get("preprocess", {})
+    help_utils.print_log("Export bundle loaded successfully", disable_log=self.disable_log)
+    return
+
+  def export(
+    self,
+    output_dir: str,
+    *,
+    opset_version: int = 17,
+    device: str = "cpu",
+    skip_validation: bool = False,
+    validate_embedding_path: Optional[str] = None,
+    max_patches: int = 32,
+  ) -> Dict[str, Path]:
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    embedding_dim = int(getattr(self.cfg, "EMBEDDING_DIM", 1024))
+    input_size = int(self.preprocess.get("input_size", [224, 224])[-1])
+    num_patches = min(max_patches, 8)
+
+    patch_dummy = torch.randn(num_patches, 3, input_size, input_size, device=device)
+    embedding_dummy = torch.randn(num_patches, embedding_dim, device=device)
+
+    patch_onnx = export_onnx(
+      self.patch_encoder,
+      patch_dummy,
+      output_path / "patch_encoder.onnx",
+      input_names=[PATCH_ENCODER_INPUT_NAME],
+      output_names=[PATCH_ENCODER_OUTPUT_NAME],
+      dynamic_axes={
+        PATCH_ENCODER_INPUT_NAME: {0: "num_patches"},
+        PATCH_ENCODER_OUTPUT_NAME: {0: "num_patches"},
+      },
+      opset_version=opset_version,
+      device=device,
+    )
+    slide_onnx = export_onnx(
+      self.slide_encoder,
+      embedding_dummy,
+      output_path / "slide_encoder.onnx",
+      input_names=[SLIDE_ENCODER_INPUT_NAME],
+      output_names=self.slide_output_names,
+      dynamic_axes={
+        SLIDE_ENCODER_INPUT_NAME: {0: "num_patches"},
+        "attention_weights": {0: "num_patches"},
+      },
+      opset_version=opset_version,
+      device=device,
+    )
+
+    taxonomy = extract_taxonomy(self.cfg)
+    write_export_manifest(
+      output_path,
+      config_path=self.config_path,
+      ckpt_path=self.ckpt_path,
+      preprocess=self.preprocess,
+      taxonomy=taxonomy,
+      patch_encoder_spec=dict(
+        encoder_name=self.preprocess.get("encoder_name", getattr(self.cfg, "PATCH_ENCODER_NAME", "")),
+        inputs=[{"name": PATCH_ENCODER_INPUT_NAME, "shape": ["N", 3, input_size, input_size]}],
+        outputs=[{"name": PATCH_ENCODER_OUTPUT_NAME, "shape": ["N", embedding_dim]}],
+      ),
+      slide_encoder_spec=dict(
+        model_type=type(self.arch).__name__,
+        inputs=[{"name": SLIDE_ENCODER_INPUT_NAME, "shape": ["N", embedding_dim]}],
+        outputs=[{"name": name} for name in self.slide_output_names],
+      ),
+    )
+
+    if not skip_validation:
+      run_export_validation(
+        patch_encoder=self.patch_encoder,
+        slide_encoder=self.slide_encoder,
+        output_dir=output_path,
+        embedding_dim=embedding_dim,
+        input_size=input_size,
+        validate_embedding_path=validate_embedding_path,
+        embedding_key=str(getattr(self.cfg, "EMBEDDING_KEY", "embedding")),
+        embedding_magnification=int(getattr(self.cfg, "EMBEDDING_MAGNIFICATION", 20)),
+        h5_embedding_key=str(getattr(self.cfg, "EXTERNAL_H5_EMBEDDING_KEY", "UNI_feature_np")),
+        max_patches=max_patches,
+      )
+
+    help_utils.print_log(f"Exported ONNX artifacts to {output_path}", disable_log=self.disable_log)
+    return dict(
+      patch_encoder=patch_onnx,
+      slide_encoder=slide_onnx,
+      manifest=output_path / "export_manifest.json",
+      preprocess=output_path / "preprocess.json",
+    )

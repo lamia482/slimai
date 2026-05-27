@@ -7,8 +7,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import mmengine
 import numpy as np
+import pandas as pd
 import torch
-from sklearn.metrics import auc, average_precision_score, confusion_matrix, precision_recall_curve, roc_curve
+from sklearn.metrics import (
+  accuracy_score,
+  auc,
+  average_precision_score,
+  cohen_kappa_score,
+  confusion_matrix,
+  f1_score,
+  precision_recall_curve,
+  roc_auc_score,
+  roc_curve,
+)
 from sklearn.preprocessing import label_binarize
 
 from slimai.helper.help_utils import print_log
@@ -260,23 +271,187 @@ class ExperimentReporter(object):
       return []
     return [str(i) for i in range(int(num_classes))]
 
-  def _extract_eval_arrays(self, result_file: Path, task_key: Optional[str] = None):
+  def _get_report_cfg(self) -> Dict[str, Any]:
+    report_cfg = self.cfg.get("REPORT", {})
+    return report_cfg if isinstance(report_cfg, dict) else {}
+
+  def _normalize_eval_path(self, path: Any) -> str:
+    if path is None:
+      return ""
+    text = str(path).strip()
+    if text == "":
+      return ""
+    try:
+      return str(Path(text).resolve())
+    except Exception:
+      return text.rstrip("/")
+
+  def _resolve_report_path_and_center_cols(self) -> Tuple[str, str, str]:
+    report_cfg = self._get_report_cfg()
+    source_cfg = self.cfg.get("BREXI_SOURCE", {})
+    if not isinstance(source_cfg, dict):
+      source_cfg = {}
+    path_col = report_cfg.get("inner_test_path_col", None)
+    if not isinstance(path_col, str) or path_col == "":
+      path_col = source_cfg.get("mapped_file_col", "EMBEDDING_MAPPED")
+    center_col = report_cfg.get("inner_test_center_col", None)
+    if not isinstance(center_col, str) or center_col == "":
+      center_col = source_cfg.get("center_col", "中心")
+    split_col = source_cfg.get("split_col", "split")
+    return str(path_col), str(center_col), str(split_col)
+
+  def _load_center_path_map(
+    self,
+    *,
+    split_file: Optional[str],
+    split_name: str = "test",
+  ) -> Dict[str, str]:
+    if not isinstance(split_file, str) or split_file.strip() == "":
+      print_log("Inner test center grouping: split_file is missing", level="WARNING")
+      return {}
+    split_path = Path(split_file)
+    if not split_path.exists():
+      print_log(f"Inner test center grouping: split file not found: {split_path}", level="WARNING")
+      return {}
+
+    path_col, center_col, split_col = self._resolve_report_path_and_center_cols()
+    source_cfg = self.cfg.get("BREXI_SOURCE", {})
+    sheet_name = "5-数据集"
+    if isinstance(source_cfg, dict) and isinstance(source_cfg.get("sheet_name", None), str):
+      sheet_name = source_cfg["sheet_name"]
+    split_sheet_candidates = [f"{sheet_name}_split", sheet_name, 0]
+
+    try:
+      df = None
+      last_exc = None
+      for candidate in split_sheet_candidates:
+        try:
+          df = pd.read_excel(split_path, sheet_name=candidate)
+          break
+        except Exception as exc:
+          last_exc = exc
+          continue
+      if df is None:
+        raise last_exc if last_exc is not None else ValueError("failed to read split excel")
+    except Exception as exc:
+      print_log(f"Inner test center grouping: failed to read split file: {exc}", level="WARNING")
+      return {}
+
+    if split_col not in df.columns:
+      print_log(f"Inner test center grouping: split column '{split_col}' not found", level="WARNING")
+      return {}
+    if center_col not in df.columns:
+      print_log(f"Inner test center grouping: center column '{center_col}' not found", level="WARNING")
+      return {}
+
+    split_df = df[df[split_col].astype(str) == str(split_name)].copy()
+    if len(split_df) == 0:
+      return {}
+
+    path_columns = []
+    for candidate in [path_col, "EMBEDDING_MAPPED", "raw_file", "EMBEDDING"]:
+      if candidate in split_df.columns and candidate not in path_columns:
+        path_columns.append(candidate)
+
+    center_map: Dict[str, str] = {}
+    for _, row in split_df.iterrows():
+      center_name = row.get(center_col, None)
+      if pd.isna(center_name):
+        continue
+      center_text = str(center_name).strip()
+      if center_text == "":
+        continue
+      for col in path_columns:
+        path_value = row.get(col, None)
+        if pd.isna(path_value):
+          continue
+        normalized = self._normalize_eval_path(path_value)
+        if normalized != "":
+          center_map[normalized] = center_text
+        basename = Path(str(path_value).strip()).name
+        if basename != "":
+          center_map[basename] = center_text
+    return center_map
+
+  def _build_heuristic_center_path_map(self, h5_paths: List[str]) -> Dict[str, str]:
+    center_map: Dict[str, str] = {}
+    for path in h5_paths:
+      if not isinstance(path, str) or path.strip() == "":
+        continue
+      text = path.lower()
+      if "nbbldc" in text:
+        center_name = "宁波病理中心"
+      elif "shzs_emb" in text or "/shzs" in text:
+        center_name = "复旦中山"
+      else:
+        continue
+      normalized = self._normalize_eval_path(path)
+      if normalized != "":
+        center_map[normalized] = center_name
+      basename = Path(path.strip()).name
+      if basename != "":
+        center_map[basename] = center_name
+    return center_map
+
+  def _should_group_inner_test_by_center(self, center_path_map: Dict[str, str]) -> bool:
+    report_cfg = self._get_report_cfg()
+    enable = report_cfg.get("inner_test_group_by_center", True)
+    if not enable:
+      return False
+    unique_centers = {v for v in center_path_map.values() if isinstance(v, str) and v.strip() != ""}
+    return len(unique_centers) > 1
+
+  def _resolve_center_for_h5_path(self, h5_path: str, center_path_map: Dict[str, str]) -> str:
+    if not isinstance(h5_path, str) or h5_path.strip() == "":
+      return ""
+    normalized = self._normalize_eval_path(h5_path)
+    if normalized in center_path_map:
+      return center_path_map[normalized]
+    basename = Path(h5_path.strip()).name
+    if basename in center_path_map:
+      return center_path_map[basename]
+    return ""
+
+  def _resolve_h5_path_from_item(self, item: Any) -> str:
+    if isinstance(item, dict):
+      meta = item.get("meta", {})
+    else:
+      meta = getattr(item, "meta", {})
+    if not isinstance(meta, dict):
+      meta = {}
+    for key in ["h5_path", "file", "path"]:
+      value = meta.get(key, None)
+      if isinstance(value, str) and value.strip():
+        return value.strip()
+    return ""
+
+  def _resolve_task_output(self, item: Any, task_key: Optional[str]):
+    output = item.get("output", None) if isinstance(item, dict) else getattr(item, "output", None)
+    if output is None:
+      return None
+    if isinstance(task_key, str) and isinstance(output, dict) and task_key in output and isinstance(output[task_key], dict):
+      return output[task_key]
+    return output
+
+  def _extract_eval_samples(
+    self,
+    result_file: Path,
+    task_key: Optional[str] = None,
+    *,
+    include_conditional: bool = False,
+  ) -> List[Dict[str, Any]]:
     if not Path(result_file).exists():
-      return None, None, None
+      return []
     result = mmengine.load(result_file)
     batch_info = result.get("batch_info", [])
-    labels = []
-    preds = []
-    probs = []
+    samples: List[Dict[str, Any]] = []
     for item in batch_info:
       label = item.get("label", None) if isinstance(item, dict) else getattr(item, "label", None)
-      output = item.get("output", None) if isinstance(item, dict) else getattr(item, "output", None)
       if isinstance(task_key, str) and task_key != "label":
         label = item.get(task_key, None) if isinstance(item, dict) else getattr(item, task_key, None)
+      output = self._resolve_task_output(item, task_key)
       if output is None:
         continue
-      if isinstance(task_key, str) and isinstance(output, dict) and task_key in output and isinstance(output[task_key], dict):
-        output = output[task_key]
       softmax = output.get("softmax", None) if isinstance(output, dict) else getattr(output, "softmax", None)
       pred = output.get("labels", None) if isinstance(output, dict) else getattr(output, "labels", None)
       if label is None or softmax is None or pred is None:
@@ -286,12 +461,285 @@ class ExperimentReporter(object):
         continue
       pred = int(torch.as_tensor(pred).cpu().item())
       softmax = torch.as_tensor(softmax).detach().cpu().float().numpy()
-      labels.append(label)
-      preds.append(pred)
-      probs.append(softmax)
-    if len(labels) == 0:
+      sample = dict(
+        label=label,
+        pred=pred,
+        prob=softmax,
+        h5_path=self._resolve_h5_path_from_item(item),
+      )
+      if include_conditional and isinstance(task_key, str) and task_key == "label_secondary":
+        root_output = item.get("output", None) if isinstance(item, dict) else getattr(item, "output", None)
+        if isinstance(root_output, dict) and "label_secondary_conditional" in root_output:
+          conditional_output = root_output["label_secondary_conditional"]
+          if isinstance(conditional_output, dict):
+            cond_pred = conditional_output.get("labels", None)
+            cond_softmax = conditional_output.get("softmax", None)
+            if cond_pred is not None:
+              sample["conditional_pred"] = int(torch.as_tensor(cond_pred).cpu().item())
+            if cond_softmax is not None:
+              sample["conditional_prob"] = torch.as_tensor(cond_softmax).detach().cpu().float().numpy()
+      samples.append(sample)
+    return samples
+
+  def _samples_to_arrays(self, samples: List[Dict[str, Any]]):
+    if len(samples) == 0:
       return None, None, None
-    return np.asarray(labels), np.asarray(preds), np.asarray(probs)
+    labels = np.asarray([int(s["label"]) for s in samples])
+    preds = np.asarray([int(s["pred"]) for s in samples])
+    probs = np.asarray([s["prob"] for s in samples])
+    return labels, preds, probs
+
+  def _extract_eval_arrays(
+    self,
+    result_file: Path,
+    task_key: Optional[str] = None,
+    *,
+    samples: Optional[List[Dict[str, Any]]] = None,
+  ):
+    if samples is None:
+      samples = self._extract_eval_samples(result_file, task_key=task_key)
+    return self._samples_to_arrays(samples)
+
+  def _safe_metric_value(self, value: Any):
+    if value is None:
+      return "N/A"
+    if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+      return "N/A"
+    return self._format_float(float(value))
+
+  def _compute_classification_metrics_from_arrays(
+    self,
+    labels: np.ndarray,
+    preds: np.ndarray,
+    probs: np.ndarray,
+  ) -> Dict[str, Any]:
+    if len(labels) == 0:
+      return {}
+    metrics: Dict[str, Any] = dict(
+      n_samples=int(len(labels)),
+      acc=self._safe_metric_value(accuracy_score(labels, preds)),
+    )
+    try:
+      metrics["f1"] = self._safe_metric_value(
+        f1_score(labels, preds, average="macro", zero_division=0)
+      )
+    except Exception:
+      metrics["f1"] = "N/A"
+    try:
+      metrics["kappa"] = self._safe_metric_value(cohen_kappa_score(labels, preds))
+    except Exception:
+      metrics["kappa"] = "N/A"
+    try:
+      if probs.ndim == 2 and probs.shape[1] > 1 and len(np.unique(labels)) > 1:
+        metrics["auc"] = self._safe_metric_value(
+          roc_auc_score(labels, probs, multi_class="ovr", average="macro")
+        )
+      else:
+        metrics["auc"] = "N/A"
+    except Exception:
+      metrics["auc"] = "N/A"
+    return metrics
+
+  def _compute_subset_metrics(
+    self,
+    samples: List[Dict[str, Any]],
+    *,
+    include_conditional: bool = False,
+  ) -> Dict[str, Any]:
+    labels, preds, probs = self._samples_to_arrays(samples)
+    if labels is None or preds is None or probs is None:
+      return {}
+    metrics = self._compute_classification_metrics_from_arrays(labels, preds, probs)
+    if include_conditional:
+      conditional_samples = [
+        dict(label=s["label"], pred=s["conditional_pred"], prob=s["conditional_prob"])
+        for s in samples
+        if "conditional_pred" in s and "conditional_prob" in s
+      ]
+      cond_labels, cond_preds, cond_probs = self._samples_to_arrays(conditional_samples)
+      if cond_labels is not None and cond_preds is not None and cond_probs is not None:
+        conditional_metrics = self._compute_classification_metrics_from_arrays(
+          cond_labels, cond_preds, cond_probs
+        )
+        metrics.update(
+          {
+            f"conditional_{key}": value
+            for key, value in conditional_metrics.items()
+            if key != "n_samples"
+          }
+        )
+    return metrics
+
+  def _group_samples_by_center(
+    self,
+    samples: List[Dict[str, Any]],
+    center_path_map: Dict[str, str],
+  ) -> Tuple[Dict[str, List[Dict[str, Any]]], int]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    unmatched = 0
+    for sample in samples:
+      center_name = self._resolve_center_for_h5_path(sample.get("h5_path", ""), center_path_map)
+      if center_name == "":
+        unmatched += 1
+        continue
+      grouped.setdefault(center_name, []).append(sample)
+    if unmatched > 0:
+      print_log(
+        f"Inner test center grouping: {unmatched} samples could not be mapped to a center",
+        level="WARNING",
+      )
+    return grouped, unmatched
+
+  def _render_inner_test_group_block(
+    self,
+    *,
+    title: str,
+    metrics: Dict[str, Any],
+    figures: Dict[str, str],
+  ) -> str:
+    metric_rows = {k: v for k, v in metrics.items() if k != "n_samples"}
+    sample_count = metrics.get("n_samples", "N/A")
+    fig_html = "".join([f"<h6>{k.upper()}</h6>{v}" for k, v in figures.items()])
+    return (
+      "<div class='inner-test-group'>"
+      f"<h5>{html.escape(title)}</h5>"
+      f"<p><span class='k'>n_samples</span><span class='v'>{self._render_value_html(sample_count)}</span></p>"
+      f"{self._render_dict_as_table(metric_rows) if len(metric_rows) > 0 else '<p>No metrics available.</p>'}"
+      f"{fig_html if fig_html != '' else '<p>No figures generated.</p>'}"
+      "</div>"
+    )
+
+  def _render_inner_test_by_center_table(self, metrics_by_center: Dict[str, Dict[str, Any]]):
+    if len(metrics_by_center) == 0:
+      return "<p>N/A</p>"
+    center_names = sorted(metrics_by_center.keys())
+    preferred_rows = [
+      "n_samples", "loss", "acc", "auc", "kappa", "f1",
+      "conditional_acc", "conditional_auc", "conditional_kappa", "conditional_f1",
+    ]
+    keys_union = []
+    seen = set()
+    for key in preferred_rows:
+      for center_name in center_names:
+        if key in metrics_by_center[center_name]:
+          keys_union.append(key)
+          seen.add(key)
+          break
+    for center_name in center_names:
+      for key in metrics_by_center[center_name].keys():
+        if key in seen:
+          continue
+        keys_union.append(key)
+        seen.add(key)
+    head_cells = "".join([f"<th>{html.escape(name)}</th>" for name in center_names])
+    rows = []
+    for metric_key in keys_union:
+      value_cells = []
+      for center_name in center_names:
+        value = metrics_by_center[center_name].get(metric_key, "N/A")
+        value_cells.append(f"<td>{self._render_value_html(value)}</td>")
+      rows.append(
+        "<tr>"
+        f"<th>{html.escape(metric_key)}</th>"
+        + "".join(value_cells)
+        + "</tr>"
+      )
+    return (
+      "<div class='table-scroll-y'>"
+      "<table class='flat-table compare-table'>"
+      f"<tr><th>metric</th>{head_cells}</tr>"
+      + "".join(rows)
+      + "</table>"
+      "</div>"
+    )
+
+  def _build_inner_test_eval_section(
+    self,
+    *,
+    task_name: str,
+    task_key: str,
+    class_names: List[str],
+    result_file: Optional[Path],
+    full_metrics: Dict[str, Any],
+    include_conditional: bool,
+  ) -> Tuple[str, str]:
+    if result_file is None or not Path(result_file).exists():
+      return "<p>No Inner Test result file.</p>", ""
+
+    test_info = self.dataset_info.get("test", {}) or {}
+    split_file = test_info.get("split_file", None)
+    if not isinstance(split_file, str) or split_file.strip() == "":
+      source_cfg = self.cfg.get("BREXI_SOURCE", {})
+      if isinstance(source_cfg, dict):
+        split_file = source_cfg.get("output_split_file", None)
+    samples = self._extract_eval_samples(
+      Path(result_file),
+      task_key=task_key,
+      include_conditional=include_conditional,
+    )
+    center_path_map = self._load_center_path_map(split_file=split_file, split_name="test")
+    if len(center_path_map) == 0 and self._get_report_cfg().get("inner_test_center_path_heuristic", True):
+      center_path_map = self._build_heuristic_center_path_map(
+        [str(s.get("h5_path", "")) for s in samples]
+      )
+      if len(center_path_map) > 0:
+        print_log(
+          "Inner test center grouping: using path heuristics because split file map is empty",
+          level="WARNING",
+        )
+    group_by_center = self._should_group_inner_test_by_center(center_path_map)
+
+    full_figures = self.build_eval_figures(
+      result_file=Path(result_file),
+      file_prefix=f"{task_name}_test_full",
+      task_key=task_key,
+      class_names=class_names,
+      samples=samples,
+    )
+    full_metric_dict = dict(full_metrics)
+    if "n_samples" not in full_metric_dict:
+      full_metric_dict["n_samples"] = len(samples)
+
+    blocks = [
+      "<div class='card'>",
+      "<h4>Inner Test</h4>",
+      self._render_inner_test_group_block(
+        title="全量",
+        metrics=full_metric_dict,
+        figures=full_figures,
+      ),
+    ]
+
+    by_center_summary_table = ""
+    if group_by_center:
+      grouped_samples, _ = self._group_samples_by_center(samples, center_path_map)
+      metrics_by_center: Dict[str, Dict[str, Any]] = {}
+      blocks.append("<h5>中心分组</h5>")
+      for center_name in sorted(grouped_samples.keys()):
+        center_samples = grouped_samples[center_name]
+        center_metrics = self._compute_subset_metrics(
+          center_samples,
+          include_conditional=include_conditional,
+        )
+        metrics_by_center[center_name] = center_metrics
+        center_figures = self.build_eval_figures_from_samples(
+          samples=center_samples,
+          file_prefix=f"{task_name}_test_{center_name}",
+          class_names=class_names,
+        )
+        blocks.append(
+          self._render_inner_test_group_block(
+            title=center_name,
+            metrics=center_metrics,
+            figures=center_figures,
+          )
+        )
+      by_center_summary_table = (
+        "<h4>Inner Test（中心分组）</h4>"
+        + self._render_inner_test_by_center_table(metrics_by_center)
+      )
+    blocks.append("</div>")
+    return "".join(blocks), by_center_summary_table
 
   def _chart_svg_line(
     self,
@@ -563,9 +1011,41 @@ class ExperimentReporter(object):
       y_range=(0.0, 1.0),
     )
 
-  def build_eval_figures(self, *, result_file: Path, file_prefix: str, task_key: Optional[str] = None, class_names: Optional[List[str]] = None):
+  def build_eval_figures_from_samples(
+    self,
+    *,
+    samples: List[Dict[str, Any]],
+    file_prefix: str,
+    class_names: Optional[List[str]] = None,
+  ) -> Dict[str, str]:
     _ = file_prefix
-    labels, preds, probs = self._extract_eval_arrays(result_file, task_key=task_key)
+    labels, preds, probs = self._samples_to_arrays(samples)
+    if labels is None or preds is None or probs is None:
+      return {}
+    if class_names is None:
+      class_names = self.display_class_names
+    output = dict()
+    if roc_html := self._plot_roc_curve(labels, probs, class_names):
+      output["roc"] = roc_html
+    if pr_html := self._plot_pr_curve(labels, probs, class_names):
+      output["pr"] = pr_html
+    output["cm"] = self._chart_confusion_matrix(labels, preds, class_names)
+    return output
+
+  def build_eval_figures(
+    self,
+    *,
+    result_file: Path,
+    file_prefix: str,
+    task_key: Optional[str] = None,
+    class_names: Optional[List[str]] = None,
+    samples: Optional[List[Dict[str, Any]]] = None,
+  ):
+    _ = file_prefix
+    if samples is None:
+      labels, preds, probs = self._extract_eval_arrays(result_file, task_key=task_key)
+    else:
+      labels, preds, probs = self._samples_to_arrays(samples)
     if labels is None or preds is None or probs is None:
       return {}
     if class_names is None:
@@ -1450,7 +1930,7 @@ class ExperimentReporter(object):
       split_title_map = {
         "train": "Train",
         "valid": "Inner Valid",
-        "test": "Inner Test",
+        "test": "Inner Test（全量）",
       }
       available_splits = [s for s in split_order if isinstance(metrics_by_split.get(s, None), dict) and len(metrics_by_split.get(s, {})) > 0]
       if len(available_splits) == 0:
@@ -1537,19 +2017,21 @@ class ExperimentReporter(object):
       task_key = task["task_key"]
       class_names = task["class_names"]
       eval_blocks = []
+      inner_test_by_center_summary = ""
       summary_metrics_by_split: Dict[str, Dict[str, Any]] = {}
       split_title_map = {
         "train": "Train",
         "valid": "Inner Valid",
         "test": "Inner Test",
       }
+      include_conditional = task_name == "level2"
       for split_name in ["train", "valid", "test"]:
         result_file = analysis_result_files.get(split_name, None)
         metric_dict = _pick_prefixed(analysis_metrics.get(split_name, {}), prefix)
         if len(metric_dict) == 0:
           continue
         split_display_name = split_title_map.get(split_name, split_name.title())
-        if task_name == "level2":
+        if include_conditional:
           conditional_dict = _pick_prefixed(
             analysis_metrics.get(split_name, {}),
             "label_secondary_conditional_",
@@ -1562,6 +2044,17 @@ class ExperimentReporter(object):
               }
             )
         summary_metrics_by_split[split_name] = metric_dict
+        if split_name == "test":
+          inner_test_block, inner_test_by_center_summary = self._build_inner_test_eval_section(
+            task_name=task_name,
+            task_key=task_key,
+            class_names=class_names,
+            result_file=(Path(result_file) if result_file is not None else None),
+            full_metrics=metric_dict,
+            include_conditional=include_conditional,
+          )
+          eval_blocks.append(inner_test_block)
+          continue
         if result_file is None:
           continue
         figures = self.build_eval_figures(
@@ -1642,6 +2135,7 @@ class ExperimentReporter(object):
         f"{self._render_dict_as_table(run_summary)}"
         "<h4>Train / Inner Valid / Inner Test</h4>"
         f"{_render_split_compare_table(summary_metrics_by_split)}"
+        f"{inner_test_by_center_summary}"
         "<h4>External Test</h4>"
         f"{_render_external_summary_table(external_summary_metrics)}"
         "</section>"

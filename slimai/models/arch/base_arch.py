@@ -4,11 +4,20 @@ import sys
 import torch
 from functools import partial
 from torch.utils.checkpoint import checkpoint as gradient_checkpoint
-from typing import Optional, Union, Dict, Tuple
+from typing import Any, Optional, Union, Dict, Tuple
 from slimai.helper import help_build, DataSample, Distributed
 from slimai.helper.help_utils import print_log
 from slimai.helper.utils import PytorchNetworkUtils
 from ..component.pipeline import Pipeline
+
+
+"""
+Export protocol (Arch / component / feature ``nn.Module`` subclasses):
+
+- ``export_model() -> nn.Module``: ONNX-traceable subgraph (fixed tensor I/O, no Python list batching).
+- ``export_artifacts() -> dict`` (Arch only): e.g. ``MIL`` / ``HierarchicalMIL`` return
+  ``patch_encoder`` + ``slide_encoder`` for dual ONNX export.
+"""
 
 
 class BaseArch(object):
@@ -248,8 +257,10 @@ class BaseArch(object):
   
   @abstractmethod
   def export_model(self) -> torch.nn.Module:
-    # Export model for inference and export to onnx
     raise NotImplementedError("`export_model` is not implemented and is necessary for `predict`")
+
+  def export_artifacts(self, *, cache_dir=None, cfg=None) -> Dict[str, Any]:
+    raise NotImplementedError(f"`export_artifacts` is not implemented for {self.__class__.__name__}")
 
   @torch.inference_mode()
   def postprocess(self, *args, **kwargs):

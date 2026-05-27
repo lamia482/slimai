@@ -55,6 +55,19 @@ class LoRALinear(nn.Module):
       merged.bias.data = merged_bias
     return merged
 
+  def export_model(self) -> nn.Module:
+    return _LoRALinearExport(self).eval()
+
+
+class _LoRALinearExport(nn.Module):
+  def __init__(self, source: LoRALinear):
+    super().__init__()
+    self.lora = source
+    return
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return self.lora(x)
+
 
 def apply_lora_to_vit(
   model: nn.Module,
@@ -80,4 +93,3 @@ def apply_lora_to_vit(
     parent = model if parent_name == "" else named_module_dict[parent_name]
     setattr(parent, child_name, LoRALinear(module, r=r, alpha=alpha, dropout=dropout))
   return model
-

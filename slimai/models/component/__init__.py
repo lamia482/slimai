@@ -3,6 +3,7 @@ from .vit import ViT
 from .mlp import MLP
 from .plugin import Plugin
 from .abmil import ABMIL
+from slimai.helper.features.builder import PatchEncoderBackbone
 from .kmil import KMIL, WMIL, SortWMIL, THCAHeadC3, THCAHeadC3BRAF
 
 
@@ -12,6 +13,7 @@ __all__ = [
   "MLP",
   "Plugin",
   "ABMIL",
+  "PatchEncoderBackbone",
   "KMIL",
   "WMIL", 
   "SortWMIL", 

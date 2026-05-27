@@ -9,9 +9,31 @@ from slimai.helper import DataSample
 from .cls_arch import ClassificationArch
 
 
+SLIDE_ENCODER_INPUT_NAME = "embedding_arr"
+SLIDE_ENCODER_OUTPUT_NAMES_MIL = [
+  "bag_embedding",
+  "attention_weights",
+  "logits",
+  "softmax",
+]
+SLIDE_ENCODER_OUTPUT_NAMES_HIERARCHICAL = [
+  "bag_embedding",
+  "attention_weights",
+  "primary_logits",
+  "primary_softmax",
+  "secondary_logits_flat",
+  "secondary_softmax_flat",
+  "secondary_marginal_softmax",
+  "secondary_marginal_label",
+  "secondary_conditional_label",
+]
+
 __all__ = [
   "MIL",
   "HierarchicalMIL",
+  "SLIDE_ENCODER_INPUT_NAME",
+  "SLIDE_ENCODER_OUTPUT_NAMES_MIL",
+  "SLIDE_ENCODER_OUTPUT_NAMES_HIERARCHICAL",
 ]
 
 @MODELS.register_module()
@@ -87,48 +109,7 @@ class MIL(ClassificationArch):
       If return_flow is True, returns a dictionary with outputs from backbone, neck, and head.
       Otherwise, returns only the head output (classification logits).
     """
-    def forward_backbone(images, group_size=self.embedding_group_size):
-      """Process instances through backbone in groups to manage memory.
-      
-      Args:
-        images: Tensor of instances from a single bag.
-        group_size: Number of instances to process together.
-        
-      Returns:
-        Tensor of instance embeddings.
-      """
-      if group_size <= 0:
-        group_size = len(images)
-      output = []
-      if self.freeze_backbone:
-        for i in range(0, len(images), group_size):
-            with torch.inference_mode():
-              embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
-            output.append(embedding)
-      else:
-        for i in range(0, len(images), group_size):
-          embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
-          output.append(embedding)
-      return torch.cat(output, dim=0)
-
-    meta = getattr(self, "meta")
-
-    embedding_list = []
-    for vis_image, use_cache, embedding, embedding_key, visual_key in zip(
-      batch_data, meta["use_cache"], 
-      meta.pop("embedding"), # pop embedding from meta to avoid swanlab error
-      meta["embedding_key"], meta["visual_key"]
-    ):
-      if (not use_cache) or (embedding is None):
-        embedding = forward_backbone(vis_image)
-      embedding_list.append(embedding)
-      if not use_cache:
-        continue
-      if not self.cacher.has(embedding_key):
-        self.cacher.put(embedding_key, embedding)
-      if not self.cacher.has(visual_key):
-        self.cacher.put(visual_key, vis_image)
-
+    embedding_list = self._collect_embedding_list(batch_data)
     backbone = embedding_list
     neck, atten_weights = self.model.neck(backbone) # type: ignore # (B, D)
     head = self.model.head(neck) # type: ignore # (B, C)
@@ -226,6 +207,170 @@ class MIL(ClassificationArch):
 
     return batch_info
 
+  def _forward_backbone_grouped(self, images: torch.Tensor) -> torch.Tensor:
+    group_size = self.embedding_group_size
+    if group_size <= 0:
+      group_size = len(images)
+    output = []
+    if self.freeze_backbone:
+      for start in range(0, len(images), group_size):
+        with torch.inference_mode():
+          embedding = self.model.backbone(images[start:start + group_size]) # type: ignore
+        output.append(embedding)
+    else:
+      for start in range(0, len(images), group_size):
+        embedding = self.model.backbone(images[start:start + group_size]) # type: ignore
+        output.append(embedding)
+    return torch.cat(output, dim=0)
+
+  def _as_embedding_tensor(self, embedding: Any) -> torch.Tensor:
+    if torch.is_tensor(embedding):
+      return embedding
+    return torch.as_tensor(embedding, dtype=torch.float32)
+
+  def _collect_embedding_list(self, batch_data) -> List[torch.Tensor]:
+    meta = getattr(self, "meta")
+    embedding_list = []
+    for vis_image, use_cache, embedding, embedding_key, visual_key in zip(
+      batch_data,
+      meta["use_cache"],
+      meta.pop("embedding"),
+      meta["embedding_key"],
+      meta["visual_key"],
+    ):
+      if (not use_cache) or (embedding is None):
+        embedding = self._forward_backbone_grouped(vis_image)
+      else:
+        embedding = self._as_embedding_tensor(embedding)
+      embedding_list.append(embedding)
+      if not use_cache:
+        continue
+      if not self.cacher.has(embedding_key):
+        self.cacher.put(embedding_key, embedding)
+      if not self.cacher.has(visual_key):
+        self.cacher.put(visual_key, vis_image)
+    return embedding_list
+
+  @torch.inference_mode()
+  def predict(self, batch_data, batch_info):
+    """Use batched training forward for infer; export graph is single-bag only."""
+    output = self._forward_tensor(batch_data, return_flow=False)
+    return self.postprocess(output, batch_info)
+
+  def _check_backbone_exportable(self) -> None:
+    backbone = self.model.backbone # type: ignore
+    if isinstance(backbone, torch.nn.Identity):
+      raise ValueError(
+        "MODEL.backbone is Identity; configure PatchEncoderBackbone before export."
+      )
+    if not hasattr(backbone, "export_model"):
+      raise ValueError(
+        f"Backbone {type(backbone).__name__} does not implement export_model()."
+      )
+    return
+
+  def _check_neck_exportable(self) -> None:
+    neck = self.model.neck # type: ignore
+    if not hasattr(neck, "export_model"):
+      raise ValueError(
+        f"Neck {type(neck).__name__} does not support export; use ABMIL."
+      )
+    return
+
+  def _build_slide_export_module(self) -> torch.nn.Module:
+    return _MilExport(self).eval()
+
+  def export_artifacts(self, *, cache_dir=None, cfg=None) -> Dict[str, Any]:
+    del cache_dir, cfg
+    self._check_backbone_exportable()
+    self._check_neck_exportable()
+    backbone = self.model.backbone # type: ignore
+    preprocess = {}
+    if hasattr(backbone, "export_preprocess"):
+      preprocess = backbone.export_preprocess()
+    return dict(
+      patch_encoder=backbone.export_model(),
+      slide_encoder=self._build_slide_export_module(),
+      preprocess=preprocess,
+    )
+
+  def export_model(self) -> torch.nn.Module:
+    return self.export_artifacts()["slide_encoder"]
+
+
+class _MilExport(torch.nn.Module):
+  """Slide-level export for single-head MIL: ``embedding_arr [N,K]`` -> logits."""
+
+  def __init__(self, arch: "MIL"):
+    super().__init__()
+    self.neck = arch.model.neck.export_model() # type: ignore
+    self.head = arch.model.head.export_model() # type: ignore
+    return
+
+  def forward(self, embedding_arr: torch.Tensor):
+    bag_embedding, attention_weights = self.neck(embedding_arr)
+    logits = self.head(bag_embedding.unsqueeze(0)).squeeze(0)
+    softmax = torch.softmax(logits, dim=0)
+    return bag_embedding, attention_weights, logits, softmax
+
+
+class _HierarchicalMilExport(torch.nn.Module):
+  """Slide-level export graph: ``embedding_arr [N,K]`` -> multi-head outputs."""
+
+  def __init__(self, arch: "HierarchicalMIL"):
+    super().__init__()
+    self.neck = arch.model.neck.export_model() # type: ignore
+    self.primary_head = arch.model.primary_head.export_model() # type: ignore
+    self.secondary_heads = torch.nn.ModuleDict(
+      {name: head.export_model() for name, head in arch.model.secondary_heads.items()} # type: ignore
+    )
+    self.primary_head_keys = list(arch.primary_head_keys)
+    self.secondary_global_parent_idx = list(arch.secondary_global_parent_idx)
+    self.secondary_global_local_idx = list(arch.secondary_global_local_idx)
+    self.global_secondary_num_classes = int(arch.global_secondary_num_classes)
+    self._global_index_lookup = dict(arch._global_index_lookup)
+    return
+
+  def forward(self, embedding_arr: torch.Tensor):
+    bag_embedding, attention_weights = self.neck(embedding_arr)
+    neck_batch = bag_embedding.unsqueeze(0)
+    primary_logits = self.primary_head(neck_batch).squeeze(0)
+    secondary_logits_parts = []
+    secondary_logits_map = {}
+    for head_name in self.primary_head_keys:
+      head_logits = self.secondary_heads[head_name](neck_batch).squeeze(0)
+      secondary_logits_map[head_name] = head_logits.unsqueeze(0)
+      secondary_logits_parts.append(head_logits)
+    secondary_logits_flat = torch.cat(secondary_logits_parts, dim=-1)
+
+    primary_softmax = torch.softmax(primary_logits.unsqueeze(0), dim=1).squeeze(0)
+    secondary_softmax_parts = [
+      torch.softmax(secondary_logits_map[head_name], dim=1).squeeze(0)
+      for head_name in self.primary_head_keys
+    ]
+    secondary_softmax_flat = torch.cat(secondary_softmax_parts, dim=-1)
+
+    secondary_output = HierarchicalMIL._compute_secondary_outputs_static(
+      primary_logits=primary_logits.unsqueeze(0),
+      secondary_logits={name: logits for name, logits in secondary_logits_map.items()},
+      primary_head_keys=self.primary_head_keys,
+      secondary_global_parent_idx=self.secondary_global_parent_idx,
+      secondary_global_local_idx=self.secondary_global_local_idx,
+      global_secondary_num_classes=self.global_secondary_num_classes,
+      global_index_lookup=self._global_index_lookup,
+    )
+    return (
+      bag_embedding,
+      attention_weights,
+      primary_logits,
+      primary_softmax,
+      secondary_logits_flat,
+      secondary_softmax_flat,
+      secondary_output["softmax"].squeeze(0),
+      secondary_output["labels"].squeeze(0).to(torch.int64),
+      secondary_output["conditional_labels"].squeeze(0).to(torch.int64),
+    )
+
 
 @MODELS.register_module()
 class HierarchicalMIL(MIL):
@@ -296,39 +441,7 @@ class HierarchicalMIL(MIL):
     batch_data: Union[torch.Tensor, Dict[str, torch.Tensor]],
     return_flow: bool = False
   ) -> Union[Tuple[Any, ...], Dict[str, Any]]:
-    def forward_backbone(images, group_size=self.embedding_group_size):
-      if group_size <= 0:
-        group_size = len(images)
-      output = []
-      if self.freeze_backbone:
-        for i in range(0, len(images), group_size):
-          with torch.inference_mode():
-            embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
-          output.append(embedding)
-      else:
-        for i in range(0, len(images), group_size):
-          embedding = self.model.backbone(images[i:i+group_size]) # type: ignore
-          output.append(embedding)
-      return torch.cat(output, dim=0)
-
-    meta = getattr(self, "meta")
-    embedding_list = []
-    for vis_image, use_cache, embedding, embedding_key, visual_key in zip(
-      batch_data, meta["use_cache"],
-      meta.pop("embedding"),
-      meta["embedding_key"], meta["visual_key"]
-    ):
-      if (not use_cache) or (embedding is None):
-        embedding = forward_backbone(vis_image)
-      embedding_list.append(embedding)
-      if not use_cache:
-        continue
-      if not self.cacher.has(embedding_key):
-        self.cacher.put(embedding_key, embedding)
-      if not self.cacher.has(visual_key):
-        self.cacher.put(visual_key, vis_image)
-
-    backbone = embedding_list
+    backbone = self._collect_embedding_list(batch_data)
     neck, atten_weights = self.model.neck(backbone) # type: ignore
     primary_logits = self.model.primary_head(neck) # type: ignore
     secondary_logits = {
@@ -346,10 +459,23 @@ class HierarchicalMIL(MIL):
       )
     return atten_weights, primary_logits, secondary_logits
 
-  def _compute_secondary_outputs(self, *, primary_logits, secondary_logits):
+  def _build_slide_export_module(self) -> torch.nn.Module:
+    return _HierarchicalMilExport(self).eval()
+
+  @staticmethod
+  def _compute_secondary_outputs_static(
+    *,
+    primary_logits,
+    secondary_logits,
+    primary_head_keys,
+    secondary_global_parent_idx,
+    secondary_global_local_idx,
+    global_secondary_num_classes,
+    global_index_lookup,
+  ):
     primary_probs = torch.softmax(primary_logits, dim=1)
     batch_size = int(primary_probs.shape[0])
-    if self.global_secondary_num_classes <= 0:
+    if global_secondary_num_classes <= 0:
       zeros = torch.zeros((batch_size,), dtype=torch.int64, device=primary_probs.device)
       return dict(
         softmax=torch.zeros((batch_size, 0), dtype=primary_probs.dtype, device=primary_probs.device),
@@ -363,14 +489,14 @@ class HierarchicalMIL(MIL):
       for name, logits in secondary_logits.items()
     }
     marginal = torch.zeros(
-      (batch_size, self.global_secondary_num_classes),
+      (batch_size, global_secondary_num_classes),
       dtype=primary_probs.dtype,
       device=primary_probs.device,
     )
     for global_idx, (parent_idx, local_idx) in enumerate(
-      zip(self.secondary_global_parent_idx, self.secondary_global_local_idx)
+      zip(secondary_global_parent_idx, secondary_global_local_idx)
     ):
-      parent_key = self.primary_head_keys[int(parent_idx)]
+      parent_key = primary_head_keys[int(parent_idx)]
       parent_prob = primary_probs[:, int(parent_idx)]
       local_prob = secondary_probs[parent_key][:, int(local_idx)]
       marginal[:, global_idx] = parent_prob * local_prob
@@ -381,16 +507,27 @@ class HierarchicalMIL(MIL):
     conditional_labels = torch.zeros_like(primary_labels)
     for sample_idx in range(batch_size):
       parent_idx = int(primary_labels[sample_idx].item())
-      parent_key = self.primary_head_keys[parent_idx]
+      parent_key = primary_head_keys[parent_idx]
       local_idx = int(secondary_probs[parent_key][sample_idx].argmax().item())
       conditional_labels[sample_idx] = int(
-        self._global_index_lookup.get((parent_idx, local_idx), -1)
+        global_index_lookup.get((parent_idx, local_idx), -1)
       )
     return dict(
       softmax=marginal,
       scores=marginal_scores,
       labels=marginal_labels,
       conditional_labels=conditional_labels,
+    )
+
+  def _compute_secondary_outputs(self, *, primary_logits, secondary_logits):
+    return self._compute_secondary_outputs_static(
+      primary_logits=primary_logits,
+      secondary_logits=secondary_logits,
+      primary_head_keys=self.primary_head_keys,
+      secondary_global_parent_idx=self.secondary_global_parent_idx,
+      secondary_global_local_idx=self.secondary_global_local_idx,
+      global_secondary_num_classes=self.global_secondary_num_classes,
+      global_index_lookup=self._global_index_lookup,
     )
 
   def _forward_loss(self, embedding_dict: Dict[str, Any], batch_info: DataSample) -> Dict[str, torch.Tensor]:

@@ -53,3 +53,8 @@ class DetectionArch(BaseArch):
       bboxes=pred_bboxes, # [B, ~Q, 4], where 4 indicates [xmin, ymin, xmax, ymax]
     )
     return batch_info
+
+  def export_model(self) -> torch.nn.Module:
+    raise NotImplementedError(
+      "DetectionArch ONNX export is not implemented; use a dedicated detection exporter."
+    )

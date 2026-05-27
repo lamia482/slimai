@@ -81,3 +81,21 @@ class Plugin(torch.nn.Module):
     output = torch.cat(output, dim=0)
 
     return output
+
+  def export_model(self) -> torch.nn.Module:
+    inner = self.layer
+    if hasattr(inner, "export_model"):
+      return inner.export_model()
+    if isinstance(inner, torch.nn.Module):
+      return _PluginExport(self).eval()
+    raise NotImplementedError(f"Plugin layer {type(inner).__name__} cannot be exported to ONNX.")
+
+
+class _PluginExport(torch.nn.Module):
+  def __init__(self, source: Plugin):
+    super().__init__()
+    self.layer = source.layer
+    return
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return self.layer(x)
