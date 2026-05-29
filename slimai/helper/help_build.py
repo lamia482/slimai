@@ -4,10 +4,12 @@ Build components from configuration.
 This function prioritizes customized components, followed by torch components,
 and finally mmengine components.
 """
+import hashlib
+import json
 import torch
 from PIL import Image
 from pathlib import Path
-from typing import Callable, List, Any
+from typing import Callable, List, Any, Dict
 from torch.utils.data.distributed import DistributedSampler
 from mmengine.dataset import Compose as ComposeTransform
 from mmengine.registry import Registry, TRANSFORMS, DATASETS, MODELS, OPTIMIZERS
@@ -17,6 +19,8 @@ SOURCES = Registry("sources")
 VISUALIZERS = Registry("visualizers")
 from slimai.helper.help_utils import print_log, get_dist_env
 from slimai.helper.common import TORCH_HUB_DIR
+
+_SOURCE_RESULT_CACHE: Dict[str, Any] = {}
 
 
 def load_from_torch_hub(repo: str, model: str, **kwargs) -> Callable:
@@ -105,9 +109,23 @@ def build_loader(cfg) -> Callable:
   cfg = cfg.copy()
   return compose_components(cfg, source=LOADERS)
 
+def _source_cache_key(cfg) -> str:
+  payload = json.dumps(cfg, sort_keys=True, default=str)
+  return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
 def build_source(cfg) -> Callable:
   """Build source from configuration."""
-  return compose_components(cfg, source=SOURCES)
+  source_obj = compose_components(cfg, source=SOURCES)
+  cache_key = _source_cache_key(cfg)
+
+  def wrapped():
+    if cache_key in _SOURCE_RESULT_CACHE:
+      return _SOURCE_RESULT_CACHE[cache_key]
+    result = source_obj()
+    _SOURCE_RESULT_CACHE[cache_key] = result
+    return result
+
+  return wrapped
 
 def build_transform(cfg) -> Callable:
   """Build transform from configuration."""
@@ -142,7 +160,7 @@ def build_dataloader(cfg) -> torch.utils.data.DataLoader:
     
   if cfg.get("pin_memory", True):
     cfg["pin_memory"] = True
-    cfg["pin_memory_device"] = f"cuda:{dist_env.local_rank}"
+    cfg["pin_memory_device"] = f"{dist_env.accelerator}:{dist_env.local_rank}"
 
   if collate_fn := cfg.pop("collate_fn", None):
     cfg["collate_fn"] = build_loader(collate_fn)

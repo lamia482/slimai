@@ -1,12 +1,42 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from slimai.helper.help_build import SOURCES
 from slimai.helper.help_utils import print_log
+from slimai.helper.utils import get_dist_env
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+  tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+  tmp_path.write_text(text, encoding="utf-8")
+  os.replace(tmp_path, path)
+  return
+
+
+def _atomic_write_excel(path: Path, df: pd.DataFrame, *, sheet_name: str) -> None:
+  tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+  df.to_excel(tmp_path, sheet_name=sheet_name, index=False)
+  os.replace(tmp_path, path)
+  return
+
+
+def _ddp_safe_source_build(build_fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+  dist_env = get_dist_env()
+  if not dist_env.is_dist_initialized():
+    return build_fn()
+
+  dist_env.sync()
+  if dist_env.is_main_process(local=False):
+    result = build_fn()
+  else:
+    result = None
+  result = dist_env.broadcast(result, from_rank=0)
+  dist_env.sync()
+  return result
 
 
 @SOURCES.register_module()
@@ -390,13 +420,18 @@ class StratifiedSheetSource(object):
     if self.output_split_file is None:
       return None
     output_path = Path(self.output_split_file)
+    if (
+      get_dist_env().is_dist_initialized()
+      and not get_dist_env().is_main_process(local=False)
+    ):
+      return output_path.as_posix()
     os.makedirs(output_path.parent, exist_ok=True)
     output_sheet_name = (
       f"{self.sheet_name}_split"
       if isinstance(self.sheet_name, str)
       else "split"
     )
-    df.to_excel(output_path, sheet_name=output_sheet_name, index=False)
+    _atomic_write_excel(output_path, df, sheet_name=output_sheet_name)
     return output_path.as_posix()
 
   def _to_records(self, df: pd.DataFrame):
@@ -503,8 +538,16 @@ class StratifiedSheetSource(object):
     if self.diag_output_file is None:
       return None
     output_path = Path(self.diag_output_file)
+    if (
+      get_dist_env().is_dist_initialized()
+      and not get_dist_env().is_main_process(local=False)
+    ):
+      return output_path.as_posix()
     os.makedirs(output_path.parent, exist_ok=True)
-    output_path.write_text(json.dumps(diag, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_text(
+      output_path,
+      json.dumps(diag, ensure_ascii=False, indent=2),
+    )
     return output_path.as_posix()
 
   def _build_split_stat(self, df: pd.DataFrame, usable_df: pd.DataFrame, **split_counts):
@@ -517,7 +560,7 @@ class StratifiedSheetSource(object):
       stat[split_name] = int(split_count)
     return stat
 
-  def __call__(self):
+  def _build_impl(self):
     df, usable_df, _ = self._prepare_dataframe()
     if self.split_mode == "predefined":
       train_df, valid_df, test_df = self._split_by_predefined(df, usable_df)
@@ -561,6 +604,9 @@ class StratifiedSheetSource(object):
       ),
     )
 
+  def __call__(self):
+    return _ddp_safe_source_build(self._build_impl)
+
 
 @SOURCES.register_module()
 class ExternalSheetSource(StratifiedSheetSource):
@@ -583,7 +629,7 @@ class ExternalSheetSource(StratifiedSheetSource):
       return items
     return [(self.center_name, self.sheet_file)]
 
-  def __call__(self):
+  def _build_impl(self):
     center_inputs = self._normalize_external_inputs()
 
     center_frames: List[pd.DataFrame] = []
@@ -635,3 +681,6 @@ class ExternalSheetSource(StratifiedSheetSource):
       split_stat=self._build_split_stat(full_df, usable_df, test=len(usable_df)),
       split_stat_by_center=split_stat_by_center,
     )
+
+  def __call__(self):
+    return _ddp_safe_source_build(self._build_impl)

@@ -47,6 +47,14 @@ class MILLoss(torch.nn.Module):
     return loss
 
 
+def _loss_cfg_with_num_classes(loss_cfg: dict, num_classes: int) -> dict:
+  cfg = loss_cfg.copy()
+  loss_type = str(cfg.get("type", ""))
+  if loss_type in ("SoftmaxFocalLoss", "FocalLoss"):
+    cfg["num_classes"] = int(num_classes)
+  return cfg
+
+
 @MODELS.register_module()
 class HierarchicalMILLoss(torch.nn.Module):
   def __init__(
@@ -54,6 +62,7 @@ class HierarchicalMILLoss(torch.nn.Module):
     *,
     primary_loss: Optional[dict] = None,
     secondary_loss: Optional[dict] = None,
+    secondary_num_classes: Optional[Dict[str, int]] = None,
     consistency_loss_weight: float = 0.0,
     loss_weighting: str = "kendall",
     log_var_min: float = -5.0,
@@ -65,7 +74,16 @@ class HierarchicalMILLoss(torch.nn.Module):
     if secondary_loss is None:
       secondary_loss = dict(type="torch.nn.CrossEntropyLoss", label_smoothing=0.0)
     self.primary_loss = build_loss(primary_loss)
-    self.secondary_loss = build_loss(secondary_loss)
+    secondary_loss_template = secondary_loss.copy()
+    if isinstance(secondary_num_classes, dict) and len(secondary_num_classes) > 0:
+      self.secondary_losses = torch.nn.ModuleDict({
+        name: build_loss(_loss_cfg_with_num_classes(secondary_loss_template, num_classes))
+        for name, num_classes in secondary_num_classes.items()
+      })
+      self.secondary_loss = None
+    else:
+      self.secondary_losses = None
+      self.secondary_loss = build_loss(secondary_loss_template)
     self.consistency_loss_weight = float(consistency_loss_weight)
     self.loss_weighting = loss_weighting
     self.log_var_min = float(log_var_min)
@@ -75,6 +93,15 @@ class HierarchicalMILLoss(torch.nn.Module):
     self.log_var_primary = torch.nn.Parameter(torch.zeros(()))
     self.log_var_secondary = torch.nn.Parameter(torch.zeros(()))
     return
+
+  def resolve_secondary_loss(self, parent_key: str) -> torch.nn.Module:
+    if self.secondary_losses is not None:
+      if parent_key not in self.secondary_losses:
+        raise KeyError(f"secondary loss for parent_key={parent_key!r} is not registered")
+      return self.secondary_losses[parent_key]
+    if self.secondary_loss is None:
+      raise ValueError("secondary loss is not configured")
+    return self.secondary_loss
 
   def clamp_log_vars(self):
     with torch.no_grad():

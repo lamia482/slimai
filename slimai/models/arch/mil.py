@@ -3,7 +3,7 @@ import mmengine
 import torch.nn.functional as F
 from typing import Any, Dict, List, Optional, Tuple, Union
 from slimai.helper.help_utils import print_log
-from slimai.helper.help_build import MODELS, build_model
+from slimai.helper.help_build import MODELS, build_model, build_loss
 from slimai.helper.utils import PytorchNetworkUtils, get_cacher
 from slimai.helper import DataSample
 from .cls_arch import ClassificationArch
@@ -416,6 +416,18 @@ class HierarchicalMIL(MIL):
     }
     return
 
+  def init_loss(self, loss) -> torch.nn.Module:
+    if loss is None:
+      loss = dict(type="HierarchicalMILLoss")
+    else:
+      loss = loss.copy()
+    secondary_num_classes = {
+      name: int(cfg["output_dim"])
+      for name, cfg in self.secondary_heads_cfg.items()
+    }
+    loss["secondary_num_classes"] = secondary_num_classes
+    return build_loss(loss)
+
   def init_layers(self, backbone, neck, head) -> torch.nn.Module:
     if head is None:
       raise ValueError("`primary_head` (or `head`) must be provided for HierarchicalMIL.")
@@ -531,8 +543,10 @@ class HierarchicalMIL(MIL):
     )
 
   def _forward_loss(self, embedding_dict: Dict[str, Any], batch_info: DataSample) -> Dict[str, torch.Tensor]:
-    if not hasattr(self.loss, "primary_loss") or not hasattr(self.loss, "secondary_loss"):
+    if not hasattr(self.loss, "primary_loss"):
       raise ValueError("HierarchicalMIL requires HierarchicalMILLoss.")
+    if not hasattr(self.loss, "resolve_secondary_loss"):
+      raise ValueError("HierarchicalMIL requires HierarchicalMILLoss with per-head secondary losses.")
 
     primary_logits = embedding_dict["primary_logits"]
     secondary_logits = embedding_dict["secondary_logits"]
@@ -559,7 +573,7 @@ class HierarchicalMIL(MIL):
         continue
       group_logits = logits[valid_mask]
       group_targets = local_targets[valid_mask]
-      group_loss = self.loss.secondary_loss(group_logits, group_targets) # type: ignore
+      group_loss = self.loss.resolve_secondary_loss(parent_key)(group_logits, group_targets) # type: ignore
       group_num = torch.tensor(float(group_targets.shape[0]), dtype=primary_logits.dtype, device=primary_logits.device)
       secondary_loss_sum += group_loss * group_num
       secondary_valid_num += group_num

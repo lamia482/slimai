@@ -149,15 +149,6 @@ class Runner(object):
 
     metric = help_build.build_metric(cfg.get("METRIC", dict()))
 
-    help_utils.print_log(
-      f"[ddp-diagnostics] before build_components barrier: {self.dist.env.desc}",
-      main_process_only=False,
-    )
-    self.dist.env.sync()
-    help_utils.print_log(
-      f"[ddp-diagnostics] after build_components barrier: {self.dist.env.desc}",
-      main_process_only=False,
-    )
     help_utils.print_log("Created runner, desc: {}, {}".format(
       self.dist, self.dist.env.desc), main_process_only=False)
       
@@ -729,61 +720,67 @@ class Runner(object):
   def archive_env_for_reproducibility(self):
     """Archive config and source code under work dir for reproducibility."""
 
+    is_global_main = self.dist.env.is_main_process(local=False)
+
     # dump config
-    try:
-      dst_config_file = self.work_dir / "config.py"
-      mmengine.Config.dump(self.cfg, dst_config_file)
-    except Exception as e:
-      help_utils.print_log(f"Error dumping config: {e}", level="ERROR")
-      help_utils.print_log(f"Please check the config file", level="ERROR")
-      exit(2)
+    if is_global_main:
+      try:
+        dst_config_file = self.work_dir / "config.py"
+        mmengine.Config.dump(self.cfg, dst_config_file)
+      except Exception as e:
+        help_utils.print_log(f"Error dumping config: {e}", level="ERROR")
+        help_utils.print_log(f"Please check the config file", level="ERROR")
+        exit(2)
 
-    help_utils.print_log(f"Parsed Config: \n{self.cfg.dump()}")
-    help_utils.print_log(f"Dumped config to: {dst_config_file}")
+      help_utils.print_log(f"Parsed Config: \n{self.cfg.dump()}")
+      help_utils.print_log(f"Dumped config to: {dst_config_file}")
 
-    # snapshot dataset files at the beginning of training
-    try:
-      self.snapshot_dataset_files()
-    except Exception as e:
-      help_utils.print_log(f"Failed to snapshot dataset files: {e}", level="WARNING")
+      # snapshot dataset files at the beginning of training
+      try:
+        self.snapshot_dataset_files()
+      except Exception as e:
+        help_utils.print_log(f"Failed to snapshot dataset files: {e}", level="WARNING")
 
-    # dump taxonomy metadata
-    try:
-      taxonomy_file = self.work_dir / "label_taxonomy.json"
-      taxonomy_payload = {}
-      for key in [
-        "LABEL_TAXONOMY",
-        "PRIMARY_LABEL_MAPPING",
-        "SECONDARY_LABEL_MAPPING",
-        "SECONDARY_TO_PRIMARY",
-        "SECONDARY_LOCAL_MAPPING",
-        "LABEL_LEVELS",
-        "TAXONOMY_VERSION",
-        "TAXONOMY_HASH",
-      ]:
-        value = self.cfg.get(key, None)
-        if value is not None:
-          taxonomy_payload[key] = value
-      taxonomy_file.write_text(json.dumps(taxonomy_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-      help_utils.print_log(f"Dumped taxonomy metadata to: {taxonomy_file}")
-    except Exception as e:
-      help_utils.print_log(f"Failed to dump taxonomy metadata: {e}", level="WARNING")
+      # dump taxonomy metadata
+      try:
+        taxonomy_file = self.work_dir / "label_taxonomy.json"
+        taxonomy_payload = {}
+        for key in [
+          "LABEL_TAXONOMY",
+          "PRIMARY_LABEL_MAPPING",
+          "SECONDARY_LABEL_MAPPING",
+          "SECONDARY_TO_PRIMARY",
+          "SECONDARY_LOCAL_MAPPING",
+          "LABEL_LEVELS",
+          "TAXONOMY_VERSION",
+          "TAXONOMY_HASH",
+        ]:
+          value = self.cfg.get(key, None)
+          if value is not None:
+            taxonomy_payload[key] = value
+        taxonomy_file.write_text(json.dumps(taxonomy_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        help_utils.print_log(f"Dumped taxonomy metadata to: {taxonomy_file}")
+      except Exception as e:
+        help_utils.print_log(f"Failed to dump taxonomy metadata: {e}", level="WARNING")
 
-    # archive source code (exclude experiments so we do not copy work_dir into itself)
-    try:
-      source_code_dir = slimai.get_package_path()
-      dst_source_code_dir = self.work_dir / "code"
-      shutil.copytree(source_code_dir, dst_source_code_dir,
-                      dirs_exist_ok=True,
-                      ignore=shutil.ignore_patterns(
-                        "*.pyc", ".git*", "._*", "_debug_", "experiments", "swanlog"
-                      ))
-    except Exception as e:
-      help_utils.print_log(f"Error archiving source code: {e}", level="ERROR")
-      exit(3)
-      
-    help_utils.print_log(f"Archived source code to: {dst_source_code_dir}")
-    help_utils.print_log(f"Last git commit id: {slimai.get_last_commit_id()}")
+      # archive source code (exclude experiments so we do not copy work_dir into itself)
+      try:
+        source_code_dir = slimai.get_package_path()
+        dst_source_code_dir = self.work_dir / "code"
+        shutil.copytree(source_code_dir, dst_source_code_dir,
+                        dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns(
+                          "*.pyc", ".git*", "._*", "_debug_", "experiments", "swanlog"
+                        ))
+      except Exception as e:
+        help_utils.print_log(f"Error archiving source code: {e}", level="ERROR")
+        exit(3)
+
+      help_utils.print_log(f"Archived source code to: {dst_source_code_dir}")
+      help_utils.print_log(f"Last git commit id: {slimai.get_last_commit_id()}")
+
+    if self.dist.env.is_dist_initialized():
+      self.dist.env.sync()
 
     help_utils.print_log(f"Experiment work dir: {self.work_dir}")
     return

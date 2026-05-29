@@ -148,12 +148,15 @@ class DistEnv(object):
       
       cls.set_start_method("fork")
       cls.device_module.set_device(cls.local_rank)
-      dist.init_process_group(
-        backend=backend, 
-        rank=cls.global_rank, 
+      init_kwargs = dict(
+        backend=backend,
+        rank=cls.global_rank,
         world_size=cls.global_world_size,
-        timeout=cls.timeout, 
+        timeout=cls.timeout,
       )
+      if cls.accelerator in ("cuda", "npu"):
+        init_kwargs["device_id"] = torch.device(cls.accelerator, cls.local_rank)
+      dist.init_process_group(**init_kwargs)
     return
 
   @classmethod
