@@ -3,7 +3,7 @@ import os
 import torch
 from pathlib import Path
 import mmengine
-from typing import Optional, Union
+from typing import Optional, Set, Union
 from .help_utils import print_log
 from .distributed import Distributed
 
@@ -84,6 +84,22 @@ class Checkpoint(object):
             f"  save_on_rank_0={self.save_on_rank_0},\n"
             f")")
   __str__ = __repr__
+
+  def _symlink_target(self, link: Path) -> Optional[Path]:
+    if not link.is_symlink():
+      return None
+    target = (link.parent / os.readlink(link)).resolve()
+    if target.is_file():
+      return target
+    return None
+
+  def _protected_ckpt_paths(self) -> Set[Path]:
+    protected = set()
+    for name in ("best_train.pth", "latest.pth", "best_valid.pth"):
+      target = self._symlink_target(self.save_dir / name)
+      if target is not None:
+        protected.add(target)
+    return protected
 
   def _update_symlink(self, link_path: Path, target_path: Path) -> None:
     link_path = Path(link_path)
@@ -184,7 +200,10 @@ class Checkpoint(object):
         and (len(records) > self.keep_max)
       ):
         path = Path(records[-self.keep_max-1]["ckpt"]).resolve()
-        path.unlink(missing_ok=True)
+        if path not in self._protected_ckpt_paths():
+          path.unlink(missing_ok=True)
+        else:
+          print_log(f"Skip pruning protected checkpoint: {path}", level="WARNING")
 
       mmengine.dump(records, self.record_file)
 

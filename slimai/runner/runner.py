@@ -381,6 +381,44 @@ class Runner(object):
       link_path.symlink_to(target_path)
     return
 
+  def _resolve_best_valid_symlink_target(self) -> Optional[Path]:
+    link = self.best_valid_ckpt_path
+    if not link.is_symlink():
+      return None
+    target = (link.parent / os.readlink(link)).resolve()
+    if target.is_file():
+      return target
+    return None
+
+  def _warn_if_best_valid_broken(self) -> None:
+    link = self.best_valid_ckpt_path
+    if link.is_symlink() and not link.is_file():
+      help_utils.print_log(
+        f"best_valid checkpoint symlink is broken: {link}",
+        level="WARNING",
+      )
+    return
+
+  def _remove_superseded_best_valid_ckpt(self, old_target: Path, new_target: Path) -> None:
+    old_target = Path(old_target).resolve()
+    new_target = Path(new_target).resolve()
+    if old_target == new_target or not old_target.is_file():
+      return
+    save_dir = self.checkpoint.save_dir
+    for name in ("best_train.pth", "latest.pth"):
+      other = save_dir / name
+      if other.is_symlink():
+        other_target = (other.parent / os.readlink(other)).resolve()
+        if other_target == old_target:
+          help_utils.print_log(
+            f"Keep superseded best_valid checkpoint (still referenced by {name}): {old_target}",
+            level="WARNING",
+          )
+          return
+    old_target.unlink(missing_ok=True)
+    help_utils.print_log(f"Removed superseded best_valid checkpoint: {old_target}")
+    return
+
   def _resolve_resume_from(self, resume_from: Any) -> Any:
     if resume_from is None:
       return None
@@ -598,10 +636,16 @@ class Runner(object):
         self.best_valid_loss = float(valid_loss)
         self.best_valid_epoch = int(epoch)
         if self.dist.env.is_main_process() and isinstance(ckpt_path, Path) and ckpt_path.exists():
+          old_target = self._resolve_best_valid_symlink_target()
           self._update_symlink(self.best_valid_ckpt_path, ckpt_path)
+          if old_target is not None:
+            self._remove_superseded_best_valid_ckpt(old_target, ckpt_path)
           help_utils.print_log(
             f"Update best valid checkpoint by {best_metric_name}: {self.best_valid_ckpt_path}"
           )
+
+    if self.dist.env.is_main_process():
+      self._warn_if_best_valid_broken()
 
     epoch_record = dict(
       epoch=int(epoch),
