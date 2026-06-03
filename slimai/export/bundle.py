@@ -34,6 +34,42 @@ def check_state_dict_compat(model: torch.nn.Module, state_dict: Dict[str, torch.
   return
 
 
+def build_secondary_head_keys(cfg: Config) -> list[str]:
+  """Return global secondary class names aligned with flat secondary outputs."""
+  if hasattr(cfg, "SECONDARY_HEAD_KEYS"):
+    return list(getattr(cfg, "SECONDARY_HEAD_KEYS"))
+
+  primary_keys = getattr(cfg, "PRIMARY_HEAD_KEYS", None) or []
+  canonical_local = getattr(cfg, "SECONDARY_CANONICAL_LOCAL_MAPPING", None)
+  if primary_keys and isinstance(canonical_local, dict) and len(canonical_local) > 0:
+    names: list[str] = []
+    for primary_name in primary_keys:
+      local_mapping = canonical_local.get(primary_name, {})
+      if not isinstance(local_mapping, dict):
+        continue
+      ordered = sorted(local_mapping.items(), key=lambda item: int(item[1]))
+      names.extend(str(name) for name, _ in ordered)
+    if len(names) > 0:
+      return names
+
+  secondary_mapping = getattr(cfg, "SECONDARY_LABEL_MAPPING", None)
+  if not isinstance(secondary_mapping, dict) or len(secondary_mapping) == 0:
+    return []
+
+  max_index = -1
+  for index in secondary_mapping.values():
+    if isinstance(index, int):
+      max_index = max(max_index, int(index))
+  if max_index < 0:
+    return []
+
+  names = [str(i) for i in range(max_index + 1)]
+  for name, index in secondary_mapping.items():
+    if isinstance(index, int) and 0 <= int(index) < len(names):
+      names[int(index)] = str(name)
+  return names
+
+
 def extract_taxonomy(cfg: Config) -> Dict[str, Any]:
   taxonomy = {}
   for key in (
@@ -47,6 +83,15 @@ def extract_taxonomy(cfg: Config) -> Dict[str, Any]:
   ):
     if hasattr(cfg, key):
       taxonomy[key] = getattr(cfg, key)
+
+  secondary_head_keys = build_secondary_head_keys(cfg)
+  if len(secondary_head_keys) > 0:
+    taxonomy["SECONDARY_HEAD_KEYS"] = secondary_head_keys
+    taxonomy["NUM_SECONDARY_CLASSES"] = len(secondary_head_keys)
+
+  if hasattr(cfg, "SECONDARY_CANONICAL_LOCAL_MAPPING"):
+    taxonomy["SECONDARY_CANONICAL_LOCAL_MAPPING"] = getattr(cfg, "SECONDARY_CANONICAL_LOCAL_MAPPING")
+
   return taxonomy
 
 

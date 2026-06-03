@@ -38,7 +38,7 @@ def write_export_manifest(
   output_dir = Path(output_dir)
   output_dir.mkdir(parents=True, exist_ok=True)
   preprocess_path = output_dir / "preprocess.json"
-  preprocess_path.write_text(json.dumps(preprocess, indent=2), encoding="utf-8")
+  preprocess_path.write_text(json.dumps(preprocess, ensure_ascii=False, indent=2), encoding="utf-8")
   manifest_path = output_dir / "export_manifest.json"
-  manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+  manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
   return manifest_path
