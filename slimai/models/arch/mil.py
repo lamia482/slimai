@@ -516,14 +516,23 @@ class HierarchicalMIL(MIL):
 
     marginal_scores, marginal_labels = marginal.max(dim=1)
     primary_labels = primary_probs.argmax(dim=1)
-    conditional_labels = torch.zeros_like(primary_labels)
-    for sample_idx in range(batch_size):
-      parent_idx = int(primary_labels[sample_idx].item())
+    num_parents = len(primary_head_keys)
+    max_local = max(int(logits.shape[-1]) for logits in secondary_logits.values())
+    parent_local_to_global = torch.full(
+      (num_parents, max_local),
+      -1,
+      dtype=torch.int64,
+      device=primary_probs.device,
+    )
+    for (parent_idx, local_idx), global_idx in global_index_lookup.items():
+      parent_local_to_global[int(parent_idx), int(local_idx)] = int(global_idx)
+
+    conditional_labels = torch.full_like(primary_labels, fill_value=-1)
+    for parent_idx in range(num_parents):
       parent_key = primary_head_keys[parent_idx]
-      local_idx = int(secondary_probs[parent_key][sample_idx].argmax().item())
-      conditional_labels[sample_idx] = int(
-        global_index_lookup.get((parent_idx, local_idx), -1)
-      )
+      local_labels = secondary_probs[parent_key].argmax(dim=1)
+      global_labels = parent_local_to_global[parent_idx][local_labels]
+      conditional_labels = torch.where(primary_labels == parent_idx, global_labels, conditional_labels)
     return dict(
       softmax=marginal,
       scores=marginal_scores,

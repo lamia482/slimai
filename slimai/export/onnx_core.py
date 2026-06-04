@@ -64,3 +64,31 @@ def export_onnx(
   if check:
     onnx.save_model(simplified_model, str(onnx_path))
   return onnx_path
+
+def run_l0_onnx_checks(onnx_path: Path, *, simplify_in_place: bool = True) -> Dict[str, Any]:
+  """Run ONNX checker (+ optional simplify) and return L0 metadata."""
+  onnx_path = Path(onnx_path)
+  model = onnx.load(str(onnx_path))
+  checker_passed = True
+  checker_error = None
+  try:
+    onnx.checker.check_model(model, full_check=True)
+  except Exception as exc:
+    checker_passed = False
+    checker_error = str(exc)
+  simplified_applied = False
+  simplify_check = False
+  if simplify_in_place:
+    simplified_model, simplify_check = simplify(model)
+    if simplify_check:
+      onnx.save_model(simplified_model, str(onnx_path))
+      simplified_applied = True
+  return dict(
+    path=str(onnx_path),
+    checker_passed=checker_passed,
+    checker_error=checker_error,
+    simplify_check=bool(simplify_check),
+    simplify_applied=simplified_applied,
+    passed=checker_passed,
+  )
+
