@@ -220,6 +220,11 @@ class H5Dataset(MILDataset):
       if "label_secondary" in self.annotations
       else None
     )
+    label_secondary_name = (
+      self.annotations["label_secondary_name"][item]
+      if "label_secondary_name" in self.annotations
+      else None
+    )
     label_secondary_local = (
       self.annotations["label_secondary_local"][item]
       if "label_secondary_local" in self.annotations
@@ -276,6 +281,8 @@ class H5Dataset(MILDataset):
     )
     if label_secondary is not None:
       data["label_secondary"] = int(label_secondary)
+    if label_secondary_name is not None and str(label_secondary_name) != "":
+      data["label_secondary_name"] = str(label_secondary_name)
     if label_secondary_local is not None:
       data["label_secondary_local"] = int(label_secondary_local)
     return data
@@ -373,6 +380,10 @@ class TorchEmbeddingDataset(H5Dataset):
       self.ann_keys.extend(["label_secondary", "label_secondary_local"])
       self.annotations["label_secondary"] = [
         self.map_secondary_label(label_secondary)
+        for _, _, label_secondary, _ in normalized_records
+      ]
+      self.annotations["label_secondary_name"] = [
+        "" if label_secondary is None else str(label_secondary)
         for _, _, label_secondary, _ in normalized_records
       ]
       self.annotations["label_secondary_local"] = [

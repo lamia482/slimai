@@ -36,3 +36,16 @@ def test_extract_taxonomy_includes_secondary_names():
   assert taxonomy["SECONDARY_HEAD_KEYS"] == ["普通导管增生", "柱状细胞病变", "纤维腺瘤"]
   assert taxonomy["NUM_SECONDARY_CLASSES"] == 3
   assert taxonomy["SECONDARY_CANONICAL_LOCAL_MAPPING"]["良性病变"]["普通导管增生"] == 0
+
+
+def test_extract_taxonomy_excludes_inline_label_names():
+  cfg = Config(
+    dict(
+      PRIMARY_HEAD_KEYS=["良性病变", "良性肿瘤"],
+      PRIMARY_EN=["Benign Lesion", "Benign Tumor"],
+      SECONDARY_ABBREV=["UDH", "FA"],
+    )
+  )
+  taxonomy = extract_taxonomy(cfg)
+  assert "PRIMARY_EN" not in taxonomy
+  assert "SECONDARY_ABBREV" not in taxonomy

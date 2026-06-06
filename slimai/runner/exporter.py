@@ -7,6 +7,7 @@ import torch
 from mmengine.model.utils import revert_sync_batchnorm
 
 from slimai.export.bundle import extract_taxonomy, load_training_bundle
+from slimai.export.label_catalog import attach_label_catalog_to_taxonomy
 from slimai.export.manifest import write_export_manifest
 from slimai.export.onnx_core import export_onnx
 from slimai.export.validate import run_export_validation
@@ -134,6 +135,11 @@ class Exporter:
         )
 
     taxonomy = extract_taxonomy(self.cfg)
+    taxonomy = attach_label_catalog_to_taxonomy(
+      taxonomy,
+      self.cfg,
+      output_dir=output_path,
+    )
     export_meta = dict(
       opset_version=opset_version,
       device=device,

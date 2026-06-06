@@ -50,6 +50,10 @@ def collect_samples_from_dataset(dataset) -> List[Dict[str, Any]]:
     )
     if "label_secondary" in dataset.annotations:
       sample["label_secondary"] = int(dataset.annotations["label_secondary"][idx])
+    if "label_secondary_name" in dataset.annotations:
+      raw_name = dataset.annotations["label_secondary_name"][idx]
+      if raw_name is not None and str(raw_name).strip() != "":
+        sample["label_secondary_name"] = str(raw_name)
     samples.append(sample)
   return samples
 
@@ -141,6 +145,8 @@ def evaluate_slide_sample(
   )
   if is_hierarchical and "label_secondary" in sample:
     eval_sample["label_secondary"] = int(sample["label_secondary"])
+    if sample.get("label_secondary_name"):
+      eval_sample["label_secondary_name"] = str(sample["label_secondary_name"])
     eval_sample["pred_secondary"] = int(ort_preds["secondary_marginal_pred"])
     eval_sample["prob_secondary"] = np.asarray(ort_preds["secondary_marginal_prob"], dtype=np.float64)
     eval_sample["pt_pred_secondary"] = int(pt_preds["secondary_marginal_pred"])
@@ -169,6 +175,7 @@ def _samples_for_level2_metrics(eval_samples: List[Dict[str, Any]]) -> List[Dict
         conditional_pred=s.get("conditional_pred"),
         conditional_prob=s.get("conditional_prob"),
         h5_path=s.get("h5_path", ""),
+        label_secondary_name=s.get("label_secondary_name"),
       )
     )
   return rows
@@ -296,7 +303,19 @@ def _task_samples_from_eval(
     if pred_key not in sample or prob_key not in sample:
       continue
     rows.append(dict(label=label, pred=sample[pred_key], prob=sample[prob_key], h5_path=sample.get("h5_path", "")))
+    if sample.get("label_secondary_name"):
+      rows[-1]["label_secondary_name"] = str(sample["label_secondary_name"])
   return rows
+
+
+def _task_to_report_task_key(task: str) -> Optional[str]:
+  if task == "primary":
+    return "label"
+  if task == "marginal":
+    return "label_secondary"
+  if task == "conditional":
+    return "label_secondary_conditional"
+  return None
 
 
 def _evaluate_task_block(
@@ -320,6 +339,7 @@ def _evaluate_task_block(
     file_prefix=f"v4_{subset_name}_{task}",
     samples=ort_samples,
     class_names=class_names,
+    task_key=_task_to_report_task_key(task),
   )
   return dict(
     metrics_pt=metrics_pt,

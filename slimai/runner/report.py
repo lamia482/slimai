@@ -53,8 +53,9 @@ class ExperimentReporter(object):
     self.external_dataset_info = self._collect_external_dataset_info(external_test_dataloaders)
     self.class_names = self._resolve_class_names()
     self.display_class_names = self._resolve_display_class_names(self.class_names)
-    self.secondary_class_names = self._resolve_secondary_class_names_from_cfg()
+    self.secondary_class_names = self._resolve_secondary_canonical_class_names_from_cfg()
     self.display_secondary_class_names = self._resolve_display_class_names(self.secondary_class_names)
+    self.secondary_alias_to_canonical = self._resolve_secondary_alias_to_canonical_flat()
     sample_analysis_cfg = self.cfg.get("SAMPLE_ANALYSIS", {}) if isinstance(self.cfg.get("SAMPLE_ANALYSIS", {}), dict) else {}
     cfg_enable = sample_analysis_cfg.get("enable", None)
     env_enable = str(os.getenv("SLIMAI_EXPORT_SAMPLE_ANALYSIS", "1")).strip().lower()
@@ -150,7 +151,38 @@ class ExperimentReporter(object):
       return [inv.get(i, str(i)) for i in range(num_classes)]
     return None
 
-  def _resolve_secondary_class_names_from_cfg(self):
+  def _resolve_secondary_canonical_class_names_from_cfg(self):
+    primary_keys = self.cfg.get("PRIMARY_HEAD_KEYS", None)
+    canonical_local = self.cfg.get("SECONDARY_CANONICAL_LOCAL_MAPPING", None)
+    if isinstance(primary_keys, list) and isinstance(canonical_local, dict) and len(canonical_local) > 0:
+      names = []
+      for primary_name in primary_keys:
+        local_mapping = canonical_local.get(primary_name, {})
+        if not isinstance(local_mapping, dict):
+          continue
+        ordered = sorted(local_mapping.items(), key=lambda item: int(item[1]))
+        names.extend(str(name) for name, _ in ordered)
+      if len(names) > 0:
+        return names
+
+    taxonomy = self.cfg.get("LABEL_TAXONOMY", {})
+    if isinstance(taxonomy, dict):
+      canonical_local = taxonomy.get("secondary_canonical_local", None)
+      primary_mapping = taxonomy.get("primary", None)
+      if isinstance(canonical_local, dict) and isinstance(primary_mapping, dict):
+        primary_keys = [
+          name for name, _ in sorted(primary_mapping.items(), key=lambda kv: kv[1])
+        ]
+        names = []
+        for primary_name in primary_keys:
+          local_mapping = canonical_local.get(primary_name, {})
+          if not isinstance(local_mapping, dict):
+            continue
+          ordered = sorted(local_mapping.items(), key=lambda item: int(item[1]))
+          names.extend(str(name) for name, _ in ordered)
+        if len(names) > 0:
+          return names
+
     loader_keys = ["VALID_LOADER", "VAL_LOADER", "TEST_LOADER", "TRAIN_LOADER"]
     for key in loader_keys:
       loader_cfg = self.cfg.get(key, None)
@@ -170,12 +202,59 @@ class ExperimentReporter(object):
       inv = {}
       for name, index in label_mapping.items():
         if isinstance(index, (int, np.integer)):
-          inv[int(index)] = str(name)
+          inv.setdefault(int(index), str(name))
       if len(inv) == 0:
         continue
       max_index = max(inv.keys())
       return [inv.get(i, str(i)) for i in range(max_index + 1)]
     return []
+
+  def _resolve_secondary_alias_to_canonical_flat(self) -> Dict[str, str]:
+    alias_nested = self.cfg.get("SECONDARY_ALIAS_TO_CANONICAL", None)
+    if not isinstance(alias_nested, dict):
+      taxonomy = self.cfg.get("LABEL_TAXONOMY", {})
+      alias_nested = taxonomy.get("secondary_alias_to_canonical", {}) if isinstance(taxonomy, dict) else {}
+    flat: Dict[str, str] = {}
+    if isinstance(alias_nested, dict):
+      for mapping in alias_nested.values():
+        if not isinstance(mapping, dict):
+          continue
+        for alias_name, canonical_name in mapping.items():
+          flat[str(alias_name)] = str(canonical_name)
+    for canonical_name in self.secondary_class_names:
+      flat.setdefault(str(canonical_name), str(canonical_name))
+    return flat
+
+  def _build_secondary_cm_row_labels(self, canonical_names: List[str]) -> List[str]:
+    rows: List[str] = []
+    alias_map = self.secondary_alias_to_canonical
+    for canonical in canonical_names:
+      rows.append(canonical)
+      aliases = sorted({
+        alias
+        for alias, mapped in alias_map.items()
+        if mapped == canonical and alias != canonical
+      })
+      for alias in aliases:
+        rows.append(f"{canonical}-{alias}")
+    return rows
+
+  def _resolve_secondary_cm_row_key(
+    self,
+    raw_name: Optional[str],
+    canonical_label: int,
+    canonical_names: List[str],
+  ) -> str:
+    if canonical_label < 0 or canonical_label >= len(canonical_names):
+      return str(raw_name or canonical_label)
+    canonical = canonical_names[int(canonical_label)]
+    raw = str(raw_name).strip() if raw_name is not None else canonical
+    if raw == "" or raw == canonical:
+      return canonical
+    return f"{canonical}-{raw}"
+
+  def _resolve_secondary_class_names_from_cfg(self):
+    return self._resolve_secondary_canonical_class_names_from_cfg()
 
   def _is_long_text(self, text: str):
     return (len(text) > 48) or ("/" in text) or ("\\" in text)
@@ -447,8 +526,11 @@ class ExperimentReporter(object):
     samples: List[Dict[str, Any]] = []
     for item in batch_info:
       label = item.get("label", None) if isinstance(item, dict) else getattr(item, "label", None)
+      gt_task_key = task_key
+      if task_key == "label_secondary_conditional":
+        gt_task_key = "label_secondary"
       if isinstance(task_key, str) and task_key != "label":
-        label = item.get(task_key, None) if isinstance(item, dict) else getattr(item, task_key, None)
+        label = item.get(gt_task_key, None) if isinstance(item, dict) else getattr(item, gt_task_key, None)
       output = self._resolve_task_output(item, task_key)
       if output is None:
         continue
@@ -467,6 +549,13 @@ class ExperimentReporter(object):
         prob=softmax,
         h5_path=self._resolve_h5_path_from_item(item),
       )
+      label_secondary_name = (
+        item.get("label_secondary_name", None)
+        if isinstance(item, dict)
+        else getattr(item, "label_secondary_name", None)
+      )
+      if label_secondary_name is not None and str(label_secondary_name).strip() != "":
+        sample["label_secondary_name"] = str(label_secondary_name)
       if include_conditional and isinstance(task_key, str) and task_key == "label_secondary":
         root_output = item.get("output", None) if isinstance(item, dict) else getattr(item, "output", None)
         if isinstance(root_output, dict) and "label_secondary_conditional" in root_output:
@@ -726,6 +815,7 @@ class ExperimentReporter(object):
           samples=center_samples,
           file_prefix=f"{task_name}_test_{center_name}",
           class_names=class_names,
+          task_key=task_key,
         )
         blocks.append(
           self._render_inner_test_group_block(
@@ -883,6 +973,91 @@ class ExperimentReporter(object):
       "</div>"
     )
 
+  def _chart_secondary_alias_confusion_matrix(
+    self,
+    samples: List[Dict[str, Any]],
+    canonical_class_names: List[str],
+  ) -> str:
+    if len(samples) == 0 or len(canonical_class_names) == 0:
+      return "<p>N/A</p>"
+    row_labels = self._build_secondary_cm_row_labels(canonical_class_names)
+    row_index = {name: idx for idx, name in enumerate(row_labels)}
+    n_cols = len(canonical_class_names)
+    col_names = [
+      self._display_class_name(i, name)
+      for i, name in enumerate(canonical_class_names)
+    ]
+
+    def _ensure_row(row_key: str) -> int:
+      if row_key not in row_index:
+        row_index[row_key] = len(row_labels)
+        row_labels.append(row_key)
+      return row_index[row_key]
+
+    counts: Dict[Tuple[int, int], int] = {}
+    for sample in samples:
+      canonical_label = int(sample["label"])
+      pred = int(sample["pred"])
+      if pred < 0 or pred >= n_cols:
+        continue
+      row_key = self._resolve_secondary_cm_row_key(
+        sample.get("label_secondary_name"),
+        canonical_label,
+        canonical_class_names,
+      )
+      row_idx = _ensure_row(row_key)
+      key = (row_idx, pred)
+      counts[key] = counts.get(key, 0) + 1
+
+    n_rows = len(row_labels)
+    cm = np.zeros((n_rows, n_cols), dtype=int)
+    for (row_idx, pred), value in counts.items():
+      cm[row_idx, pred] += int(value)
+    max_value = int(cm.max()) if cm.size > 0 else 1
+    if max_value <= 0:
+      max_value = 1
+
+    rows = []
+    for i in range(n_rows):
+      cells = [f"<th>{html.escape(row_labels[i])}</th>"]
+      for j in range(n_cols):
+        value = int(cm[i, j])
+        alpha = value / max_value
+        bg = f"rgba(37, 99, 235, {0.10 + alpha * 0.82:.4f})"
+        text_color = "#ffffff" if alpha > 0.55 else "#0f172a"
+        cells.append(
+          f"<td style='background:{bg};color:{text_color};'>{value}</td>"
+        )
+      rows.append("<tr>" + "".join(cells) + "</tr>")
+    head_cells = "".join([f"<th>{html.escape(name)}</th>" for name in col_names])
+    return (
+      "<div class='cm-wrap'>"
+      "<div class='cm-title'>Confusion Matrix (GT: alias前 / Pred: canonical)</div>"
+      "<div class='scroll-x'>"
+      "<table class='cm-table'>"
+      f"<tr><th>True \\ Pred</th>{head_cells}</tr>"
+      f"{''.join(rows)}"
+      "</table>"
+      "</div>"
+      "</div>"
+    )
+
+  def _uses_secondary_alias_confusion_matrix(self, task_key: Optional[str]) -> bool:
+    return task_key in ("label_secondary", "label_secondary_conditional")
+
+  def _render_confusion_matrix_figure(
+    self,
+    *,
+    samples: List[Dict[str, Any]],
+    labels: np.ndarray,
+    preds: np.ndarray,
+    class_names: List[str],
+    task_key: Optional[str] = None,
+  ) -> str:
+    if self._uses_secondary_alias_confusion_matrix(task_key):
+      return self._chart_secondary_alias_confusion_matrix(samples, class_names)
+    return self._chart_confusion_matrix(labels, preds, class_names)
+
   def _chart_confusion_matrix(self, labels, preds, class_names):
     if len(labels) == 0:
       return "<p>N/A</p>"
@@ -1017,6 +1192,7 @@ class ExperimentReporter(object):
     samples: List[Dict[str, Any]],
     file_prefix: str,
     class_names: Optional[List[str]] = None,
+    task_key: Optional[str] = None,
   ) -> Dict[str, str]:
     _ = file_prefix
     labels, preds, probs = self._samples_to_arrays(samples)
@@ -1029,7 +1205,13 @@ class ExperimentReporter(object):
       output["roc"] = roc_html
     if pr_html := self._plot_pr_curve(labels, probs, class_names):
       output["pr"] = pr_html
-    output["cm"] = self._chart_confusion_matrix(labels, preds, class_names)
+    output["cm"] = self._render_confusion_matrix_figure(
+      samples=samples,
+      labels=labels,
+      preds=preds,
+      class_names=class_names,
+      task_key=task_key,
+    )
     return output
 
   def build_eval_figures(
@@ -1043,9 +1225,8 @@ class ExperimentReporter(object):
   ):
     _ = file_prefix
     if samples is None:
-      labels, preds, probs = self._extract_eval_arrays(result_file, task_key=task_key)
-    else:
-      labels, preds, probs = self._samples_to_arrays(samples)
+      samples = self._extract_eval_samples(result_file, task_key=task_key)
+    labels, preds, probs = self._samples_to_arrays(samples)
     if labels is None or preds is None or probs is None:
       return {}
     if class_names is None:
@@ -1055,7 +1236,13 @@ class ExperimentReporter(object):
       output["roc"] = roc_html
     if pr_html := self._plot_pr_curve(labels, probs, class_names):
       output["pr"] = pr_html
-    output["cm"] = self._chart_confusion_matrix(labels, preds, class_names)
+    output["cm"] = self._render_confusion_matrix_figure(
+      samples=samples,
+      labels=labels,
+      preds=preds,
+      class_names=class_names,
+      task_key=task_key,
+    )
     return output
 
   def _render_dict_as_table(self, data: Dict[str, Any]):
