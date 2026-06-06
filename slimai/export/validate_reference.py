@@ -129,8 +129,12 @@ def load_experiment_report_baseline(work_dir: Path) -> Dict[str, Any]:
     level2=dict(inner_test={}, external={}),
     warnings=[],
   )
-  level1_path = work_dir / "report_level1.html"
-  level2_path = work_dir / "report_level2.html"
+  level1_path = work_dir / "report_primary.html"
+  level2_path = work_dir / "report_marginal.html"
+  if not level1_path.exists():
+    level1_path = work_dir / "report_level1.html"
+  if not level2_path.exists():
+    level2_path = work_dir / "report_level2.html"
   if level1_path.exists():
     parsed = parse_report_html_metrics(level1_path)
     baseline["level1"]["inner_test"] = parsed.get("inner_test", {})

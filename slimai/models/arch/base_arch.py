@@ -39,7 +39,7 @@ class BaseArch(object):
 
     # Initialize model layers
     model = self.init_layers(backbone, neck, head)
-    self.model = model.apply(PytorchNetworkUtils.init_weights)
+    self.model = self._init_model_weights(model)
     print_log(model)
 
     # Initialize solver and scheduler
@@ -66,6 +66,24 @@ class BaseArch(object):
 
   def extract(self):
     return self.model, self.solver, self.scheduler, self.loss
+
+  def _init_model_weights(self, model: torch.nn.Module) -> torch.nn.Module:
+    """Init neck/head only; skip pretrained PatchEncoderBackbone when freeze_backbone."""
+    from slimai.helper.features.builder import PatchEncoderBackbone
+
+    if isinstance(model, torch.nn.ModuleDict):
+      for name, module in model.named_children():
+        if name == "backbone" and (
+          isinstance(module, PatchEncoderBackbone)
+          or getattr(self, "freeze_backbone", False)
+        ):
+          continue
+        module.apply(PytorchNetworkUtils.init_weights)
+      return model
+    if isinstance(model, PatchEncoderBackbone) and getattr(self, "freeze_backbone", False):
+      return model
+    model.apply(PytorchNetworkUtils.init_weights)
+    return model
 
   @abstractmethod
   def init_layers(self, backbone, neck, head) -> torch.nn.Module:

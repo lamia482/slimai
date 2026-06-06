@@ -17,7 +17,7 @@ def render_calibration_v3_markdown(payload: Dict[str, Any], export_dir: Path) ->
 - ONNX：`patch_encoder.onnx`、`slide_encoder.onnx`
 - 配置：`export_manifest.json`（含 preprocess）
 - 校准快照：`calibration_v3_trial0.pkl`（schema_version=1.0）
-- 完整校验报告：`validation_report.html`
+- 完整校验报告：`validation_main.html`
 
 ## 2. pkl 内容速查
 - trial_idx=0，batch_size={batch_size}，seed={seed}

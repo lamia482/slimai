@@ -1560,7 +1560,7 @@ class ExperimentReporter(object):
         result_file=result_file,
         checkpoint_file=checkpoint_file,
         best_valid_epoch=best_valid_epoch,
-        task_name="level1",
+        task_name="primary",
         metric_prefix="label_",
         task_key="label",
         class_names=self.display_class_names,
@@ -1572,14 +1572,27 @@ class ExperimentReporter(object):
         result_file=result_file,
         checkpoint_file=checkpoint_file,
         best_valid_epoch=best_valid_epoch,
-        task_name="level2",
+        task_name="marginal",
         metric_prefix="label_secondary_",
         task_key="label_secondary",
         class_names=self.display_secondary_class_names,
       )
+      self._write_epoch_task_report(
+        epoch=epoch,
+        phase=phase,
+        metrics_plain=metrics_plain,
+        result_file=result_file,
+        checkpoint_file=checkpoint_file,
+        best_valid_epoch=best_valid_epoch,
+        task_name="conditional",
+        metric_prefix="label_secondary_conditional_",
+        task_key="label_secondary_conditional",
+        class_names=self.display_secondary_class_names,
+      )
       return dict(
-        level1=self.results_dir / f"epoch{epoch}_level1.html",
-        level2=self.results_dir / f"epoch{epoch}_level2.html",
+        primary=self.results_dir / f"epoch{epoch}_primary.html",
+        marginal=self.results_dir / f"epoch{epoch}_marginal.html",
+        conditional=self.results_dir / f"epoch{epoch}_conditional.html",
       )
 
     figures = self.build_eval_figures(result_file=result_file, file_prefix=f"epoch{epoch}_{phase}")
@@ -1913,6 +1926,82 @@ class ExperimentReporter(object):
       print_log(f"Failed to export sample analysis bundle: {exc}", level="WARNING")
     return report_file
 
+  def _write_main_report_dashboard(
+    self,
+    *,
+    best_valid_epoch: Optional[int],
+    best_valid_loss: Optional[float],
+    best_valid_ckpt: Optional[Path],
+    task_payloads: List[Dict[str, Any]],
+  ) -> str:
+    def _render_core_metrics_table(metrics_by_split: Dict[str, Dict[str, Any]]) -> str:
+      keys = ["acc", "auc", "kappa", "f1"]
+      splits = [s for s in ["train", "valid", "test"] if s in metrics_by_split]
+      if len(splits) == 0:
+        return "<p>N/A</p>"
+      header = "<tr><th>metric</th>" + "".join(f"<th>{html.escape(s)}</th>" for s in splits) + "</tr>"
+      rows = []
+      for key in keys:
+        cells = [f"<td>{self._render_value_html(metrics_by_split[s].get(key, 'N/A'))}</td>" for s in splits]
+        rows.append(f"<tr><th>{html.escape(key)}</th>{''.join(cells)}</tr>")
+      return (
+        "<div class='table-scroll-y'><table class='flat-table compare-table'>"
+        + header + "".join(rows) + "</table></div>"
+      )
+
+    header = self._render_header(
+      title="BREXI Experiment Dashboard",
+      subtitle=f"best_epoch={best_valid_epoch} | generated_by=slimai.runner.report",
+      signature=self.signature,
+    )
+    run_summary = dict(
+      best_valid_epoch=best_valid_epoch,
+      best_valid_loss=best_valid_loss,
+      best_ckpt=(str(best_valid_ckpt) if best_valid_ckpt else "N/A"),
+    )
+    sections = [
+      f"{header}",
+      "<section class='card'><h3>Run Summary</h3>",
+      self._render_dict_as_table(run_summary),
+      "</section>",
+    ]
+    for payload in task_payloads:
+      task_name = payload["task_name"]
+      report_file = payload["report_file"]
+      sections.append(f"<section class='card' id='{html.escape(task_name)}'>")
+      sections.append(f"<h3>{html.escape(task_name.title())}</h3>")
+      sections.append(
+        f"<p><a href='{html.escape(report_file.name)}'>Open full {html.escape(task_name)} report</a></p>"
+      )
+      sections.append("<h4>Core Metrics</h4>")
+      sections.append(_render_core_metrics_table(payload.get("summary_metrics_by_split", {})))
+      external_metrics = payload.get("external_summary_metrics", {})
+      if len(external_metrics) > 0:
+        sections.append("<h4>External Metrics</h4>")
+        ext_rows = []
+        for ext_name, metrics in external_metrics.items():
+          ext_rows.append(
+            "<tr>"
+            f"<th>{html.escape(ext_name)}</th>"
+            f"<td>{self._render_value_html(metrics.get('acc', 'N/A'))}</td>"
+            f"<td>{self._render_value_html(metrics.get('auc', 'N/A'))}</td>"
+            f"<td>{self._render_value_html(metrics.get('kappa', 'N/A'))}</td>"
+            f"<td>{self._render_value_html(metrics.get('f1', 'N/A'))}</td>"
+            "</tr>"
+          )
+        sections.append(
+          "<table class='flat-table compare-table'>"
+          "<tr><th>dataset</th><th>acc</th><th>auc</th><th>kappa</th><th>f1</th></tr>"
+          + "".join(ext_rows)
+          + "</table>"
+        )
+      if payload.get("inner_cm_html"):
+        sections.append("<h4>Inner Test Confusion Matrix</h4>" + payload["inner_cm_html"])
+      for ext_name, cm_html in (payload.get("external_cm_html") or {}).items():
+        sections.append(f"<h4>External CM — {html.escape(ext_name)}</h4>{cm_html}")
+      sections.append("</section>")
+    return "".join(sections)
+
   def _write_final_report_multitask(
     self,
     *,
@@ -1998,8 +2087,9 @@ class ExperimentReporter(object):
       )
 
     task_defs = [
-      dict(name="level1", prefix="label_", task_key="label", class_names=self.display_class_names),
-      dict(name="level2", prefix="label_secondary_", task_key="label_secondary", class_names=self.display_secondary_class_names),
+      dict(name="primary", prefix="label_", task_key="label", class_names=self.display_class_names),
+      dict(name="marginal", prefix="label_secondary_", task_key="label_secondary", class_names=self.display_secondary_class_names),
+      dict(name="conditional", prefix="label_secondary_conditional_", task_key="label_secondary_conditional", class_names=self.display_secondary_class_names),
     ]
 
     def _pick_prefixed(metrics: Dict[str, Any], prefix: str):
@@ -2011,6 +2101,7 @@ class ExperimentReporter(object):
       }
 
     report_files = {}
+    main_task_payloads = []
     for task in task_defs:
       task_name = task["name"]
       prefix = task["prefix"]
@@ -2024,26 +2115,15 @@ class ExperimentReporter(object):
         "valid": "Inner Valid",
         "test": "Inner Test",
       }
-      include_conditional = task_name == "level2"
+      include_conditional = False
       for split_name in ["train", "valid", "test"]:
         result_file = analysis_result_files.get(split_name, None)
         metric_dict = _pick_prefixed(analysis_metrics.get(split_name, {}), prefix)
         if len(metric_dict) == 0:
           continue
         split_display_name = split_title_map.get(split_name, split_name.title())
-        if include_conditional:
-          conditional_dict = _pick_prefixed(
-            analysis_metrics.get(split_name, {}),
-            "label_secondary_conditional_",
-          )
-          if len(conditional_dict) > 0:
-            metric_dict.update(
-              {
-                f"conditional_{k}": v
-                for k, v in conditional_dict.items()
-              }
-            )
-        summary_metrics_by_split[split_name] = metric_dict
+        if len(metric_dict) > 0:
+          summary_metrics_by_split[split_name] = metric_dict
         if split_name == "test":
           inner_test_block, inner_test_by_center_summary = self._build_inner_test_eval_section(
             task_name=task_name,
@@ -2154,28 +2234,49 @@ class ExperimentReporter(object):
       self._save_html(report_file, body)
       report_files[task_name] = report_file
 
-    index_header = self._render_header(
-      title="BREXI Experiment Report",
-      subtitle=f"best_epoch={best_valid_epoch} | generated_by=slimai.runner.report",
-      signature=self.signature,
+      inner_cm_html = ""
+      test_result_file = analysis_result_files.get("test", None)
+      if test_result_file is not None and Path(test_result_file).exists():
+        test_figures = self.build_eval_figures(
+          result_file=Path(test_result_file),
+          file_prefix=f"main_{task_name}_test",
+          task_key=task_key,
+          class_names=class_names,
+        )
+        inner_cm_html = test_figures.get("cm", "")
+      external_cm_html = {}
+      for external_name, external_result_file in external_result_files.items():
+        if not Path(external_result_file).exists():
+          continue
+        ext_figures = self.build_eval_figures(
+          result_file=Path(external_result_file),
+          file_prefix=f"main_{task_name}_external_{external_name}",
+          task_key=task_key,
+          class_names=class_names,
+        )
+        if ext_figures.get("cm"):
+          external_cm_html[str(external_name)] = ext_figures["cm"]
+      main_task_payloads.append(dict(
+        task_name=task_name,
+        report_file=report_file,
+        summary_metrics_by_split=summary_metrics_by_split,
+        external_summary_metrics=external_summary_metrics,
+        inner_cm_html=inner_cm_html,
+        external_cm_html=external_cm_html,
+      ))
+
+    main_body = self._write_main_report_dashboard(
+      best_valid_epoch=best_valid_epoch,
+      best_valid_loss=best_valid_loss,
+      best_valid_ckpt=best_valid_ckpt,
+      task_payloads=main_task_payloads,
     )
-    links = []
-    for task_name, report_file in report_files.items():
-      links.append(
-        f"<li><a href='{html.escape(report_file.name)}'>{html.escape(task_name)} report</a></li>"
-      )
-    index_body = (
-      f"{index_header}"
-      "<section class='card'><h3>Report Index</h3>"
-      f"<ul>{''.join(links)}</ul>"
-      "</section>"
-    )
-    index_file = self.work_dir / "report.html"
-    self._save_html(index_file, index_body)
-    print_log(f"Saved final report to: {index_file}")
+    main_file = self.work_dir / "main.html"
+    self._save_html(main_file, main_body)
+    print_log(f"Saved main report to: {main_file}")
     if not self.enable_sample_analysis_export:
       print_log("Skip sample analysis export by config/env (SAMPLE_ANALYSIS.enable or SLIMAI_EXPORT_SAMPLE_ANALYSIS)")
-      return index_file
+      return main_file
     try:
       bundle_info = write_sample_analysis_bundle(
         work_dir=self.work_dir,
@@ -2195,4 +2296,4 @@ class ExperimentReporter(object):
       )
     except Exception as exc:
       print_log(f"Failed to export sample analysis bundle: {exc}", level="WARNING")
-    return index_file
+    return main_file

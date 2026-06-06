@@ -157,6 +157,46 @@ def _render_parity_output_block(
   return "".join(parts)
 
 
+def _render_v1_hf_section(
+  block: Dict[str, Any],
+  *,
+  parity_max_tol: Any = None,
+  parity_mean_tol: Any = None,
+  weight_max_tol: Any = None,
+) -> str:
+  weight = block.get("weight", {})
+  w_tol = _fmt_tol(weight_max_tol if weight_max_tol is not None else weight.get("tol"))
+  max_tol_text = _fmt_tol(parity_max_tol) if parity_max_tol is not None else "N/A"
+  mean_tol_text = _fmt_tol(parity_mean_tol) if parity_mean_tol is not None else "N/A"
+  parts = [
+    f"<section class='card'><h3>V1-HF 预训练 UNI vs patch_encoder (PyTorch) "
+    f"{_badge(block.get('passed'))}</h3>",
+    _render_threshold_line(
+      f"权重 max |HF.encoder − patch_encoder.encoder| < {w_tol}；"
+      f"随机 patch 前向 max |HF − PT| < {max_tol_text} 且 mean < {mean_tol_text}"
+    ),
+    f"<p>encoder={_esc(block.get('encoder_name'))}; "
+    f"shared_keys={_esc(weight.get('shared_keys'))}</p>",
+    f"<p>权重 max_diff={_fmt_float(weight.get('max_diff'), 8)} "
+    f"(worst_key={_esc(weight.get('worst_key'))}, tol={w_tol}) "
+    f"{_badge(weight.get('passed'))}</p>",
+    f"<p>num_trials={_esc(block.get('num_trials'))}; "
+    f"batch_size_range={_esc(block.get('batch_size_range'))}; "
+    f"per_trial_batch_size={_esc(block.get('per_trial_batch_size'))}</p>",
+  ]
+  for output_name, output_block in (block.get("outputs") or {}).items():
+    parts.append(
+      _render_parity_output_block(
+        str(output_name),
+        output_block,
+        parity_max_tol=parity_max_tol,
+        parity_mean_tol=parity_mean_tol,
+      )
+    )
+  parts.append("</section>")
+  return "".join(parts)
+
+
 def _render_parity_section(
   title: str,
   block: Dict[str, Any],
@@ -252,6 +292,40 @@ def _render_label_agreement(agreement: Dict[str, Any], *, label_agreement_tol: f
   )
 
 
+def _render_metric_parity_table(parity_block: Dict[str, Any]) -> str:
+  metrics = parity_block.get("metrics", {})
+  if not metrics:
+    return "<p>N/A</p>"
+  rows = []
+  for key, item in sorted(metrics.items()):
+    rows.append([
+      key,
+      _fmt_float(item.get("pt")),
+      _fmt_float(item.get("ort")),
+      _fmt_float(item.get("delta")),
+      _fmt_tol(item.get("tol")),
+      "yes" if item.get("match") else "no",
+    ])
+  return _render_table(
+    rows,
+    headers=["metric", "PT", "ORT", "delta", "tol", "match"],
+    row_header=True,
+  )
+
+
+def _render_v4_task_block(task_name: str, task_block: Dict[str, Any]) -> str:
+  parts = [
+    f"<div class='v4-task'><h5>{_esc(task_name)} {_badge(task_block.get('passed'))}</h5>",
+    "<h6>Metric Parity (PT vs ORT)</h6>",
+    _render_metric_parity_table(task_block.get("metric_parity", {})),
+  ]
+  figures = task_block.get("figures_ort", {})
+  if figures:
+    parts.append("<h6>ORT Figures</h6>" + _render_figures(figures))
+  parts.append("</div>")
+  return "".join(parts)
+
+
 def _render_v4_subset(subset_name: str, block: Dict[str, Any], *, metrics_tol: Any = None) -> str:
   parts = [
     f"<div class='v4-subset'><h4>{_esc(subset_name)} {_badge(block.get('passed'))}</h4>",
@@ -259,25 +333,14 @@ def _render_v4_subset(subset_name: str, block: Dict[str, Any], *, metrics_tol: A
   ]
   if block.get("note"):
     parts.append(f"<p class='muted'>{_esc(block.get('note'))}</p>")
-  level1 = block.get("level1", {})
-  parts.append("<h5>Level1 metrics</h5>" + _render_dict_table(level1.get("metrics", {})))
-  if level1.get("reference_compare_note"):
-    parts.append(f"<p class='muted'>{_esc(level1['reference_compare_note'])}</p>")
-  if level1.get("reference_compare"):
-    parts.append("<h5>Level1 vs Original Report</h5>" + _render_reference_compare(level1["reference_compare"], metrics_tol=metrics_tol))
-  parts.append("<h5>Level1 figures</h5>" + _render_figures(level1.get("figures", {})))
-
-  level2 = block.get("level2", {})
-  if level2.get("metrics"):
-    parts.append("<h5>Level2 metrics</h5>" + _render_dict_table(level2.get("metrics", {})))
-  if level2.get("reference_compare"):
-    parts.append("<h5>Level2 vs Original Report</h5>" + _render_reference_compare(level2["reference_compare"], metrics_tol=metrics_tol))
-  if level2.get("figures"):
-    parts.append("<h5>Level2 figures</h5>" + _render_figures(level2.get("figures", {})))
-
+  if block.get("primary"):
+    parts.append(_render_v4_task_block("primary", block["primary"]))
+  if block.get("marginal"):
+    parts.append(_render_v4_task_block("marginal", block["marginal"]))
+  if block.get("conditional"):
+    parts.append(_render_v4_task_block("conditional", block["conditional"]))
   if block.get("label_agreement"):
     parts.append("<h5>Label agreement</h5>" + _render_label_agreement(block["label_agreement"]))
-
   by_center = block.get("by_center", {})
   if by_center:
     parts.append("<h5>Inner test by center</h5>")
@@ -305,7 +368,7 @@ def _render_v4_section(block: Dict[str, Any], *, metrics_tol: Any = None) -> str
   parts = [
     f"<section class='card'><h3>V4 Test Evaluation {_badge(block.get('passed'))}</h3>",
     _render_threshold_line(
-      f"指标 baseline 对照：|ONNX − Original| < {tol_text}；"
+      f"数据集级 metric parity：|PT − ORT| < {tol_text}（primary / marginal / conditional）；"
       "PT/ORT label agreement：match_rate ≥ 1.0"
     ),
     f"<p>external_count={_esc(block.get('external_count', 0))}</p>",
@@ -349,6 +412,17 @@ def render_validation_report_html(report_data: Dict[str, Any]) -> str:
     sections.append(_render_l0_section(report_data["l0"]))
   if report_data.get("l1"):
     sections.append(_render_l1_section(report_data["l1"], deterministic_tol=deterministic_tol))
+  if report_data.get("v1_hf"):
+    from slimai.export.validate_ort import HF_WEIGHT_MAX_TOL
+
+    sections.append(
+      _render_v1_hf_section(
+        report_data["v1_hf"],
+        parity_max_tol=parity_max_tol,
+        parity_mean_tol=parity_mean_tol,
+        weight_max_tol=HF_WEIGHT_MAX_TOL,
+      )
+    )
   for key, title in [("v1", "V1 patch_encoder ORT parity"), ("v2", "V2 slide_encoder ORT parity"), ("v3", "V3 e2e ORT parity")]:
     if report_data.get(key):
       sections.append(
@@ -375,6 +449,7 @@ def render_validation_report_html(report_data: Dict[str, Any]) -> str:
   .muted { color: #64748b; }
   .warn { color: #b45309; }
   .v4-subset { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .v4-task { margin: 8px 0 12px; padding: 8px 0 8px 12px; border-left: 3px solid #dbe5f3; }
   .by-center { margin: 8px 0 12px 16px; padding-left: 12px; border-left: 3px solid #dbe5f3; }
   .figure-block { margin: 8px 0 16px; }
   .cm-wrap { overflow-x: auto; }
@@ -390,6 +465,7 @@ def render_validation_report_html(report_data: Dict[str, Any]) -> str:
 
 def write_validation_report_html(output_dir: Path, report_data: Dict[str, Any]) -> Path:
   output_dir = Path(output_dir)
-  path = output_dir / "validation_report.html"
-  path.write_text(render_validation_report_html(report_data), encoding="utf-8")
+  html_content = render_validation_report_html(report_data)
+  path = output_dir / "validation_main.html"
+  path.write_text(html_content, encoding="utf-8")
   return path

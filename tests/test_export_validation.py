@@ -25,10 +25,11 @@ def test_export_validation_writes_html_and_calibration(tmp_path, monkeypatch):
     backbone=dict(type="PatchEncoderBackbone", encoder_name="UNI", cache_dir="/tmp"),
     neck=dict(type="ABMIL", input_dim=32, hidden_dim=16, attention="gated", dropout=0.0),
     primary_head=dict(type="MLP", input_dim=32, output_dim=1, n_layer=2, dropout=0.0),
+    marginal_head=dict(type="MLP", input_dim=32, output_dim=2, n_layer=2, dropout=0.0),
     secondary_heads=dict(h0=dict(type="MLP", input_dim=32, output_dim=2, n_layer=2, dropout=0.0)),
     primary_head_keys=["h0"],
-    secondary_global_parent_idx=[0],
-    secondary_global_local_idx=[0],
+    secondary_global_parent_idx=[0, 0],
+    secondary_global_local_idx=[0, 1],
     solver=ConfigDict(type="torch.optim.SGD", lr=0.01),
     freeze_backbone=True,
   )
@@ -77,7 +78,7 @@ def test_export_validation_writes_html_and_calibration(tmp_path, monkeypatch):
     skip_test_eval=True,
     show_progress=False,
   )
-  assert (tmp_path / "validation_report.html").exists()
+  assert (tmp_path / "validation_main.html").exists()
   assert (tmp_path / "calibration_v3_trial0.pkl").exists()
   assert (tmp_path / "calibration_v3_trial0.md").exists()
   assert "timing" in report and "phases" in report["timing"]

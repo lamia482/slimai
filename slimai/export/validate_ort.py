@@ -7,6 +7,32 @@ import numpy as np
 import torch
 
 PATCH_OUTPUT = "embedding_arr"
+HF_WEIGHT_MAX_TOL = 1e-5
+
+
+def max_param_diff(a: torch.nn.Module, b: torch.nn.Module) -> Dict[str, Any]:
+  sa, sb = a.state_dict(), b.state_dict()
+  keys = sorted(set(sa.keys()) & set(sb.keys()))
+  worst = 0.0
+  worst_key = ""
+  for key in keys:
+    d = (sa[key].float().cpu() - sb[key].float().cpu()).abs().max().item()
+    if d > worst:
+      worst = d
+      worst_key = key
+  return dict(
+    max_diff=float(worst),
+    worst_key=worst_key,
+    shared_keys=len(keys),
+    passed=float(worst) < HF_WEIGHT_MAX_TOL,
+  )
+
+
+def resolve_patch_encoder_inner_encoder(patch_encoder: torch.nn.Module) -> torch.nn.Module:
+  backbone = getattr(patch_encoder, "backbone", None)
+  if backbone is not None and hasattr(backbone, "encoder"):
+    return backbone.encoder
+  return patch_encoder
 
 
 def error_stats(diff: np.ndarray) -> Dict[str, float]:

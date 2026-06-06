@@ -62,8 +62,10 @@ class HierarchicalMILLoss(torch.nn.Module):
     *,
     primary_loss: Optional[dict] = None,
     secondary_loss: Optional[dict] = None,
+    marginal_loss: Optional[dict] = None,
+    conditional_loss: Optional[dict] = None,
     secondary_num_classes: Optional[Dict[str, int]] = None,
-    consistency_loss_weight: float = 0.0,
+    global_secondary_num_classes: Optional[int] = None,
     loss_weighting: str = "kendall",
     log_var_min: float = -5.0,
     log_var_max: float = 5.0,
@@ -80,18 +82,28 @@ class HierarchicalMILLoss(torch.nn.Module):
         name: build_loss(_loss_cfg_with_num_classes(secondary_loss_template, num_classes))
         for name, num_classes in secondary_num_classes.items()
       })
-      self.secondary_loss = None
     else:
       self.secondary_losses = None
-      self.secondary_loss = build_loss(secondary_loss_template)
-    self.consistency_loss_weight = float(consistency_loss_weight)
+
+    global_num = int(global_secondary_num_classes or 0)
+    if marginal_loss is None:
+      marginal_loss = secondary_loss.copy()
+    if conditional_loss is None:
+      conditional_loss = secondary_loss.copy()
+    self.marginal_loss = build_loss(
+      _loss_cfg_with_num_classes(marginal_loss, global_num) if global_num > 0 else marginal_loss
+    )
+    self.conditional_loss = build_loss(
+      _loss_cfg_with_num_classes(conditional_loss, global_num) if global_num > 0 else conditional_loss
+    )
     self.loss_weighting = loss_weighting
     self.log_var_min = float(log_var_min)
     self.log_var_max = float(log_var_max)
 
-    # Kendall uncertainty weighting parameters.
     self.log_var_primary = torch.nn.Parameter(torch.zeros(()))
-    self.log_var_secondary = torch.nn.Parameter(torch.zeros(()))
+    self.log_var_marginal = torch.nn.Parameter(torch.zeros(()))
+    self.log_var_conditional = torch.nn.Parameter(torch.zeros(()))
+    self.log_var_local_aux = torch.nn.Parameter(torch.zeros(()))
     return
 
   def resolve_secondary_loss(self, parent_key: str) -> torch.nn.Module:
@@ -99,58 +111,69 @@ class HierarchicalMILLoss(torch.nn.Module):
       if parent_key not in self.secondary_losses:
         raise KeyError(f"secondary loss for parent_key={parent_key!r} is not registered")
       return self.secondary_losses[parent_key]
-    if self.secondary_loss is None:
-      raise ValueError("secondary loss is not configured")
-    return self.secondary_loss
+    raise ValueError("secondary losses are not configured")
 
   def clamp_log_vars(self):
     with torch.no_grad():
       self.log_var_primary.clamp_(self.log_var_min, self.log_var_max)
-      self.log_var_secondary.clamp_(self.log_var_min, self.log_var_max)
+      self.log_var_marginal.clamp_(self.log_var_min, self.log_var_max)
+      self.log_var_conditional.clamp_(self.log_var_min, self.log_var_max)
+      self.log_var_local_aux.clamp_(self.log_var_min, self.log_var_max)
     return
 
   def forward(
     self,
     *,
     primary_loss_value: torch.Tensor,
-    secondary_loss_value: torch.Tensor,
-    secondary_valid_mask: torch.Tensor,
-    consistency_loss: Optional[torch.Tensor] = None,
+    marginal_loss_value: torch.Tensor,
+    conditional_loss_value: torch.Tensor,
+    local_aux_loss_value: torch.Tensor,
+    local_aux_valid_mask: torch.Tensor,
   ) -> Dict[str, torch.Tensor]:
     self.clamp_log_vars()
-    if secondary_valid_mask.numel() > 0:
-      secondary_valid_mask = secondary_valid_mask.to(device=primary_loss_value.device, dtype=torch.bool)
+    if local_aux_valid_mask.numel() > 0:
+      local_aux_valid_mask = local_aux_valid_mask.to(
+        device=primary_loss_value.device,
+        dtype=torch.bool,
+      )
     primary_loss = primary_loss_value
-    secondary_loss_raw = secondary_loss_value
+    marginal_loss = marginal_loss_value
+    conditional_loss = conditional_loss_value
+    local_aux_loss = local_aux_loss_value
 
     if self.loss_weighting == "kendall":
       primary_weight = torch.exp(-self.log_var_primary)
-      secondary_weight = torch.exp(-self.log_var_secondary)
+      marginal_weight = torch.exp(-self.log_var_marginal)
+      conditional_weight = torch.exp(-self.log_var_conditional)
+      local_aux_weight = torch.exp(-self.log_var_local_aux)
       weighted_loss = (
         primary_weight * primary_loss
-        + secondary_weight * secondary_loss_raw
+        + marginal_weight * marginal_loss
+        + conditional_weight * conditional_loss
+        + local_aux_weight * local_aux_loss
         + self.log_var_primary
-        + self.log_var_secondary
+        + self.log_var_marginal
+        + self.log_var_conditional
+        + self.log_var_local_aux
       )
     elif self.loss_weighting == "fixed":
       primary_weight = torch.ones_like(primary_loss)
-      secondary_weight = torch.ones_like(secondary_loss_raw)
-      weighted_loss = primary_loss + secondary_loss_raw
+      marginal_weight = torch.ones_like(marginal_loss)
+      conditional_weight = torch.ones_like(conditional_loss)
+      local_aux_weight = torch.ones_like(local_aux_loss)
+      weighted_loss = primary_loss + marginal_loss + conditional_loss + local_aux_loss
     else:
       raise ValueError(f"Unsupported loss_weighting: {self.loss_weighting}")
 
-    consistency_loss_value = (
-      torch.zeros((), device=primary_loss.device, dtype=primary_loss.dtype)
-      if consistency_loss is None
-      else consistency_loss
-    )
-    total_loss = weighted_loss + self.consistency_loss_weight * consistency_loss_value
     return dict(
-      loss=total_loss,
-      composite_loss=total_loss.detach(),
+      loss=weighted_loss,
+      composite_loss=weighted_loss.detach(),
       primary_loss=primary_loss.detach(),
-      secondary_loss=secondary_loss_raw.detach(),
-      consistency_loss=consistency_loss_value.detach(),
+      marginal_loss=marginal_loss.detach(),
+      conditional_loss=conditional_loss.detach(),
+      local_aux_loss=local_aux_loss.detach(),
       kendall_primary_weight=primary_weight.detach(),
-      kendall_secondary_weight=secondary_weight.detach(),
+      kendall_marginal_weight=marginal_weight.detach(),
+      kendall_conditional_weight=conditional_weight.detach(),
+      kendall_local_aux_weight=local_aux_weight.detach(),
     )

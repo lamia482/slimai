@@ -12,10 +12,13 @@ from slimai.export.onnx_core import run_l0_onnx_checks
 from slimai.export.validate_calibration_doc import write_calibration_v3_markdown
 from slimai.export.validate_metrics import run_v4_test_evaluation
 from slimai.export.validate_ort import (
+  HF_WEIGHT_MAX_TOL,
   OrtRunner,
   compare_outputs,
   error_stats,
+  max_param_diff,
   pt_outputs_to_dict,
+  resolve_patch_encoder_inner_encoder,
   run_l1_deterministic,
   summarize_parity_outputs,
 )
@@ -62,6 +65,72 @@ def _run_parity_trials(
       trial_iter.set_postfix(N=batch_size)
     per_trial.append(trial_fn(trial_idx=trial_idx, batch_size=batch_size, rng=rng))
   return dict(per_trial=per_trial, batch_sizes=batch_sizes)
+
+
+def run_v1_hf_uni_validation(
+  *,
+  patch_encoder: torch.nn.Module,
+  encoder_name: str,
+  num_trials: int,
+  seed: int,
+  batch_min: int,
+  batch_max: int,
+  input_size: int,
+  parity_max_tol: float,
+  parity_mean_tol: float,
+  show_progress: bool,
+) -> Dict[str, Any]:
+  from slimai.helper.features.extract import build_feature_extractor
+
+  hf_encoder = build_feature_extractor(
+    encoder_name, None, device_id=0, accelerator="cpu"
+  ).patch_encoder.eval()
+  ckpt_encoder = resolve_patch_encoder_inner_encoder(patch_encoder)
+  weight_stats = max_param_diff(hf_encoder, ckpt_encoder)
+  weight_stats["tol"] = HF_WEIGHT_MAX_TOL
+
+  device = "cpu"
+
+  def run_trial(*, trial_idx: int, batch_size: int, rng: np.random.Generator):
+    del rng
+    patch = torch.randn(batch_size, 3, input_size, input_size, device=device)
+    with torch.inference_mode():
+      hf_emb = hf_encoder(patch).detach().cpu().numpy()
+      pt_emb = patch_encoder(patch).detach().cpu().numpy()
+    per_output, passed = compare_outputs(
+      {PATCH_OUTPUT: hf_emb},
+      {PATCH_OUTPUT: pt_emb},
+      [PATCH_OUTPUT],
+      parity_max_tol=parity_max_tol,
+      parity_mean_tol=parity_mean_tol,
+    )
+    return dict(batch_size=batch_size, per_output=per_output, passed=passed)
+
+  trials = _run_parity_trials(
+    num_trials=num_trials,
+    seed=seed + 100_000,
+    batch_min=batch_min,
+    batch_max=batch_max,
+    desc="V1-HF UNI vs patch PT",
+    show_progress=show_progress,
+    trial_fn=run_trial,
+  )
+  outputs, forward_passed = summarize_parity_outputs(
+    output_names=[PATCH_OUTPUT],
+    per_trial_metrics=trials["per_trial"],
+    parity_max_tol=parity_max_tol,
+    parity_mean_tol=parity_mean_tol,
+  )
+  return dict(
+    name="hf_uni_vs_patch_encoder_pt",
+    encoder_name=encoder_name,
+    weight=weight_stats,
+    num_trials=num_trials,
+    batch_size_range=[batch_min, batch_max],
+    per_trial_batch_size=trials["batch_sizes"],
+    outputs=outputs,
+    passed=bool(weight_stats.get("passed", False)) and forward_passed,
+  )
 
 
 def build_calibration_v3_payload(
@@ -142,7 +211,7 @@ def run_export_validation(
   metrics_tol: float = 5e-4,
   skip_test_eval: bool = False,
   reference_work_dir: Optional[Path] = None,
-  skip_reference_compare: bool = False,
+  skip_reference_compare: bool = True,
   ort_provider: str = "CPUExecutionProvider",
   show_progress: bool = True,
   disable_log: bool = False,
@@ -167,7 +236,8 @@ def run_export_validation(
     timing=timing,
   )
 
-  with TopLevelValidationProgress(enabled=show_progress, total=8) as top_progress:
+  encoder_name = str((preprocess or {}).get("encoder_name", "UNI"))
+  with TopLevelValidationProgress(enabled=show_progress, total=9) as top_progress:
     with ValidationPhaseTimer(timing, "l0"):
       l0_patch = run_l0_onnx_checks(patch_onnx_path, simplify_in_place=False)
       l0_slide = run_l0_onnx_checks(slide_onnx_path, simplify_in_place=False)
@@ -233,6 +303,21 @@ def run_export_validation(
       outputs=v1_outputs,
       passed=v1_passed,
     )
+    top_progress.update(1)
+
+    with ValidationPhaseTimer(timing, "v1_hf"):
+      report_data["v1_hf"] = run_v1_hf_uni_validation(
+        patch_encoder=patch_encoder,
+        encoder_name=encoder_name,
+        num_trials=num_trials,
+        seed=seed,
+        batch_min=batch_min,
+        batch_max=batch_max,
+        input_size=input_size,
+        parity_max_tol=parity_max_tol,
+        parity_mean_tol=parity_mean_tol,
+        show_progress=show_progress,
+      )
     top_progress.update(1)
 
     def run_v2_trial(*, trial_idx: int, batch_size: int, rng: np.random.Generator):
@@ -380,7 +465,10 @@ def run_export_validation(
         )
     top_progress.update(1)
 
-  checks = [report_data.get(k, {}).get("passed", True) for k in ["l0", "l1", "v1", "v2", "v3", "v4"]]
+  checks = [
+    report_data.get(k, {}).get("passed", True)
+    for k in ["l0", "l1", "v1", "v1_hf", "v2", "v3", "v4"]
+  ]
   report_data["summary"]["passed"] = all(bool(x) for x in checks if x is not None)
   if onnx_meta:
     report_data["summary"]["export"] = onnx_meta

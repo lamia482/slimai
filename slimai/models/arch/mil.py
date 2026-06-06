@@ -22,10 +22,14 @@ SLIDE_ENCODER_OUTPUT_NAMES_HIERARCHICAL = [
   "primary_logits",
   "primary_softmax",
   "secondary_logits_flat",
-  "secondary_softmax_flat",
-  "secondary_marginal_softmax",
-  "secondary_marginal_label",
-  "secondary_conditional_label",
+  "secondary_local_softmax_flat",
+  "marginal_logits",
+  "marginal_softmax",
+  "conditional_logits",
+  "conditional_softmax",
+  "primary_label",
+  "marginal_label",
+  "conditional_label",
 ]
 
 __all__ = [
@@ -62,8 +66,8 @@ class MIL(ClassificationArch):
                embedding_group_size=1, 
                freeze_backbone=False,
                ):
-    super().__init__(backbone=backbone, neck=neck, head=head, loss=loss, solver=solver)
     self.freeze_backbone = freeze_backbone
+    super().__init__(backbone=backbone, neck=neck, head=head, loss=loss, solver=solver)
     if freeze_backbone:
       print_log("Freezing backbone.")
       PytorchNetworkUtils.freeze(self.model.backbone)
@@ -321,6 +325,7 @@ class _HierarchicalMilExport(torch.nn.Module):
     super().__init__()
     self.neck = arch.model.neck.export_model() # type: ignore
     self.primary_head = arch.model.primary_head.export_model() # type: ignore
+    self.marginal_head = arch.model.marginal_head.export_model() # type: ignore
     self.secondary_heads = torch.nn.ModuleDict(
       {name: head.export_model() for name, head in arch.model.secondary_heads.items()} # type: ignore
     )
@@ -335,39 +340,37 @@ class _HierarchicalMilExport(torch.nn.Module):
     bag_embedding, attention_weights = self.neck(embedding_arr)
     neck_batch = bag_embedding.unsqueeze(0)
     primary_logits = self.primary_head(neck_batch).squeeze(0)
-    secondary_logits_parts = []
+    marginal_logits = self.marginal_head(neck_batch).squeeze(0)
     secondary_logits_map = {}
     for head_name in self.primary_head_keys:
       head_logits = self.secondary_heads[head_name](neck_batch).squeeze(0)
       secondary_logits_map[head_name] = head_logits.unsqueeze(0)
-      secondary_logits_parts.append(head_logits)
-    secondary_logits_flat = torch.cat(secondary_logits_parts, dim=-1)
-
-    primary_softmax = torch.softmax(primary_logits.unsqueeze(0), dim=1).squeeze(0)
-    secondary_softmax_parts = [
-      torch.softmax(secondary_logits_map[head_name], dim=1).squeeze(0)
-      for head_name in self.primary_head_keys
-    ]
-    secondary_softmax_flat = torch.cat(secondary_softmax_parts, dim=-1)
 
     secondary_output = HierarchicalMIL._compute_secondary_outputs_static(
+      marginal_logits=marginal_logits.unsqueeze(0),
       primary_logits=primary_logits.unsqueeze(0),
-      secondary_logits={name: logits for name, logits in secondary_logits_map.items()},
+      secondary_logits=secondary_logits_map,
       primary_head_keys=self.primary_head_keys,
       secondary_global_parent_idx=self.secondary_global_parent_idx,
       secondary_global_local_idx=self.secondary_global_local_idx,
       global_secondary_num_classes=self.global_secondary_num_classes,
       global_index_lookup=self._global_index_lookup,
     )
+    primary_softmax = torch.softmax(primary_logits, dim=0)
+    primary_label = primary_logits.argmax(dim=0, keepdim=True).to(torch.int64)
     return (
       bag_embedding,
       attention_weights,
       primary_logits,
       primary_softmax,
-      secondary_logits_flat,
-      secondary_softmax_flat,
-      secondary_output["softmax"].squeeze(0),
-      secondary_output["labels"].squeeze(0).to(torch.int64),
+      secondary_output["secondary_logits_flat"].squeeze(0),
+      secondary_output["secondary_local_softmax_flat"].squeeze(0),
+      secondary_output["marginal_logits"].squeeze(0),
+      secondary_output["marginal_softmax"].squeeze(0),
+      secondary_output["conditional_logits"].squeeze(0),
+      secondary_output["conditional_softmax"].squeeze(0),
+      primary_label,
+      secondary_output["marginal_labels"].squeeze(0).to(torch.int64),
       secondary_output["conditional_labels"].squeeze(0).to(torch.int64),
     )
 
@@ -380,6 +383,7 @@ class HierarchicalMIL(MIL):
     backbone=None,
     neck=None,
     primary_head=None,
+    marginal_head=None,
     secondary_heads: Optional[Dict[str, dict]] = None,
     head=None,  # alias of primary_head
     loss=None,
@@ -391,6 +395,7 @@ class HierarchicalMIL(MIL):
     primary_head_keys: Optional[List[str]] = None,
   ):
     self.secondary_heads_cfg = secondary_heads or {}
+    self.marginal_head_cfg = marginal_head
     self.secondary_global_parent_idx = list(secondary_global_parent_idx or [])
     self.secondary_global_local_idx = list(secondary_global_local_idx or [])
     self.primary_head_keys = list(primary_head_keys or [])
@@ -426,6 +431,7 @@ class HierarchicalMIL(MIL):
       for name, cfg in self.secondary_heads_cfg.items()
     }
     loss["secondary_num_classes"] = secondary_num_classes
+    loss["global_secondary_num_classes"] = int(self.global_secondary_num_classes)
     return build_loss(loss)
 
   def init_layers(self, backbone, neck, head) -> torch.nn.Module:
@@ -433,9 +439,12 @@ class HierarchicalMIL(MIL):
       raise ValueError("`primary_head` (or `head`) must be provided for HierarchicalMIL.")
     if len(self.secondary_heads_cfg) == 0:
       raise ValueError("`secondary_heads` must be provided for HierarchicalMIL.")
+    if self.marginal_head_cfg is None:
+      raise ValueError("`marginal_head` must be provided for HierarchicalMIL.")
     backbone_module = build_model(backbone)
     neck_module = build_model(neck)
     primary_head = build_model(head)
+    marginal_head = build_model(self.marginal_head_cfg)
     secondary_heads = torch.nn.ModuleDict(
       {name: build_model(cfg) for name, cfg in self.secondary_heads_cfg.items()}
     )
@@ -444,6 +453,7 @@ class HierarchicalMIL(MIL):
         backbone=backbone_module,
         neck=neck_module,
         primary_head=primary_head,
+        marginal_head=marginal_head,
         secondary_heads=secondary_heads,
       )
     )
@@ -456,6 +466,7 @@ class HierarchicalMIL(MIL):
     backbone = self._collect_embedding_list(batch_data)
     neck, atten_weights = self.model.neck(backbone) # type: ignore
     primary_logits = self.model.primary_head(neck) # type: ignore
+    marginal_logits = self.model.marginal_head(neck) # type: ignore
     secondary_logits = {
       name: head(neck)
       for name, head in self.model.secondary_heads.items() # type: ignore
@@ -467,9 +478,10 @@ class HierarchicalMIL(MIL):
         atten_weights=atten_weights,
         neck=neck,
         primary_logits=primary_logits,
+        marginal_logits=marginal_logits,
         secondary_logits=secondary_logits,
       )
-    return atten_weights, primary_logits, secondary_logits
+    return atten_weights, primary_logits, marginal_logits, secondary_logits
 
   def _build_slide_export_module(self) -> torch.nn.Module:
     return _HierarchicalMilExport(self).eval()
@@ -477,6 +489,7 @@ class HierarchicalMIL(MIL):
   @staticmethod
   def _compute_secondary_outputs_static(
     *,
+    marginal_logits,
     primary_logits,
     secondary_logits,
     primary_head_keys,
@@ -485,63 +498,79 @@ class HierarchicalMIL(MIL):
     global_secondary_num_classes,
     global_index_lookup,
   ):
-    primary_probs = torch.softmax(primary_logits, dim=1)
-    batch_size = int(primary_probs.shape[0])
+    batch_size = int(primary_logits.shape[0])
+    device = primary_logits.device
+    dtype = primary_logits.dtype
     if global_secondary_num_classes <= 0:
-      zeros = torch.zeros((batch_size,), dtype=torch.int64, device=primary_probs.device)
+      zeros = torch.zeros((batch_size,), dtype=torch.int64, device=device)
+      empty = torch.zeros((batch_size, 0), dtype=dtype, device=device)
       return dict(
-        softmax=torch.zeros((batch_size, 0), dtype=primary_probs.dtype, device=primary_probs.device),
-        scores=torch.zeros((batch_size,), dtype=primary_probs.dtype, device=primary_probs.device),
-        labels=zeros,
+        secondary_logits_flat=empty,
+        secondary_local_softmax_flat=empty,
+        marginal_logits=empty,
+        marginal_softmax=empty,
+        conditional_logits=empty,
+        conditional_softmax=empty,
+        marginal_scores=torch.zeros((batch_size,), dtype=dtype, device=device),
+        marginal_labels=zeros,
+        conditional_scores=torch.zeros((batch_size,), dtype=dtype, device=device),
         conditional_labels=zeros,
       )
 
-    secondary_probs = {
-      name: torch.softmax(logits, dim=1)
-      for name, logits in secondary_logits.items()
+    secondary_logits_flat = torch.cat(
+      [secondary_logits[k] for k in primary_head_keys],
+      dim=-1,
+    )
+    secondary_local_softmax_flat = torch.cat(
+      [torch.softmax(secondary_logits[k], dim=-1) for k in primary_head_keys],
+      dim=-1,
+    )
+
+    marginal_softmax = torch.softmax(marginal_logits, dim=-1)
+    marginal_scores, marginal_labels = marginal_softmax.max(dim=-1)
+
+    primary_log_prob = F.log_softmax(primary_logits, dim=-1)
+    secondary_log_prob = {
+      k: F.log_softmax(v, dim=-1) for k, v in secondary_logits.items()
     }
-    marginal = torch.zeros(
+    conditional_logits = torch.zeros(
       (batch_size, global_secondary_num_classes),
-      dtype=primary_probs.dtype,
-      device=primary_probs.device,
+      dtype=dtype,
+      device=device,
     )
     for global_idx, (parent_idx, local_idx) in enumerate(
       zip(secondary_global_parent_idx, secondary_global_local_idx)
     ):
       parent_key = primary_head_keys[int(parent_idx)]
-      parent_prob = primary_probs[:, int(parent_idx)]
-      local_prob = secondary_probs[parent_key][:, int(local_idx)]
-      marginal[:, global_idx] = parent_prob * local_prob
-    marginal = marginal / marginal.sum(dim=1, keepdim=True).clamp_min(1e-12)
+      conditional_logits[:, global_idx] = (
+        primary_log_prob[:, int(parent_idx)]
+        + secondary_log_prob[parent_key][:, int(local_idx)]
+      )
+    conditional_softmax = torch.softmax(conditional_logits, dim=-1)
+    conditional_scores, conditional_labels = conditional_softmax.max(dim=-1)
 
-    marginal_scores, marginal_labels = marginal.max(dim=1)
-    primary_labels = primary_probs.argmax(dim=1)
-    num_parents = len(primary_head_keys)
-    max_local = max(int(logits.shape[-1]) for logits in secondary_logits.values())
-    parent_local_to_global = torch.full(
-      (num_parents, max_local),
-      -1,
-      dtype=torch.int64,
-      device=primary_probs.device,
-    )
-    for (parent_idx, local_idx), global_idx in global_index_lookup.items():
-      parent_local_to_global[int(parent_idx), int(local_idx)] = int(global_idx)
-
-    conditional_labels = torch.full_like(primary_labels, fill_value=-1)
-    for parent_idx in range(num_parents):
-      parent_key = primary_head_keys[parent_idx]
-      local_labels = secondary_probs[parent_key].argmax(dim=1)
-      global_labels = parent_local_to_global[parent_idx][local_labels]
-      conditional_labels = torch.where(primary_labels == parent_idx, global_labels, conditional_labels)
     return dict(
-      softmax=marginal,
-      scores=marginal_scores,
-      labels=marginal_labels,
+      secondary_logits_flat=secondary_logits_flat,
+      secondary_local_softmax_flat=secondary_local_softmax_flat,
+      marginal_logits=marginal_logits,
+      marginal_softmax=marginal_softmax,
+      conditional_logits=conditional_logits,
+      conditional_softmax=conditional_softmax,
+      marginal_scores=marginal_scores,
+      marginal_labels=marginal_labels,
+      conditional_scores=conditional_scores,
       conditional_labels=conditional_labels,
     )
 
-  def _compute_secondary_outputs(self, *, primary_logits, secondary_logits):
+  def _compute_secondary_outputs(
+    self,
+    *,
+    marginal_logits,
+    primary_logits,
+    secondary_logits,
+  ):
     return self._compute_secondary_outputs_static(
+      marginal_logits=marginal_logits,
       primary_logits=primary_logits,
       secondary_logits=secondary_logits,
       primary_head_keys=self.primary_head_keys,
@@ -558,17 +587,43 @@ class HierarchicalMIL(MIL):
       raise ValueError("HierarchicalMIL requires HierarchicalMILLoss with per-head secondary losses.")
 
     primary_logits = embedding_dict["primary_logits"]
+    marginal_logits = embedding_dict["marginal_logits"]
     secondary_logits = embedding_dict["secondary_logits"]
     primary_targets = batch_info.label # type: ignore
+    secondary_global_targets = getattr(batch_info, "label_secondary", None)
+    if secondary_global_targets is None:
+      secondary_global_targets = torch.full_like(primary_targets, fill_value=-1)
     secondary_local_targets = getattr(batch_info, "label_secondary_local", None)
     if secondary_local_targets is None:
       secondary_local_targets = torch.full_like(primary_targets, fill_value=-1)
 
     primary_loss_value = self.loss.primary_loss(primary_logits, primary_targets) # type: ignore
 
-    secondary_loss_sum = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
-    secondary_valid_num = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
-    secondary_valid_mask = torch.zeros_like(primary_targets, dtype=torch.bool)
+    secondary_output = self._compute_secondary_outputs(
+      marginal_logits=marginal_logits,
+      primary_logits=primary_logits,
+      secondary_logits=secondary_logits,
+    )
+    conditional_logits = secondary_output["conditional_logits"]
+
+    global_valid_mask = secondary_global_targets >= 0
+    if global_valid_mask.any():
+      marginal_loss_value = self.loss.marginal_loss( # type: ignore
+        marginal_logits[global_valid_mask],
+        secondary_global_targets[global_valid_mask],
+      )
+      conditional_loss_value = self.loss.conditional_loss( # type: ignore
+        conditional_logits[global_valid_mask],
+        secondary_global_targets[global_valid_mask],
+      )
+    else:
+      zero = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
+      marginal_loss_value = zero
+      conditional_loss_value = zero
+
+    local_aux_loss_sum = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
+    local_aux_valid_num = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
+    local_aux_valid_mask = torch.zeros_like(primary_targets, dtype=torch.bool)
     for parent_idx, parent_key in enumerate(self.primary_head_keys):
       parent_mask = (primary_targets == int(parent_idx))
       local_targets = secondary_local_targets[parent_mask]
@@ -584,34 +639,21 @@ class HierarchicalMIL(MIL):
       group_targets = local_targets[valid_mask]
       group_loss = self.loss.resolve_secondary_loss(parent_key)(group_logits, group_targets) # type: ignore
       group_num = torch.tensor(float(group_targets.shape[0]), dtype=primary_logits.dtype, device=primary_logits.device)
-      secondary_loss_sum += group_loss * group_num
-      secondary_valid_num += group_num
+      local_aux_loss_sum += group_loss * group_num
+      local_aux_valid_num += group_num
       parent_indices = parent_mask.nonzero(as_tuple=False).reshape(-1)
-      secondary_valid_mask[parent_indices[valid_mask]] = True
-    if secondary_valid_num.item() > 0:
-      secondary_loss_value = secondary_loss_sum / secondary_valid_num
+      local_aux_valid_mask[parent_indices[valid_mask]] = True
+    if local_aux_valid_num.item() > 0:
+      local_aux_loss_value = local_aux_loss_sum / local_aux_valid_num
     else:
-      secondary_loss_value = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
-
-    secondary_output = self._compute_secondary_outputs(
-      primary_logits=primary_logits,
-      secondary_logits=secondary_logits,
-    )
-    secondary_parent_probs = torch.zeros_like(torch.softmax(primary_logits, dim=1))
-    for global_idx, parent_idx in enumerate(self.secondary_global_parent_idx):
-      secondary_parent_probs[:, int(parent_idx)] += secondary_output["softmax"][:, int(global_idx)]
-    primary_log_probs = torch.log_softmax(primary_logits, dim=1)
-    consistency_loss_value = F.kl_div(
-      primary_log_probs,
-      secondary_parent_probs.clamp_min(1e-12),
-      reduction="batchmean",
-    )
+      local_aux_loss_value = torch.zeros((), dtype=primary_logits.dtype, device=primary_logits.device)
 
     loss = self.loss( # type: ignore
       primary_loss_value=primary_loss_value,
-      secondary_loss_value=secondary_loss_value,
-      secondary_valid_mask=secondary_valid_mask,
-      consistency_loss=consistency_loss_value,
+      marginal_loss_value=marginal_loss_value,
+      conditional_loss_value=conditional_loss_value,
+      local_aux_loss_value=local_aux_loss_value,
+      local_aux_valid_mask=local_aux_valid_mask,
     )
     return loss
 
@@ -619,14 +661,16 @@ class HierarchicalMIL(MIL):
     if isinstance(batch_data, dict):
       atten_weights = batch_data["atten_weights"]
       primary_logits = batch_data["primary_logits"]
+      marginal_logits = batch_data["marginal_logits"]
       secondary_logits = batch_data["secondary_logits"]
     else:
-      atten_weights, primary_logits, secondary_logits = batch_data
+      atten_weights, primary_logits, marginal_logits, secondary_logits = batch_data
 
     primary_softmax = torch.softmax(primary_logits, dim=1)
     primary_scores = primary_softmax.max(dim=1).values
     primary_labels = primary_softmax.argmax(dim=1)
     secondary_output = self._compute_secondary_outputs(
+      marginal_logits=marginal_logits,
       primary_logits=primary_logits,
       secondary_logits=secondary_logits,
     )
@@ -643,16 +687,20 @@ class HierarchicalMIL(MIL):
         labels=primary_labels,
       ),
       label_secondary=dict(
-        logits=None,
-        softmax=secondary_output["softmax"],
-        scores=secondary_output["scores"],
-        labels=secondary_output["labels"],
+        logits=secondary_output["marginal_logits"],
+        softmax=secondary_output["marginal_softmax"],
+        scores=secondary_output["marginal_scores"],
+        labels=secondary_output["marginal_labels"],
       ),
       label_secondary_conditional=dict(
-        logits=None,
-        softmax=secondary_output["softmax"],
-        scores=secondary_output["scores"],
+        logits=secondary_output["conditional_logits"],
+        softmax=secondary_output["conditional_softmax"],
+        scores=secondary_output["conditional_scores"],
         labels=secondary_output["conditional_labels"],
+      ),
+      label_secondary_local=dict(
+        logits=secondary_output["secondary_logits_flat"],
+        softmax=secondary_output["secondary_local_softmax_flat"],
       ),
     )
     normalized_attentions = self._normalize_batch_attentions(atten_weights)

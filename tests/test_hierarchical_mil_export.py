@@ -1,9 +1,7 @@
 import torch
 
 from slimai.helper.features import extract as feature_extract
-from slimai.models.arch.mil import HierarchicalMIL
-from slimai.models.component.abmil import ABMIL
-from slimai.models.component.mlp import MLP
+from slimai.models.arch.mil import HierarchicalMIL, SLIDE_ENCODER_OUTPUT_NAMES_HIERARCHICAL
 
 
 def _fake_uni_builder(cache_dir: str):
@@ -17,20 +15,27 @@ def _fake_uni_builder(cache_dir: str):
   return encoder, (lambda tensor: tensor), 32
 
 
-def test_hierarchical_export_artifacts_rejects_identity(monkeypatch):
-  monkeypatch.setitem(feature_extract.PATCH_ENCODER_BUILDERS, "UNI", _fake_uni_builder)
-  arch = HierarchicalMIL(
-    backbone=dict(type="torch.nn.Identity"),
+def _build_arch(**kwargs):
+  defaults = dict(
+    backbone=dict(type="PatchEncoderBackbone", encoder_name="UNI", cache_dir="/tmp"),
     neck=dict(type="ABMIL", input_dim=32, hidden_dim=16, attention="gated", dropout=0.0),
     primary_head=dict(type="MLP", input_dim=32, output_dim=3, n_layer=2, dropout=0.0),
+    marginal_head=dict(type="MLP", input_dim=32, output_dim=2, n_layer=2, dropout=0.0),
     secondary_heads=dict(
       h0=dict(type="MLP", input_dim=32, output_dim=2, n_layer=2, dropout=0.0),
     ),
     primary_head_keys=["h0"],
-    secondary_global_parent_idx=[0],
-    secondary_global_local_idx=[0],
+    secondary_global_parent_idx=[0, 0],
+    secondary_global_local_idx=[0, 1],
     freeze_backbone=True,
   )
+  defaults.update(kwargs)
+  return HierarchicalMIL(**defaults)
+
+
+def test_hierarchical_export_artifacts_rejects_identity(monkeypatch):
+  monkeypatch.setitem(feature_extract.PATCH_ENCODER_BUILDERS, "UNI", _fake_uni_builder)
+  arch = _build_arch(backbone=dict(type="torch.nn.Identity"))
   try:
     arch.export_artifacts()
     raised = False
@@ -41,18 +46,7 @@ def test_hierarchical_export_artifacts_rejects_identity(monkeypatch):
 
 def test_hierarchical_export_patch_and_slide_forward(monkeypatch):
   monkeypatch.setitem(feature_extract.PATCH_ENCODER_BUILDERS, "UNI", _fake_uni_builder)
-  arch = HierarchicalMIL(
-    backbone=dict(type="PatchEncoderBackbone", encoder_name="UNI", cache_dir="/tmp"),
-    neck=dict(type="ABMIL", input_dim=32, hidden_dim=16, attention="gated", dropout=0.0),
-    primary_head=dict(type="MLP", input_dim=32, output_dim=3, n_layer=2, dropout=0.0),
-    secondary_heads=dict(
-      h0=dict(type="MLP", input_dim=32, output_dim=2, n_layer=2, dropout=0.0),
-    ),
-    primary_head_keys=["h0"],
-    secondary_global_parent_idx=[0],
-    secondary_global_local_idx=[0],
-    freeze_backbone=True,
-  )
+  arch = _build_arch()
   artifacts = arch.export_artifacts()
   patch_encoder = artifacts["patch_encoder"]
   slide_encoder = artifacts["slide_encoder"]
@@ -60,4 +54,6 @@ def test_hierarchical_export_patch_and_slide_forward(monkeypatch):
   embedding = patch_encoder(patches)
   outputs = slide_encoder(embedding)
   assert embedding.shape == (5, 32)
-  assert len(outputs) == 9
+  assert len(outputs) == len(SLIDE_ENCODER_OUTPUT_NAMES_HIERARCHICAL) == 13
+  assert outputs[6].shape == (2,)
+  assert outputs[8].shape == (2,)

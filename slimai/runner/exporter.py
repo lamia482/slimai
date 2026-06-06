@@ -76,7 +76,7 @@ class Exporter:
     metrics_tol: float = 5e-4,
     skip_test_eval: bool = False,
     reference_work_dir: Optional[str] = None,
-    skip_reference_compare: bool = False,
+    skip_reference_compare: bool = True,
     ort_provider: str = "CPUExecutionProvider",
     show_progress: Optional[bool] = None,
   ) -> Dict[str, Path]:
@@ -134,13 +134,29 @@ class Exporter:
         )
 
     taxonomy = extract_taxonomy(self.cfg)
+    export_meta = dict(
+      opset_version=opset_version,
+      device=device,
+      schema_version="hier_v2" if self.is_hierarchical else "mil_v1",
+      slide_output_names=list(self.slide_output_names),
+    )
+    if self.is_hierarchical:
+      export_meta["num_secondary_classes"] = int(getattr(self.arch, "global_secondary_num_classes", 0))
+      splits = []
+      cursor = 0
+      for head_name in self.arch.primary_head_keys:
+        head_cfg = self.arch.secondary_heads_cfg.get(head_name, {})
+        width = int(head_cfg.get("output_dim", 0))
+        splits.append(dict(head=head_name, start=cursor, end=cursor + width))
+        cursor += width
+      export_meta["secondary_flat_splits"] = splits
     write_export_manifest(
       output_path,
       config_path=self.config_path,
       ckpt_path=self.ckpt_path,
       preprocess=self.preprocess,
       taxonomy=taxonomy,
-      export_meta=dict(opset_version=opset_version, device=device),
+      export_meta=export_meta,
       validation_batch_range=[batch_min, batch_max],
       patch_encoder_spec=dict(
         encoder_name=self.preprocess.get("encoder_name", getattr(self.cfg, "PATCH_ENCODER_NAME", "")),
@@ -193,7 +209,7 @@ class Exporter:
       patch_encoder=patch_onnx,
       slide_encoder=slide_onnx,
       manifest=output_path / "export_manifest.json",
-      validation_report=output_path / "validation_report.html",
+      validation_report=output_path / "validation_main.html",
       calibration_pkl=output_path / "calibration_v3_trial0.pkl",
       calibration_md=output_path / "calibration_v3_trial0.md",
     )

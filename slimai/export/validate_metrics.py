@@ -61,6 +61,23 @@ def merge_sample_lists(lists: Sequence[List[Dict[str, Any]]]) -> List[Dict[str, 
   return merged
 
 
+def parse_hierarchical_preds(outputs: Mapping[str, np.ndarray]) -> Dict[str, Any]:
+  primary_prob = np.asarray(outputs["primary_softmax"], dtype=np.float64).reshape(-1)
+  primary_pred = int(np.argmax(primary_prob))
+  marginal_prob = np.asarray(outputs["marginal_softmax"], dtype=np.float64).reshape(-1)
+  marginal_pred = int(np.asarray(outputs["marginal_label"]).reshape(-1)[0])
+  conditional_prob = np.asarray(outputs["conditional_softmax"], dtype=np.float64).reshape(-1)
+  conditional_pred = int(np.asarray(outputs["conditional_label"]).reshape(-1)[0])
+  return dict(
+    primary_pred=primary_pred,
+    primary_prob=primary_prob,
+    marginal_pred=marginal_pred,
+    marginal_prob=marginal_prob,
+    conditional_pred=conditional_pred,
+    conditional_prob=conditional_prob,
+  )
+
+
 def parse_primary_secondary_preds(outputs: Mapping[str, np.ndarray], *, is_hierarchical: bool) -> Dict[str, Any]:
   if not is_hierarchical:
     softmax = outputs.get("softmax")
@@ -73,17 +90,14 @@ def parse_primary_secondary_preds(outputs: Mapping[str, np.ndarray], *, is_hiera
       prob = exp / np.sum(exp)
     pred = int(np.argmax(prob))
     return dict(primary_pred=pred, primary_prob=prob)
-  primary_prob = np.asarray(outputs["primary_softmax"], dtype=np.float64).reshape(-1)
-  primary_pred = int(np.argmax(primary_prob))
-  secondary_marginal = int(np.asarray(outputs["secondary_marginal_label"]).reshape(-1)[0])
-  secondary_conditional = int(np.asarray(outputs["secondary_conditional_label"]).reshape(-1)[0])
-  secondary_prob = np.asarray(outputs["secondary_marginal_softmax"], dtype=np.float64).reshape(-1)
+  parsed = parse_hierarchical_preds(outputs)
   return dict(
-    primary_pred=primary_pred,
-    primary_prob=primary_prob,
-    secondary_marginal_pred=secondary_marginal,
-    secondary_marginal_prob=secondary_prob,
-    secondary_conditional_pred=secondary_conditional,
+    primary_pred=parsed["primary_pred"],
+    primary_prob=parsed["primary_prob"],
+    secondary_marginal_pred=parsed["marginal_pred"],
+    secondary_marginal_prob=parsed["marginal_prob"],
+    secondary_conditional_pred=parsed["conditional_pred"],
+    secondary_conditional_prob=parsed["conditional_prob"],
   )
 
 
@@ -122,16 +136,19 @@ def evaluate_slide_sample(
     pred=int(ort_preds["primary_pred"]),
     prob=np.asarray(ort_preds["primary_prob"], dtype=np.float64),
     pt_pred=int(pt_preds["primary_pred"]),
+    pt_prob=np.asarray(pt_preds["primary_prob"], dtype=np.float64),
     label_agreement=label_agreement,
   )
   if is_hierarchical and "label_secondary" in sample:
     eval_sample["label_secondary"] = int(sample["label_secondary"])
     eval_sample["pred_secondary"] = int(ort_preds["secondary_marginal_pred"])
     eval_sample["prob_secondary"] = np.asarray(ort_preds["secondary_marginal_prob"], dtype=np.float64)
-    eval_sample["conditional_pred"] = int(ort_preds["secondary_conditional_pred"])
-    eval_sample["conditional_prob"] = np.asarray(ort_preds["secondary_marginal_prob"], dtype=np.float64)
     eval_sample["pt_pred_secondary"] = int(pt_preds["secondary_marginal_pred"])
+    eval_sample["pt_prob_secondary"] = np.asarray(pt_preds["secondary_marginal_prob"], dtype=np.float64)
+    eval_sample["conditional_pred"] = int(ort_preds["secondary_conditional_pred"])
+    eval_sample["conditional_prob"] = np.asarray(ort_preds["secondary_conditional_prob"], dtype=np.float64)
     eval_sample["pt_conditional_pred"] = int(pt_preds["secondary_conditional_pred"])
+    eval_sample["pt_conditional_prob"] = np.asarray(pt_preds["secondary_conditional_prob"], dtype=np.float64)
   return eval_sample
 
 
@@ -227,6 +244,92 @@ def _build_inner_by_center_block(
   return by_center
 
 
+def _compare_metric_dicts(metrics_pt: Dict[str, Any], metrics_ort: Dict[str, Any], *, metrics_tol: float) -> Dict[str, Any]:
+  parity: Dict[str, Any] = {}
+  all_match = True
+  for key in sorted(set(metrics_pt.keys()) | set(metrics_ort.keys())):
+    if key == "n_samples":
+      continue
+    pt_val = metrics_pt.get(key)
+    ort_val = metrics_ort.get(key)
+    if pt_val is None or ort_val is None:
+      continue
+    try:
+      pt_f = float(pt_val)
+      ort_f = float(ort_val)
+    except Exception:
+      continue
+    delta = abs(pt_f - ort_f)
+    match = delta <= metrics_tol
+    parity[key] = dict(pt=pt_f, ort=ort_f, delta=delta, tol=metrics_tol, match=match)
+    if not match:
+      all_match = False
+  return dict(metrics=parity, passed=all_match)
+
+
+def _task_samples_from_eval(
+  eval_samples: List[Dict[str, Any]],
+  *,
+  task: str,
+  backend: str,
+) -> List[Dict[str, Any]]:
+  rows = []
+  for sample in eval_samples:
+    if task == "primary":
+      label = sample.get("label")
+      pred_key = "pt_pred" if backend == "pt" else "pred"
+      prob_key = "pt_prob" if backend == "pt" else "prob"
+    elif task == "marginal":
+      if "label_secondary" not in sample:
+        continue
+      label = sample["label_secondary"]
+      pred_key = "pt_pred_secondary" if backend == "pt" else "pred_secondary"
+      prob_key = "pt_prob_secondary" if backend == "pt" else "prob_secondary"
+    elif task == "conditional":
+      if "label_secondary" not in sample:
+        continue
+      label = sample["label_secondary"]
+      pred_key = "pt_conditional_pred" if backend == "pt" else "conditional_pred"
+      prob_key = "pt_conditional_prob" if backend == "pt" else "conditional_prob"
+    else:
+      raise ValueError(f"Unknown task: {task}")
+    if pred_key not in sample or prob_key not in sample:
+      continue
+    rows.append(dict(label=label, pred=sample[pred_key], prob=sample[prob_key], h5_path=sample.get("h5_path", "")))
+  return rows
+
+
+def _evaluate_task_block(
+  eval_samples: List[Dict[str, Any]],
+  *,
+  task: str,
+  reporter: ExperimentReporter,
+  subset_name: str,
+  class_names: Sequence[str],
+  metrics_tol: float,
+) -> Dict[str, Any]:
+  pt_samples = _task_samples_from_eval(eval_samples, task=task, backend="pt")
+  ort_samples = _task_samples_from_eval(eval_samples, task=task, backend="ort")
+  pt_labels, pt_preds, pt_probs = reporter._samples_to_arrays(pt_samples)
+  ort_labels, ort_preds, ort_probs = reporter._samples_to_arrays(ort_samples)
+  metrics_pt = reporter._compute_classification_metrics_from_arrays(pt_labels, pt_preds, pt_probs) if pt_labels is not None else {}
+  metrics_ort = reporter._compute_classification_metrics_from_arrays(ort_labels, ort_preds, ort_probs) if ort_labels is not None else {}
+  metric_parity = _compare_metric_dicts(metrics_pt, metrics_ort, metrics_tol=metrics_tol)
+  figures_ort = reporter.build_eval_figures(
+    result_file=Path("."),
+    file_prefix=f"v4_{subset_name}_{task}",
+    samples=ort_samples,
+    class_names=class_names,
+  )
+  return dict(
+    metrics_pt=metrics_pt,
+    metrics_ort=metrics_ort,
+    metric_parity=metric_parity,
+    figures_ort=figures_ort,
+    passed=metric_parity.get("passed", True),
+  )
+
+
 def run_subset_evaluation(
   subset_name: str,
   raw_samples: List[Dict[str, Any]],
@@ -237,6 +340,7 @@ def run_subset_evaluation(
   is_hierarchical: bool,
   reporter: ExperimentReporter,
   show_progress: bool,
+  metrics_tol: float = 1e-4,
 ) -> Dict[str, Any]:
   eval_samples: List[Dict[str, Any]] = []
   for sample in validation_progress(raw_samples, total=len(raw_samples), desc=f"V4 {subset_name}", unit="slide", enabled=show_progress, leave=False):
@@ -249,28 +353,56 @@ def run_subset_evaluation(
         is_hierarchical=is_hierarchical,
       )
     )
-  level1_samples = _samples_for_level1_metrics(eval_samples)
-  labels, preds, probs = reporter._samples_to_arrays(level1_samples)
-  level1_metrics = reporter._compute_classification_metrics_from_arrays(labels, preds, probs) if labels is not None else {}
-  level2_metrics = {}
-  level2_figures = {}
-  if is_hierarchical:
-    level2_samples = _samples_for_level2_metrics(eval_samples)
-    l2_labels, l2_preds, l2_probs = reporter._samples_to_arrays(level2_samples)
-    if l2_labels is not None:
-      level2_metrics = reporter._compute_classification_metrics_from_arrays(l2_labels, l2_preds, l2_probs)
-      cond_samples = [dict(label=s["label"], pred=s["conditional_pred"], prob=s["conditional_prob"]) for s in level2_samples if s.get("conditional_pred") is not None]
-      cl, cp, cpr = reporter._samples_to_arrays(cond_samples)
-      if cl is not None:
-        cond_metrics = reporter._compute_classification_metrics_from_arrays(cl, cp, cpr)
-        level2_metrics.update({f"conditional_{k}": v for k, v in cond_metrics.items() if k != "n_samples"})
-    level2_figures = reporter.build_eval_figures(result_file=Path("."), file_prefix=f"v4_{subset_name}", samples=level2_samples, class_names=reporter.display_secondary_class_names)
-  level1_figures = reporter.build_eval_figures(result_file=Path("."), file_prefix=f"v4_{subset_name}", samples=level1_samples, class_names=reporter.display_class_names)
   agreement = compute_label_agreement_rate(eval_samples, is_hierarchical=is_hierarchical)
+  if not is_hierarchical:
+    primary_block = _evaluate_task_block(
+      eval_samples,
+      task="primary",
+      reporter=reporter,
+      subset_name=subset_name,
+      class_names=reporter.display_class_names,
+      metrics_tol=metrics_tol,
+    )
+    passed = agreement.get("passed", False) and primary_block.get("passed", False)
+    return dict(
+      name=subset_name,
+      n_samples=len(eval_samples),
+      primary=primary_block,
+      label_agreement=agreement,
+      passed=passed,
+    )
+
+  primary_block = _evaluate_task_block(
+    eval_samples, task="primary", reporter=reporter, subset_name=subset_name,
+    class_names=reporter.display_class_names, metrics_tol=metrics_tol,
+  )
+  marginal_block = _evaluate_task_block(
+    eval_samples, task="marginal", reporter=reporter, subset_name=subset_name,
+    class_names=reporter.display_secondary_class_names, metrics_tol=metrics_tol,
+  )
+  conditional_block = _evaluate_task_block(
+    eval_samples, task="conditional", reporter=reporter, subset_name=subset_name,
+    class_names=reporter.display_secondary_class_names, metrics_tol=metrics_tol,
+  )
+  passed = (
+    agreement.get("passed", False)
+    and primary_block.get("passed", False)
+    and marginal_block.get("passed", False)
+    and conditional_block.get("passed", False)
+  )
   by_center = {}
   if subset_name == "inner_test":
     by_center = _build_inner_by_center_block(eval_samples, reporter=reporter, is_hierarchical=is_hierarchical)
-  return dict(name=subset_name, n_samples=len(eval_samples), level1=dict(metrics=level1_metrics, figures=level1_figures), level2=dict(metrics=level2_metrics, figures=level2_figures), label_agreement=agreement, by_center=by_center, passed=agreement.get("passed", False))
+  return dict(
+    name=subset_name,
+    n_samples=len(eval_samples),
+    primary=primary_block,
+    marginal=marginal_block,
+    conditional=conditional_block,
+    label_agreement=agreement,
+    by_center=by_center,
+    passed=passed,
+  )
 
 
 def _baseline_metrics_for_subset(baseline: Dict[str, Any], subset_name: str, level: str) -> Dict[str, float]:
@@ -307,20 +439,31 @@ def _attach_reference_compare(subsets, baseline, metrics_tol: float):
 
   for subset_name, block in subsets.items():
     if subset_name == "full_test":
-      block.setdefault("level1", {})["reference_compare_note"] = "no PyTorch baseline in original report"
-      block.setdefault("level2", {})["reference_compare_note"] = "no PyTorch baseline in original report"
       continue
-    onnx_l1 = block.get("level1", {}).get("metrics", {})
-    block.setdefault("level1", {})["reference_compare"] = compare_metric_tables(
-      _metrics_to_float_dict(onnx_l1),
-      _baseline_metrics_for_subset(baseline, subset_name, "level1"),
-      metrics_tol=metrics_tol,
-    )
-    onnx_l2 = block.get("level2", {}).get("metrics", {})
-    if onnx_l2:
-      block.setdefault("level2", {})["reference_compare"] = compare_metric_tables(
-        _metrics_to_float_dict(onnx_l2),
-        _baseline_metrics_for_subset(baseline, subset_name, "level2"),
+    for task_name in ("primary", "marginal", "conditional"):
+      task_block = block.get(task_name, {})
+      if not task_block:
+        continue
+      level_key = "level1" if task_name == "primary" else "level2"
+      baseline_metrics = {}
+      if task_name == "primary":
+        baseline_metrics = (baseline.get(level_key, {}) or {}).get(
+          "inner_test" if subset_name == "inner_test" else "external", {}
+        )
+        if subset_name.startswith("external_"):
+          baseline_metrics = (baseline.get(level_key, {}).get("external", {}) or {}).get(subset_name, {})
+      elif task_name in ("marginal", "conditional"):
+        baseline_metrics = (baseline.get("level2", {}) or {}).get(
+          "inner_test" if subset_name == "inner_test" else "external", {}
+        )
+        if subset_name.startswith("external_"):
+          baseline_metrics = (baseline.get("level2", {}).get("external", {}) or {}).get(subset_name, {})
+      if not baseline_metrics:
+        task_block["reference_compare_note"] = "no PyTorch baseline in original report"
+        continue
+      task_block["reference_compare"] = compare_metric_tables(
+        _metrics_to_float_dict(task_block.get("metrics_ort", {})),
+        baseline_metrics,
         metrics_tol=metrics_tol,
       )
 
@@ -378,6 +521,7 @@ def run_v4_test_evaluation(
         is_hierarchical=is_hierarchical,
         reporter=reporter,
         show_progress=show_progress,
+        metrics_tol=metrics_tol,
       )
   _attach_reference_compare(subsets, baseline, metrics_tol)
   external_count = len([k for k in subsets.keys() if k.startswith("external_")])
